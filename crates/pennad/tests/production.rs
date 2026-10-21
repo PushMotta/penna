@@ -64,7 +64,10 @@ fn an_ordinary_user_is_refused_before_anything_is_touched() {
 }
 
 #[test]
-fn a_config_that_assigns_a_motherboard_fan_is_refused_until_m5() {
+fn a_config_that_assigns_a_motherboard_fan_only_needs_root() {
+    if root() {
+        return;
+    }
     let dir = fresh("motherboard");
     let text = fs::read_to_string(desk_config()).unwrap()
         + "\n[[control]]\nkey = \"hwmon/it87/it87.2608/pwm1\"\nlabel = \"CPU cooler\"\nmin = 25\n";
@@ -74,7 +77,11 @@ fn a_config_that_assigns_a_motherboard_fan_is_refused_until_m5() {
     let out = Command::new(pennad()).arg("--config").arg(&config).output().unwrap();
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("Motherboard fans arrive in M5; this config assigns CPU cooler in profile \"balanced\""), "{err}");
+    assert_eq!(
+        err.trim(),
+        "pennad controls fans and has to run as root. For a simulated desk: pennad --mock render-burst",
+        "M5 drives motherboard fans"
+    );
 }
 
 #[test]

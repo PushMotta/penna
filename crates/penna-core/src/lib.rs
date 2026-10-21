@@ -6,8 +6,12 @@
 //! * [`config::Config`] is what a person chose; [`plan::Plan`] is that resolved against a machine.
 //! * [`control::tick`] is the control loop's pure heart (§4, §6): readings in, commands out.
 //! * [`held::HeldEntry`] is the way back for one control, written before it leaves firmware (§6.1).
+//! * [`drivers`] is what Penna knows about each fan driver (§3.5, §3.6): data, not code paths.
+//! * [`boards::Board`] is what the board database knows about one motherboard (§3.6).
+pub mod boards;
 pub mod config;
 pub mod control;
+pub mod drivers;
 pub mod held;
 pub mod key;
 pub mod model;

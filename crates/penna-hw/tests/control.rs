@@ -2,7 +2,7 @@
 use penna_core::held::HeldEntry;
 use penna_core::{ControlKind, ControlMode, Key, Sample};
 use penna_hw::sim::{self, Sim};
-use penna_hw::{Machine, Options, held, hwmon::Hwmon};
+use penna_hw::{Machine, Options, held};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -18,9 +18,14 @@ fn fresh(name: &str) -> PathBuf {
 fn desk(name: &str, scenario: &str) -> (Sim, Machine) {
     let (sc, _) = sim::load(scenario).unwrap();
     let sim = Sim::create(sc, &fresh(name)).unwrap();
-    let machine =
-        Machine::open(&Options { sysfs_root: sim.root().into(), nvml: false, mock_nvml: Some(sim.mock_nvml_root()), control: true })
-            .unwrap();
+    let machine = Machine::open(&Options {
+        sysfs_root: sim.root().into(),
+        nvml: false,
+        mock_nvml: Some(sim.mock_nvml_root()),
+        control: true,
+        boards: None,
+    })
+    .unwrap();
     (sim, machine)
 }
 
@@ -73,17 +78,92 @@ fn take_is_bumpless_and_the_way_back_is_exact() {
     assert_eq!(read(&dir.join("pwm3_enable")), "5", "the exact original, not an assumed 2");
 }
 
+/// Adds an hwmon device to a mock tree the way a driver loaded later would: its directory under `devices`, then the class link.
+fn plug(root: &Path, platform: &str, hwmon: u32, name: &str, pwms: &[(u32, u32)]) -> PathBuf {
+    let dir = root.join(format!("devices/platform/{platform}/hwmon/hwmon{hwmon}"));
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("name"), format!("{name}\n")).unwrap();
+    std::os::unix::fs::symlink("../..", dir.join("device")).unwrap();
+    for (n, mode) in pwms {
+        for (file, v) in [(format!("pwm{n}"), "128"), (format!("pwm{n}_enable"), "2"), (format!("fan{n}_input"), "900")] {
+            fs::write(dir.join(&file), format!("{v}\n")).unwrap();
+        }
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(dir.join(format!("pwm{n}")), fs::Permissions::from_mode(*mode)).unwrap();
+    }
+    std::os::unix::fs::symlink(
+        format!("../../devices/platform/{platform}/hwmon/hwmon{hwmon}"),
+        root.join(format!("class/hwmon/hwmon{hwmon}")),
+    )
+    .unwrap();
+    dir
+}
+
 #[test]
-fn the_real_sys_is_refused() {
-    assert!(Hwmon::controlling(Path::new("/sys")).is_err());
-    let err = Machine::open(&Options { control: true, ..Options::default() }).err().expect("refused");
-    assert!(err.to_string().contains("real /sys"), "{err}");
+fn a_driver_loaded_later_is_found_without_a_restart() {
+    let (sim, mut machine) = desk("later", "render-burst");
+    assert!(!machine.rediscover(), "nothing changed yet");
+    let before = machine.inventory.devices.len();
+    plug(sim.root(), "it87.2624", 9, "it8792", &[(1, 0o644), (2, 0o644)]);
+    assert!(machine.rediscover());
+    assert_eq!(machine.inventory.devices.len(), before + 1);
+    let chip = machine.inventory.devices.iter().find(|d| d.driver == "it8792").expect("the new chip");
+    assert_eq!(chip.label, "Motherboard");
+    assert!(chip.controls.iter().all(|c| c.kind == ControlKind::Duty { scale: 255 }));
+    let key = Key::hwmon("it8792", "it87.2624", "pwm1");
+    let entry = machine.original(&key).unwrap();
+    let HeldEntry::Hwmon { enable, .. } = &entry else { panic!("{entry:?}") };
+    assert!(!enable.to_string_lossy().contains("class/hwmon"), "held.json names the device's real path: {}", enable.display());
+    machine.take(&key).unwrap();
+    assert!(!machine.rediscover(), "taking a control changes no device");
+}
+
+#[test]
+fn held_entries_follow_a_control_to_its_new_path() {
+    let (sim, mut machine) = desk("relocate", "render-burst");
+    plug(sim.root(), "it87.2624", 9, "it8792", &[(1, 0o644)]);
+    machine.rediscover();
+    let key = Key::hwmon("it8792", "it87.2624", "pwm1");
+    let entry = machine.original(&key).unwrap();
+    // The driver is reloaded and the chip comes back as another hwmonN.
+    fs::remove_file(sim.root().join("class/hwmon/hwmon9")).unwrap();
+    fs::rename(sim.root().join("devices/platform/it87.2624/hwmon/hwmon9"), sim.root().join("devices/platform/it87.2624/hwmon/hwmon11"))
+        .unwrap();
+    std::os::unix::fs::symlink("../../devices/platform/it87.2624/hwmon/hwmon11", sim.root().join("class/hwmon/hwmon11")).unwrap();
+    assert!(machine.rediscover());
+    let moved = machine.relocate(&entry).expect("still a control here");
+    let (HeldEntry::Hwmon { enable: a, original_enable: oa, .. }, HeldEntry::Hwmon { enable: b, original_enable: ob, .. }) =
+        (&entry, &moved)
+    else {
+        panic!()
+    };
+    assert_ne!(a, b);
+    assert!(b.ends_with("hwmon11/pwm1_enable"), "{}", b.display());
+    assert_eq!(oa, ob, "what it was found as is kept");
+}
+
+#[test]
+fn channels_penna_does_not_drive_are_listed_and_never_written() {
+    let (sim, mut machine) = desk("kinds", "render-burst");
+    plug(sim.root(), "thinkpad_hwmon", 12, "thinkpad", &[(1, 0o644)]);
+    plug(sim.root(), "nct6683.2592", 13, "nct6687", &[(1, 0o444)]);
+    machine.rediscover();
+    let kind = |driver: &str| machine.inventory.devices.iter().find(|d| d.driver == driver).unwrap().controls[0].kind;
+    assert_eq!(kind("thinkpad"), ControlKind::Levels { steps: 8 });
+    assert_eq!(kind("nct6687"), ControlKind::ReadOnly, "nct6683's pwm is read-only");
+    let tp = Key::hwmon("thinkpad", "thinkpad_hwmon", "pwm1");
+    let err = machine.original(&tp).unwrap_err().to_string();
+    assert!(err.contains("8 fixed steps"), "{err}");
+    assert!(machine.write(&tp, 255).is_err());
+    let dir = sim.root().join("devices/platform/thinkpad_hwmon/hwmon/hwmon12");
+    assert_eq!(read(&dir.join("pwm1")), "128");
 }
 
 #[test]
 fn read_only_hwmon_refuses_writes() {
     let (sim, _) = desk("readonly", "render-burst");
-    let mut m = Machine::open(&Options { sysfs_root: sim.root().into(), nvml: false, mock_nvml: None, control: false }).unwrap();
+    let mut m =
+        Machine::open(&Options { sysfs_root: sim.root().into(), nvml: false, mock_nvml: None, control: false, boards: None }).unwrap();
     assert!(m.write(&pwm(1), 100).is_err());
 }
 

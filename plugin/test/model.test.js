@@ -8,7 +8,7 @@ const nvme = { key: "hwmon/nvme/0000:04:00.0/temp1", label: "Composite", device:
 const acpi = { key: "hwmon/acpitz/thermal_zone0/temp1", label: "temp1", device: "ACPI thermal zone", celsius: 16.8, below_ambient: true }
 
 function control(over) {
-  return Object.assign({ key: "hwmon/it87/it87.2608/pwm1", label: "CPU cooler", kind: "pwm", fans: 1, rpm: 1140, state: "curve",
+  return Object.assign({ key: "hwmon/it87/it87.2608/pwm1", label: "CPU cooler", kind: "duty", fans: 1, rpm: 1140, state: "curve",
                          duty: 51, curve: "cpu-quiet", curve_label: "CPU quiet", override: null }, over)
 }
 
@@ -51,6 +51,14 @@ test("the hero names what is wrong, or the profile", () => {
   assert.equal(M.hero(tick({ controls: [control({ label: "Rear exhaust", state: "contested" })] }), true, 0, 0).title, "Rear exhaust is contested")
   assert.equal(M.hero(tick(), false, 112, 100).meta, "LAST UPDATE 12 S AGO")
   assert.equal(M.hero(null, false, 0, 0).meta, "NOT CONNECTED")
+})
+
+test("Defaults says who runs the fans, and still names an emergency first", () => {
+  const firmware = [control({ state: "firmware" })]
+  const d = M.hero(tick({ profile: "defaults", controls: firmware }), true, 0, 0)
+  assert.deepEqual([d.title, d.meta, d.glyph], ["Defaults", "THE BIOS AND DRIVERS RUN EVERY FAN", M.GLYPH.auto])
+  const em = M.hero(tick({ profile: "defaults", controls: firmware, emergency: [{ label: "CPU · Tctl", celsius: 94.5, release: 85 }] }), true, 0, 0)
+  assert.equal(em.tone, "urgent")
 })
 
 test("temperature rows are the sources curves read, never the cold ACPI zone", () => {

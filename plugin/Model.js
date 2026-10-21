@@ -123,6 +123,7 @@ function hero(tick, connected, nowSec, lastTickSec) {
   if (a.length > 1) return { title: a.length + " fans need attention", tone: "urgent", glyph: GLYPH.alert, meta: "EACH ONE SAYS WHY BELOW" }
   if (tick.full_speed) return { title: "Full speed", tone: "accent", glyph: GLYPH.full, meta: "EVERY FAN AT 100 % · UNTIL YOU TURN IT OFF" }
   if (tick.draft) return { title: profileLabel(tick), tone: "accent", glyph: GLYPH.fan, meta: "PREVIEWING UNSAVED CHANGES FROM THE STUDIO" }
+  if (tick.profile === "defaults") return { title: "Defaults", tone: "normal", glyph: GLYPH.auto, meta: "THE BIOS AND DRIVERS RUN EVERY FAN" }
   if (!adopted(tick).length) return { title: "Firmware runs every fan", tone: "normal", glyph: GLYPH.auto, meta: "NOTHING ADOPTED YET" }
   return { title: profileLabel(tick), tone: "normal", glyph: GLYPH.fan, meta: null }
 }

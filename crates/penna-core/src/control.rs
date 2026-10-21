@@ -1,7 +1,7 @@
 //! The control loop's pure heart (DESIGN.md §4, §6.3, §6.4, §7.1). [`tick`] turns one pass of readings into commands;
 //! [`LoopState::record`] takes back what the hardware said about each. Time is seconds on a monotonic clock, so tests run on
 //! simulated time and the daemon on real time with the same code.
-use crate::config::{CurveKind, HysteresisDirection, MixOp, VirtualKind};
+use crate::config::{CurveKind, DEFAULTS, HysteresisDirection, MixOp, VirtualKind};
 use crate::plan::{ControlPlan, CurvePlan, Plan, RESUME_MARGIN};
 use crate::{ControlKind, ControlMode, ControlReading, Key, Readings, Sample};
 use serde::{Deserialize, Serialize};
@@ -16,8 +16,8 @@ pub const MISMATCH_TICKS: u32 = 2;
 /// Re-assertions allowed in [`REASSERT_WINDOW`] before a control is contested (§6.4).
 pub const MAX_REASSERTS: usize = 3;
 pub const REASSERT_WINDOW: f64 = 30.0;
-/// PWM read-back tolerance: 2 % of 255 (§6.4).
-pub const PWM_TOLERANCE: u32 = 5;
+/// Duty read-back tolerance, as a share of the control's scale: 2 %, which is 5 of 255 (§6.4).
+pub const READBACK_TOLERANCE: f64 = 0.02;
 /// A smoothed value older than this starts again from the next reading rather than gliding from the past.
 const SMOOTH_RESET: f64 = 10.0;
 
@@ -204,7 +204,7 @@ impl LoopState {
     pub fn apply(&mut self, plan: &Plan, request: Request, now: f64) -> Result<(), String> {
         match request {
             Request::Profile(p) => {
-                if !plan.config.profiles.contains_key(&p) {
+                if p != DEFAULTS && !plan.config.profiles.contains_key(&p) {
                     return Err(format!("there is no profile {p:?}"));
                 }
                 self.profile = p;
@@ -545,6 +545,17 @@ fn step_control(
         cs.state = State::Absent;
         return;
     };
+    if !kind.drivable() {
+        // Listed for what it is, never written (§3.5). Requests refuse to assign one; a configuration written by hand that does
+        // is shown with the reason instead of failing the whole plan.
+        if cs.held {
+            cs.releasing = true;
+            cmds.push(Command::Release { key: key.clone() });
+        }
+        cs.state = State::Firmware;
+        cs.reason = output.is_some().then(|| kind.undrivable_reason()).flatten();
+        return;
+    }
     let Some(output) = output else {
         // Not adopted by the active profile: give it back to the firmware.
         if cs.held {
@@ -583,11 +594,16 @@ fn step_control(
 
     // §6.4: is the control still doing what we last told it?
     if let (false, Some(raw)) = (cs.handback || cs.force_reassert, cs.written) {
-        let mode_ok = reading.mode == ControlMode::Manual;
+        let scale = c.scale();
+        // it87 and nct6775 read a manual channel at 100 % back as "no control" (§3.5): that is what was written.
+        let mode_ok = reading.mode == ControlMode::Manual || (reading.mode == ControlMode::Full && raw >= scale);
         let value_ok = match kind {
-            ControlKind::Pwm => reading.raw.is_some_and(|r| r.abs_diff(raw) <= PWM_TOLERANCE),
             // NVML percent is not duty (§0): only the policy says who is in charge.
             ControlKind::Nvml { .. } => true,
+            _ => {
+                let tolerance = (scale as f64 * READBACK_TOLERANCE).round().max(1.0) as u32;
+                reading.raw.is_some_and(|r| r.abs_diff(raw) <= tolerance)
+            }
         };
         if mode_ok && value_ok {
             cs.mismatch = 0;
@@ -603,7 +619,7 @@ fn step_control(
             } else {
                 cs.state = State::Contested;
                 let read = match (kind, reading.raw) {
-                    (ControlKind::Pwm, Some(r)) => format!("read back {:.0} %", r as f64 * 100.0 / 255.0),
+                    (ControlKind::Duty { scale }, Some(r)) => format!("read back {:.0} %", r as f64 * 100.0 / scale as f64),
                     _ => format!("read back {:.0} %", reading.percent),
                 };
                 cs.reason = Some(format!(
@@ -650,7 +666,7 @@ fn step_control(
             duty = duty.max(floor);
             cs.target = target;
         }
-        ControlKind::Pwm => {
+        _ => {
             let stop = c.stop.unwrap_or(0.0);
             let top = if immediate { 100.0 } else { c.max };
             let mut target = desired.clamp(0.0, top);

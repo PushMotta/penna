@@ -143,7 +143,7 @@ fn a_panic_hands_back_from_the_hook() {
 }
 
 #[test]
-fn it_refuses_real_motherboard_fans_until_m5() {
+fn production_needs_root() {
     // Without --mock or --sysfs-root it is production, which needs root.
     let out = Command::new(pennad()).output().unwrap();
     assert!(!out.status.success());
@@ -151,10 +151,6 @@ fn it_refuses_real_motherboard_fans_until_m5() {
     if unsafe { libc::geteuid() } != 0 {
         assert!(String::from_utf8_lossy(&out.stderr).contains("has to run as root"), "{}", String::from_utf8_lossy(&out.stderr));
     }
-    let cfg = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/fixtures/scenarios/mock-desk.config.toml");
-    let out = Command::new(pennad()).args(["--sysfs-root", "/sys", "--config"]).arg(cfg).output().unwrap();
-    assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("real /sys"), "{}", String::from_utf8_lossy(&out.stderr));
 }
 
 #[test]

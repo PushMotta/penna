@@ -6,8 +6,7 @@
 //! * [`mock_nvml::MockNvml`] is the simulator's file-backed NVML, and [`sim`] the simulator itself (§9.1).
 //! * [`held`] writes `held.json` and restores from it (§6.1, §6.2).
 //!
-//! Control (`take`, `write`, `handback`, `release`) of motherboard fans works against an injectable root only until M5: nothing
-//! writes under the real `/sys`. NVIDIA fans are controlled for real from M4.
+//! Discovery is re-run when the set of hwmon devices changes (§3.6), so a driver loaded while `pennad` runs adds its fans.
 pub mod capture;
 pub mod held;
 pub mod hwmon;
@@ -17,6 +16,8 @@ pub mod pci;
 pub mod sim;
 
 use anyhow::{Result, anyhow, bail};
+use penna_core::boards::Board;
+use penna_core::drivers::Class;
 use penna_core::held::HeldEntry;
 use penna_core::{ControlMode, Device, Inventory, Key, Readings};
 use std::collections::BTreeMap;
@@ -58,6 +59,15 @@ pub trait Backend {
     fn release(&mut self, entry: &HeldEntry) -> Result<String> {
         held::restore(entry)
     }
+    /// Whether what `discover` found may have changed since: a driver loaded or unloaded, a device added or gone (§3.6).
+    fn changed(&mut self) -> bool {
+        false
+    }
+    /// A held entry pointed at this control's files as they are now, keeping what the control was found as. `None` when this
+    /// backend doesn't have the control, or its entries name no files.
+    fn relocate(&self, _entry: &HeldEntry) -> Option<HeldEntry> {
+        None
+    }
 }
 
 pub struct Options {
@@ -65,28 +75,47 @@ pub struct Options {
     pub nvml: bool,
     /// The simulator's NVML, instead of the real one.
     pub mock_nvml: Option<PathBuf>,
-    /// Open motherboard controls for writing. Refused under the real `/sys` until M5.
+    /// Open hwmon controls for writing.
     pub control: bool,
+    /// The board database (§3.6); `None` leaves boards unnamed.
+    pub boards: Option<PathBuf>,
 }
+
+/// Where the package installs the board database.
+pub const BOARDS: &str = "/usr/share/penna/boards";
 
 impl Default for Options {
+    /// `PENNA_BOARDS` names another board database, such as a checkout's `data/boards`.
     fn default() -> Options {
-        Options { sysfs_root: PathBuf::from("/sys"), nvml: true, mock_nvml: None, control: false }
+        let boards = std::env::var_os("PENNA_BOARDS").map_or_else(|| PathBuf::from(BOARDS), PathBuf::from);
+        Options { sysfs_root: PathBuf::from("/sys"), nvml: true, mock_nvml: None, control: false, boards: Some(boards) }
     }
 }
 
-/// Motherboard fans are driven for real from M5: until then nothing writes under the real `/sys`.
-pub fn refuse_real_sysfs(path: &Path) -> Result<()> {
-    if is_real_sysfs(path) {
-        bail!(
-            "{} is under the real /sys, and motherboard fans arrive in M5: this Penna controls NVIDIA fans and simulated motherboard \
-             fans only. For a simulated desk: pennad --mock render-burst",
-            path.display()
-        );
-    }
-    Ok(())
+/// The DMI board vendor and name under a sysfs root, which are world-readable.
+pub fn dmi_board(sysfs_root: &Path) -> Option<(String, String)> {
+    let read = |f: &str| std::fs::read_to_string(sysfs_root.join("class/dmi/id").join(f)).ok().map(|s| s.trim().to_owned());
+    Some((read("board_vendor")?, read("board_name")?))
 }
 
+/// Every board file in `dir`, and why any could not be read.
+pub fn load_boards(dir: &Path) -> (Vec<Board>, Vec<String>) {
+    let mut boards = Vec::new();
+    let mut problems = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else { return (boards, problems) };
+    let mut paths: Vec<PathBuf> =
+        entries.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "toml")).collect();
+    paths.sort();
+    for p in paths {
+        match std::fs::read_to_string(&p).map_err(|e| e.to_string()).and_then(|t| Board::parse(&t)) {
+            Ok(b) => boards.push(b),
+            Err(e) => problems.push(format!("{}: {e}", p.display())),
+        }
+    }
+    (boards, problems)
+}
+
+/// Whether a path is under the real `/sys`, rather than a test tree.
 pub fn is_real_sysfs(path: &Path) -> bool {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()).starts_with("/sys")
 }
@@ -94,14 +123,32 @@ pub fn is_real_sysfs(path: &Path) -> bool {
 /// Every backend this machine has, and what they found.
 pub struct Machine {
     backends: Vec<Box<dyn Backend>>,
+    /// What each backend found, in the order of `backends`.
+    found: Vec<Vec<Device>>,
+    /// Findings from opening the backends (NVML missing), kept across rediscovery.
+    opened: Vec<String>,
+    sysfs_root: PathBuf,
     /// Control key → the backend that owns it.
     owners: BTreeMap<Key, usize>,
+    /// What the board database knows about this machine's board.
+    pub board: Option<Board>,
     pub inventory: Inventory,
+}
+
+/// hwmon controls are named for their chip and channel until pairing names them for a header (§5.2): "IT8688E pwm1". Two chips
+/// both have a `pwm1`, and a name that two controls share can't be used to pick one.
+fn label_controls(inventory: &mut Inventory) {
+    for d in inventory.devices.iter_mut().filter(|d| d.source == penna_core::Source::Hwmon) {
+        let chip = d.model.clone().unwrap_or_else(|| d.driver.clone());
+        for c in &mut d.controls {
+            c.label = format!("{chip} {}", c.key.channel());
+        }
+    }
 }
 
 impl Machine {
     pub fn open(opts: &Options) -> Result<Machine> {
-        let mut notes = Vec::new();
+        let mut opened = Vec::new();
         let hwmon = if opts.control { hwmon::Hwmon::controlling(&opts.sysfs_root)? } else { hwmon::Hwmon::new(&opts.sysfs_root) };
         let mut backends: Vec<Box<dyn Backend>> = vec![Box::new(hwmon)];
         if let Some(root) = &opts.mock_nvml {
@@ -109,31 +156,87 @@ impl Machine {
         } else if opts.nvml {
             match nvml::NvmlBackend::open() {
                 Ok(b) => backends.push(Box::new(b)),
-                Err(reason) => notes.push(reason),
+                Err(reason) => opened.push(reason),
             }
         }
+        let found = vec![Vec::new(); backends.len()];
+        let board = match (&opts.boards, dmi_board(&opts.sysfs_root)) {
+            (Some(dir), Some((vendor, name))) => {
+                let (boards, problems) = load_boards(dir);
+                opened.extend(problems);
+                penna_core::boards::find(&boards, &vendor, &name).cloned()
+            }
+            _ => None,
+        };
+        let mut m = Machine {
+            backends,
+            found,
+            opened,
+            sysfs_root: opts.sysfs_root.clone(),
+            owners: BTreeMap::new(),
+            board,
+            inventory: Inventory::default(),
+        };
+        let mut errors = Vec::new();
+        for i in 0..m.backends.len() {
+            if let Err(e) = m.discover(i) {
+                errors.push(e);
+            }
+        }
+        m.assemble(errors);
+        Ok(m)
+    }
 
-        let mut devices = Vec::new();
-        let mut owners = BTreeMap::new();
-        for (i, backend) in backends.iter_mut().enumerate() {
-            match backend.discover() {
-                Ok(found) => {
-                    for d in &found {
-                        for c in &d.controls {
-                            owners.insert(c.key.clone(), i);
-                        }
-                    }
-                    devices.extend(found);
-                }
-                Err(e) => notes.push(format!("{}: {e:#}", backend.name())),
+    /// Discovers again when a backend says its devices changed (§3.6), and says whether it did. The devices may come out the
+    /// same while their files moved, as when a driver is reloaded: held entries then need [`Machine::relocate`].
+    pub fn rediscover(&mut self) -> bool {
+        let changed: Vec<usize> = (0..self.backends.len()).filter(|&i| self.backends[i].changed()).collect();
+        if changed.is_empty() {
+            return false;
+        }
+        let mut errors = Vec::new();
+        for i in changed {
+            if let Err(e) = self.discover(i) {
+                errors.push(e);
             }
         }
-        let has_super_io = devices.iter().any(|d| hwmon::SUPER_IO_DRIVERS.contains(&d.driver.as_str()));
-        if !has_super_io {
+        self.assemble(errors);
+        true
+    }
+
+    fn discover(&mut self, i: usize) -> Result<(), String> {
+        match self.backends[i].discover() {
+            Ok(found) => {
+                self.found[i] = found;
+                Ok(())
+            }
+            Err(e) => {
+                self.found[i].clear();
+                Err(format!("{}: {e:#}", self.backends[i].name()))
+            }
+        }
+    }
+
+    fn assemble(&mut self, errors: Vec<String>) {
+        self.owners.clear();
+        for (i, found) in self.found.iter().enumerate() {
+            for c in found.iter().flat_map(|d| &d.controls) {
+                self.owners.insert(c.key.clone(), i);
+            }
+        }
+        let devices: Vec<Device> = self.found.iter().flatten().cloned().collect();
+        let mut notes = self.opened.clone();
+        notes.extend(errors);
+        let motherboard = devices.iter().any(|d| penna_core::drivers::lookup(&d.driver).is_some_and(|e| e.class == Class::Motherboard));
+        if !motherboard {
             notes.push("Motherboard fans: none visible. No Super I/O driver (it87, nct6775, …) is bound.".to_owned());
         }
-        let unreachable = pci::unreachable(&opts.sysfs_root);
-        Ok(Machine { backends, owners, inventory: Inventory { devices, unreachable, notes } })
+        let unreachable = pci::unreachable(&self.sysfs_root);
+        self.inventory = Inventory { devices, unreachable, notes };
+        if let Some(b) = &self.board {
+            b.apply(&mut self.inventory);
+        }
+        label_controls(&mut self.inventory);
     }
 
     fn owner(&mut self, key: &Key) -> Result<&mut Box<dyn Backend>> {
@@ -155,6 +258,10 @@ impl Machine {
     }
     pub fn handback(&mut self, key: &Key) -> Result<()> {
         self.owner(key)?.handback(key)
+    }
+    pub fn relocate(&self, entry: &HeldEntry) -> Option<HeldEntry> {
+        let i = *self.owners.get(entry.key())?;
+        self.backends[i].relocate(entry)
     }
     /// Puts a held control back, through the backend that owns it when there is one.
     pub fn release(&mut self, entry: &HeldEntry) -> Result<String> {

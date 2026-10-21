@@ -1,8 +1,8 @@
 # Penna
 
-Fan control for Linux, made to be understood. The design is in [DESIGN.md](DESIGN.md). This is milestone M2: the control loop,
-its safety paths, a simulated desk, and the socket surfaces talk to (protocol v2, DESIGN.md §7.3). Nothing here writes to real
-hardware; real control arrives in M4 (NVIDIA) and M5 (motherboard).
+Fan control for Linux, made to be understood. The design is in [DESIGN.md](DESIGN.md). Penna drives NVIDIA fans (M4) and every
+hwmon fan of a kind it knows (M5, in progress: DESIGN.md §3.5), runs as a service (M6), and is meant for any workstation or
+laptop: it builds on the kernel's own drivers and says plainly what a machine can't do.
 
 ```
 cargo run -p pennad -- --mock render-burst --forever   # the mock desk, listening on $XDG_RUNTIME_DIR/penna/penna.sock
@@ -11,6 +11,8 @@ cargo run -p pennad -- --mock faults --speed 10        # every fault Penna must 
 cargo run -p penna -- watch                            # live table: from pennad when it answers, else the real machine, read-only
 cargo run -p penna -- state [--json]                   # what pennad is doing now
 cargo run -p penna -- profile quiet                    # switch profile, and keep it
+cargo run -p penna -- profile defaults                 # every fan back to its BIOS or driver, and kept there
+cargo run -p penna -- reset                            # the same; without pennad (as root) it restores held.json itself
 cargo run -p penna -- set "CPU cooler" 70 --for 30s    # hold a fan (or `all`); `auto` puts it back on its curve
 cargo run -p penna -- full-speed on|off
 cargo run -p penna -- events                           # takes, hand-backs, failsafes, emergencies, as they happen
@@ -62,14 +64,17 @@ The package holds `/usr/bin/pennad`, `/usr/bin/penna`, the systemd unit (`packag
 watchdog, `ExecStopPost=penna restore`, `Restart=on-failure`, hardened but allowed `/sys` and `/dev/nvidia*`), the `penna`
 group (`sysusers.d`), and the plugin under `/usr/share/penna/plugin`.
 
-## Real hardware (M4: NVIDIA fans)
+## Real hardware (M4: NVIDIA fans, M5: motherboard fans)
 
-Production `pennad` runs as root and controls NVIDIA fans; motherboard fans arrive in M5.
+Production `pennad` runs as root and controls NVIDIA fans and every hwmon fan of a kind it drives. New hwmon devices are found
+while it runs, so a driver loaded later adds its fans without a restart.
 
 ```
 sudo ./target/debug/pennad --config test/fixtures/desk-3090.config.toml   # this desk's RTX 3090
 python3 -I tools/nvml-state.py                                            # what NVML says about every fan, no root
 pkexec tools/m4-hardware-test.sh                                          # every way out hands the fans back (§9.4)
+pkexec tools/m5-hardware-test.sh                                          # the same for every it87 channel, plus contests and pairing
+PENNA_BOARDS=data/boards cargo run -p penna -- doctor                     # with this checkout's board database
 ```
 
 The hardware test runs `pennad` as a transient systemd service, holds the fans at 45 %, and ends the daemon six ways:

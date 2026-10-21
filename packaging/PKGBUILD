@@ -35,6 +35,8 @@ package() {
   install -Dm644 packaging/penna.sysusers "$pkgdir/usr/lib/sysusers.d/penna.conf"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/penna/LICENSE"
   install -Dm644 DESIGN.md README.md -t "$pkgdir/usr/share/doc/penna/"
+  # The board database (DESIGN.md §3.6).
+  install -Dm644 data/boards/*.toml -t "$pkgdir/usr/share/penna/boards/"
   # The Omarchy plugin, to symlink into ~/.config/omarchy/plugins/io.github.pushmotta.penna.
   install -d "$pkgdir/usr/share/penna/plugin"
   cp -r --no-preserve=ownership plugin/manifest.json plugin/*.qml plugin/Model.js plugin/components "$pkgdir/usr/share/penna/plugin/"

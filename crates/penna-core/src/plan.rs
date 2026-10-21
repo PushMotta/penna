@@ -69,11 +69,24 @@ impl ControlPlan {
         matches!(self.kind, Some(ControlKind::Nvml { .. }))
     }
 
-    /// The raw value for a duty: 0–255 PWM, rounded up so the fan never gets less than it was given, or NVML percent within its range.
+    /// The raw value for a duty: 0 to the control's scale (255 for PWM), rounded up so the fan never gets less than it was given,
+    /// or NVML percent within its range.
     pub fn raw(&self, duty: f64) -> u32 {
         match self.kind {
             Some(ControlKind::Nvml { min, max }) => (duty.round() as i64).clamp(min as i64, max as i64) as u32,
-            _ => (duty * 255.0 / 100.0 - 1e-9).ceil().clamp(0.0, 255.0) as u32,
+            _ => {
+                let scale = self.scale() as f64;
+                (duty * scale / 100.0 - 1e-9).ceil().clamp(0.0, scale) as u32
+            }
+        }
+    }
+
+    /// What 100 % is written as.
+    pub fn scale(&self) -> u32 {
+        match self.kind {
+            Some(ControlKind::Duty { scale }) => scale,
+            Some(ControlKind::Nvml { max, .. }) => max,
+            _ => 255,
         }
     }
 }
@@ -128,8 +141,11 @@ impl Plan {
         Ok(Plan { config, curves, virtuals, controls, emergency, physical: physical.into_iter().collect() })
     }
 
-    /// The curve a profile gives a control, or `None` for firmware.
+    /// The curve a profile gives a control, or `None` for firmware. Defaults gives every control to its firmware (§4.7).
     pub fn assignment(&self, profile: &str, key: &Key) -> Option<&str> {
+        if profile == config::DEFAULTS {
+            return None;
+        }
         let curve = self.config.profiles.get(profile)?.get(key)?;
         (curve != config::FIRMWARE).then_some(curve.as_str())
     }
@@ -265,7 +281,7 @@ mod tests {
                     controls: vec![ControlInfo {
                         key: Key::parse("hwmon/it87/it87.2608/pwm1").unwrap(),
                         label: "pwm1".into(),
-                        kind: ControlKind::Pwm,
+                        kind: ControlKind::Duty { scale: 255 },
                     }],
                 },
                 Device {

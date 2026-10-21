@@ -2,37 +2,14 @@
 //! Read-only, and it works as an ordinary user: [`gather`] reads the machine and asks every daemon that answers, and
 //! [`findings`] turns that into sentences, so the wording is tested without any of the I/O.
 use crate::client::Client;
+use penna_core::boards::DriverAdvice;
+use penna_core::drivers::{self, Class, Tier};
 use penna_core::{Source, State, Unreachable};
 use penna_hw::{Machine, Options};
 use penna_proto::Tick;
 use serde::Serialize;
 use std::path::Path;
 use std::process::Command;
-
-/// Super I/O and laptop EC drivers that expose motherboard fans through hwmon.
-const FAN_DRIVERS: &[&str] = &[
-    "it87",
-    "nct6775",
-    "nct6683",
-    "nct6687",
-    "f71882fg",
-    "f71805f",
-    "f75375s",
-    "w83627ehf",
-    "w83627hf",
-    "w83781d",
-    "w83795",
-    "sch5627",
-    "sch5636",
-    "pc87360",
-    "pc87427",
-    "smsc47m1",
-    "vt1211",
-    "asb100",
-    "dell_smm",
-    "thinkpad",
-    "applesmc",
-];
 
 /// Other programs that drive fans; with Penna they would fight over the same controls (§6.4).
 pub const OTHER_DAEMONS: &[&str] = &["coolercontrold", "fan2go", "fancontrol", "thinkfan", "nbfc_service"];
@@ -72,13 +49,35 @@ pub enum KernelLog {
     Unreadable,
 }
 
+/// An hwmon device with fan controls.
+pub struct FanDriver {
+    /// hwmon's `name`: `it8688`.
+    pub driver: String,
+    /// The chip, when the board database names it: "IT8688E".
+    pub model: Option<String>,
+    pub class: Class,
+    pub controls: usize,
+    /// Controls Penna drives (§3.5).
+    pub drivable: usize,
+    /// Why the others can't be driven.
+    pub why: Option<String>,
+    pub tier: Tier,
+}
+
 pub struct Facts {
     pub daemons: Vec<Daemon>,
     pub production_socket: String,
-    /// Fan drivers bound to an hwmon device, with how many fan controls each offers.
-    pub fan_drivers: Vec<(String, usize)>,
+    pub fan_drivers: Vec<FanDriver>,
     /// Vendor and model, from DMI.
     pub board: Option<(String, String)>,
+    /// The board database knows this board (§3.6).
+    pub board_known: bool,
+    /// What the board database says to load, when it says.
+    pub advice: Option<DriverAdvice>,
+    /// A laptop or other portable, from the DMI chassis type.
+    pub portable: bool,
+    /// `None` when it can't be told (no EFI).
+    pub secure_boot: Option<bool>,
     pub kernel_log: KernelLog,
     /// The chips the stock it87 module knows, when the module is there.
     pub it87_chips: Option<Vec<String>>,
@@ -104,14 +103,23 @@ pub fn gather() -> Facts {
             });
         }
     }
-    let (fan_drivers, nvidia, unreachable) = match Machine::open(&Options::default()) {
+    let (fan_drivers, nvidia, unreachable, known) = match Machine::open(&Options::default()) {
         Ok(m) => {
+            let known = m.board.clone();
             let inv = m.inventory;
             let fan_drivers = inv
                 .devices
                 .iter()
-                .filter(|d| d.source == Source::Hwmon && FAN_DRIVERS.contains(&d.driver.as_str()))
-                .map(|d| (d.driver.clone(), d.controls.len()))
+                .filter(|d| d.source == Source::Hwmon && (!d.controls.is_empty() || penna_hw::hwmon::is_motherboard(&d.driver)))
+                .map(|d| FanDriver {
+                    driver: d.driver.clone(),
+                    model: d.model.clone(),
+                    class: drivers::lookup(&d.driver).map_or(Class::Other, |e| e.class),
+                    controls: d.controls.len(),
+                    drivable: d.controls.iter().filter(|c| c.kind.drivable()).count(),
+                    why: d.controls.iter().find_map(|c| c.kind.undrivable_reason()),
+                    tier: drivers::tier(&d.driver),
+                })
                 .collect();
             let gpus: Vec<(String, usize)> =
                 inv.devices.iter().filter(|d| d.source == Source::Nvml).map(|d| (d.label.clone(), d.controls.len())).collect();
@@ -120,15 +128,19 @@ pub fn gather() -> Facts {
                 (true, Some(why)) => Err(why),
                 _ => Ok(gpus),
             };
-            (fan_drivers, nvidia, inv.unreachable)
+            (fan_drivers, nvidia, inv.unreachable, known)
         }
-        Err(e) => (Vec::new(), Err(format!("reading the machine failed: {e:#}")), Vec::new()),
+        Err(e) => (Vec::new(), Err(format!("reading the machine failed: {e:#}")), Vec::new(), None),
     };
     Facts {
         daemons,
         production_socket: penna_proto::PRODUCTION_SOCKET.to_owned(),
         fan_drivers,
-        board: board(),
+        board: penna_hw::dmi_board(Path::new("/sys")),
+        board_known: known.is_some(),
+        advice: known.and_then(|b| b.driver),
+        portable: portable(),
+        secure_boot: secure_boot(),
         kernel_log: kernel_log(),
         it87_chips: it87_chips(),
         other_daemons: OTHER_DAEMONS.iter().filter(|d| active(d)).map(|d| (*d).to_owned()).collect(),
@@ -137,9 +149,19 @@ pub fn gather() -> Facts {
     }
 }
 
-fn board() -> Option<(String, String)> {
-    let read = |f: &str| std::fs::read_to_string(Path::new("/sys/class/dmi/id").join(f)).ok().map(|s| s.trim().to_owned());
-    Some((read("board_vendor")?, read("board_name")?))
+/// DMI chassis types 8–14, 30–32: portable, laptop, notebook, hand-held, sub-notebook, tablet, convertible, detachable.
+fn portable() -> bool {
+    std::fs::read_to_string("/sys/class/dmi/id/chassis_type")
+        .ok()
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .is_some_and(|t| matches!(t, 8..=14 | 30..=32))
+}
+
+/// The UEFI `SecureBoot` variable: four attribute bytes, then 1 when it is on.
+fn secure_boot() -> Option<bool> {
+    let dir = std::fs::read_dir("/sys/firmware/efi/efivars").ok()?;
+    let var = dir.filter_map(|e| e.ok()).find(|e| e.file_name().to_string_lossy().starts_with("SecureBoot-"))?;
+    std::fs::read(var.path()).ok()?.last().map(|b| *b == 1)
 }
 
 fn kernel_log() -> KernelLog {
@@ -283,8 +305,9 @@ pub fn findings(f: &Facts) -> Vec<Finding> {
         }
     }
 
-    // Motherboard fans.
-    if f.fan_drivers.is_empty() {
+    // Motherboard and laptop fans.
+    let motherboard = f.fan_drivers.iter().any(|d| d.class == Class::Motherboard);
+    if !motherboard && !f.portable {
         let board = f.board.as_ref().map(|(v, n)| format!(" This board is a {v} {n}.")).unwrap_or_default();
         let mut text = format!("No motherboard fan driver is bound, so Penna can't see the motherboard's fans.{board}");
         match &f.kernel_log {
@@ -296,7 +319,12 @@ pub fn findings(f: &Facts) -> Vec<Finding> {
             ),
         }
         let vendor = f.board.as_ref().map(|(v, _)| v.to_ascii_lowercase()).unwrap_or_default();
-        let todo = if vendor.contains("gigabyte") {
+        let mut todo = if let Some(a) = &f.advice {
+            let install = a.package.as_ref().map(|p| format!("Install {p}, then load it")).unwrap_or_else(|| "Load it".into());
+            let options = a.options.as_ref().map(|o| format!(" {o}")).unwrap_or_default();
+            let risk = a.risk.as_ref().map(|r| format!(" {r}")).unwrap_or_default();
+            format!("From Penna's board database: {} {install}: sudo modprobe {}{options}.{risk}", a.why, a.module)
+        } else if vendor.contains("gigabyte") {
             let known = f
                 .it87_chips
                 .as_ref()
@@ -305,30 +333,63 @@ pub fn findings(f: &Facts) -> Vec<Finding> {
             format!(
                 "Gigabyte boards use ITE chips, driven by it87.{known} Newer ITE chips need the out-of-tree it87-dkms-git (AUR), loaded \
                  with ignore_resource_conflict=1. Its README calls that inherently risky: ACPI and the driver may use the chip at the \
-                 same time, which can cause unexpected reboots. Penna drives motherboard fans from M5."
+                 same time, which can cause unexpected reboots."
             )
         } else if ["asus", "micro-star", "msi", "asrock"].iter().any(|v| vendor.contains(v)) {
             "Most ASUS, MSI and ASRock boards use a Nuvoton chip: try sudo modprobe nct6775 (or nct6683). sudo sensors-detect, from \
-             lm_sensors, names the chip. Penna drives motherboard fans from M5."
+             lm_sensors, names the chip."
                 .to_owned()
         } else {
-            "sudo sensors-detect, from lm_sensors, names the chip and the driver it needs. Penna drives motherboard fans from M5."
-                .to_owned()
+            "sudo sensors-detect, from lm_sensors, names the chip and the driver it needs.".to_owned()
         };
-        push(&mut out, "motherboard", Status::Attention, text, Some(todo));
-    } else {
-        for (driver, controls) in &f.fan_drivers {
-            push(
-                &mut out,
-                "motherboard",
-                Status::Ok,
-                format!(
-                    "{driver} is bound, with {controls} fan control{}. Penna drives motherboard fans from M5.",
-                    if *controls == 1 { "" } else { "s" }
-                ),
-                None,
-            );
+        let dkms =
+            f.advice.as_ref().is_some_and(|a| a.package.as_deref().is_some_and(|p| p.contains("dkms"))) || vendor.contains("gigabyte");
+        if dkms && f.secure_boot == Some(true) {
+            todo.push_str(" Secure Boot is on: a DKMS module loads only once it is signed with a key you have enrolled.");
         }
+        push(&mut out, "motherboard", Status::Attention, text, Some(todo));
+    }
+    for d in &f.fan_drivers {
+        let area = match d.class {
+            Class::Motherboard => "motherboard",
+            Class::Laptop => "laptop",
+            Class::Gpu => "gpu",
+            Class::Other => "fans",
+        };
+        let name = d.model.as_ref().map_or_else(|| d.driver.clone(), |m| format!("{m} ({})", d.driver));
+        let plural = |n: usize| if n == 1 { "" } else { "s" };
+        if d.drivable == 0 {
+            let why = d.why.as_deref().map(|w| format!(" {w}")).unwrap_or_default();
+            push(&mut out, area, Status::Info, format!("{name} is bound; Penna can't drive its fans yet.{why}"), None);
+            continue;
+        }
+        let tier = match d.tier {
+            Tier::Verified => " Its driver is Verified: Penna's hardware test has passed with it.".to_owned(),
+            Tier::Captured => {
+                " Its driver is Captured: it runs in the simulator from a real machine, but hasn't had the hardware test.".into()
+            }
+            Tier::Documented => " Its driver is Documented: nobody has run Penna's hardware test with it yet.".into(),
+        };
+        let count = if d.drivable == d.controls {
+            format!("{} fan control{} Penna can drive", d.drivable, plural(d.drivable))
+        } else {
+            let why = d.why.as_deref().map(|w| format!(" ({})", w.trim_end_matches('.'))).unwrap_or_default();
+            format!("{} fan controls, {} of which Penna can drive{why}", d.controls, d.drivable)
+        };
+        push(&mut out, area, Status::Ok, format!("{name} is bound, with {count}.{tier}"), None);
+    }
+    match (&f.board, f.board_known, motherboard) {
+        (Some((v, n)), true, _) => {
+            push(&mut out, "board", Status::Info, format!("{v} {n} is in Penna's board database: its headers and sensors are named."), None)
+        }
+        (Some((v, n)), false, true) => push(
+            &mut out,
+            "board",
+            Status::Info,
+            format!("{v} {n} isn't in Penna's board database yet, so its fans and sensors are named by channel."),
+            Some("penna capture <dir> records what a new entry is made from (DESIGN.md §3.6).".into()),
+        ),
+        _ => {}
     }
 
     // Other fan programs.
@@ -402,6 +463,10 @@ mod tests {
             production_socket: "/run/penna/penna.sock".into(),
             fan_drivers: vec![],
             board: Some(("Gigabyte Technology Co., Ltd.".into(), "X570 AORUS PRO".into())),
+            board_known: false,
+            advice: None,
+            portable: false,
+            secure_boot: Some(false),
             kernel_log: KernelLog::Conflict("ACPI: OSL: Resource conflict; ACPI support missing from driver?".into()),
             it87_chips: Some(vec!["IT8689E".into(), "IT8792E/IT8795E".into()]),
             other_daemons: vec![],
@@ -456,7 +521,16 @@ mod tests {
     #[test]
     fn a_healthy_machine_needs_nothing() {
         let mut f = facts();
-        f.fan_drivers = vec![("it87".into(), 5)];
+        f.fan_drivers = vec![FanDriver {
+            driver: "it8688".into(),
+            model: Some("IT8688E".into()),
+            class: Class::Motherboard,
+            controls: 5,
+            drivable: 5,
+            why: None,
+            tier: Tier::Documented,
+        }];
+        f.board_known = true;
         let mut tick: Tick = serde_json::from_str(include_str!("../../penna-proto/tests/fixtures/tick.json")).unwrap();
         tick.emergency.clear();
         tick.controls.retain(|c| matches!(c.state, State::Curve | State::Handback | State::Override));
@@ -470,7 +544,15 @@ mod tests {
         });
         let all = findings(&f);
         assert!(all.iter().all(|x| x.status != Status::Attention), "{all:?}");
-        assert_eq!(by_area(&all, "motherboard")[0].text, "it87 is bound, with 5 fan controls. Penna drives motherboard fans from M5.");
+        assert_eq!(
+            by_area(&all, "motherboard")[0].text,
+            "IT8688E (it8688) is bound, with 5 fan controls Penna can drive. Its driver is Documented: nobody has run Penna's \
+             hardware test with it yet."
+        );
+        assert_eq!(
+            by_area(&all, "board")[0].text,
+            "Gigabyte Technology Co., Ltd. X570 AORUS PRO is in Penna's board database: its headers and sensors are named."
+        );
     }
 
     #[test]
@@ -483,6 +565,44 @@ mod tests {
         assert!(by_area(&all, "other tools")[0].todo.as_deref().unwrap().contains("disable --now coolercontrold"));
         let mb = by_area(&all, "motherboard")[0];
         assert!(mb.text.contains("isn't readable") && mb.todo.as_deref().unwrap().contains("nct6775"));
+    }
+
+    #[test]
+    fn the_board_database_names_the_driver_and_secure_boot_is_checked() {
+        let mut f = facts();
+        let board = penna_core::boards::Board::parse(include_str!("../../../data/boards/gigabyte-x570-aorus-pro.toml")).unwrap();
+        f.board_known = true;
+        f.advice = board.driver;
+        f.secure_boot = Some(true);
+        let all = findings(&f);
+        let todo = by_area(&all, "motherboard")[0].todo.clone().unwrap();
+        assert!(todo.starts_with("From Penna's board database: The stock it87 in Linux 7.2 doesn't know the IT8688E"), "{todo}");
+        assert!(todo.contains("Install it87-dkms-git, then load it: sudo modprobe it87 ignore_resource_conflict=1."), "{todo}");
+        assert!(todo.contains("inherently risky") && todo.ends_with("signed with a key you have enrolled."), "{todo}");
+    }
+
+    #[test]
+    fn a_laptop_without_a_motherboard_chip_is_not_asked_for_one() {
+        let mut f = facts();
+        f.portable = true;
+        f.fan_drivers = vec![FanDriver {
+            driver: "thinkpad".into(),
+            model: None,
+            class: Class::Laptop,
+            controls: 1,
+            drivable: 0,
+            why: penna_core::ControlKind::Levels { steps: 8 }.undrivable_reason(),
+            tier: Tier::Documented,
+        }];
+        let all = findings(&f);
+        assert!(by_area(&all, "motherboard").is_empty(), "{all:?}");
+        let laptop = by_area(&all, "laptop")[0];
+        assert_eq!(laptop.status, Status::Info);
+        assert!(
+            laptop.text.starts_with("thinkpad is bound; Penna can't drive its fans yet. This fan takes 8 fixed steps"),
+            "{}",
+            laptop.text
+        );
     }
 
     #[test]

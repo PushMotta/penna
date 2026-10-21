@@ -1,6 +1,6 @@
 # Penna — design specification
 
-Draft 3 · 21 October 2026 · status: decisions approved (§11), UI quality bar added (§8.6), M0–M4 and M6 done, design review 01 approved (milestone D, §11.1). Penna 0.6.0 runs as a service on this desk and controls the 3090. Draft 3 widens Penna from this desk to any workstation or laptop, with automatic setup, generated curves and a Defaults profile: design review 02 (§11.2) is proposed.
+Draft 3 · 21 October 2026 · status: decisions approved (§11), UI quality bar added (§8.6), M0–M4 and M6 done, design review 01 approved (milestone D, §11.1). Penna 0.6.0 runs as a service on this desk and controls the 3090. Draft 3 widens Penna from this desk to any workstation or laptop, with automatic setup, generated curves and a Defaults profile: design review 02 (§11.2) was approved the same day, and M5 is under way.
 
 Companion: design review 01 — mockups in real theme tokens, live motion prototypes, and eight calls before QML — is published as an artifact (https://claude.ai/artifact/DmFftUzWVBd11NNBv4e8aK). Its source is `design/penna-design-review.html`.
 
@@ -164,7 +164,7 @@ Not every fan takes a duty. What a control accepts decides what Penna can do wit
 **In code.**
 - `ControlKind` grows from `Pwm` and `Nvml` to these kinds, each with its range: the duty scale (255 or 100), RPM bounds, level count, or point count and sensor.
 - The pure tick still computes a % per control. A per-kind stage after the limits turns it into an `Output`: `Duty`, `Level`, `Rpm`, `Curve`, `Mode` or `Profile`. Firmware curves are compiled when the configuration changes, not every tick.
-- `penna-hw/src/drivers.rs` holds a table keyed by hwmon `name`. Each entry gives the kind, the enable values, the restore mode where the original can't be read, the read-back rule, the module options writes need, the source the entry was written from, and its tier.
+- `penna-core/src/drivers.rs` holds a table keyed by hwmon `name`. Each entry gives the kind, what the hardware is for a person, the module options writes need, the source the entry was written from, and its tier. It is pure data, so it sits in the core beside the protocol that reports tiers. *(As built in M5; draft 3 placed it in `penna-hw`.)* The restore mode for originals that can't be read, and per-driver read-back rules, arrive with the drivers that need them (M9).
 
 ### 3.6 Machines Penna has not seen *(draft 3)*
 
@@ -975,6 +975,20 @@ Milestones, each ending in something visible:
   - The Defaults profile, `firmware.json` and `penna reset` (§6.7).
   - The doctor with the board database (this desk's entry first) and support tiers.
   - Draft 2's M5 named pairing and calibration as well; they move to M7 as steps of setup.
+
+  **In progress since 21 Oct 2026.** Built and tested against the simulator (147 Rust tests, 18 plugin logic tests):
+  - **The kinds.** `ControlKind` is `Duty { scale }`, `Nvml`, `Levels`, `Speed`, `FirmwareCurve`, `Modes` or `ReadOnly`, and the protocol reports it with a tier for every control. hwmon gives each channel its driver's kind (§3.5), and a duty channel needs a `pwmN` whose mode bits allow writes plus a `pwmN_enable`. Undrivable kinds are listed with the reason and never written; adopting one is refused with that reason.
+  - **Real control.** Production `pennad` opens hwmon for writing; the M4 guards are gone. Full speed read back as `pwm_enable` 0 is not a contest. Read-back tolerance is 2 % of the control's own scale.
+  - **`held.json` names real paths.** Entries name the device's real path, not `class/hwmon/hwmonN`, so a renumbered device can't receive another's restore.
+  - **Rediscovery.** Each tick lists `class/hwmon` with its link targets; any change rediscovers the hwmon backend and plans again. Held entries follow their control to its new files by key. A held control that goes away raises an alert. A control taken again keeps the originals it was first found with.
+  - **A device that is gone is not a failed restore.** Its entry waits in `held.json`, across a clean stop and a restart. The next `pennad` keeps it, and puts the control back as it was found when the device returns. Before this, an unloaded driver would have made the next start refuse to run.
+  - **Defaults** is built in (§4.7). It is first in every profile list, a new install starts there, adopting or releasing in it is refused, and the popup says "Defaults · the BIOS and drivers run every fan".
+  - **`penna reset`** goes through `pennad` when it runs. Without it, as root, `penna reset` restores `held.json` and saves Defaults. Removing the package runs it first.
+  - **The board database** loads from `/usr/share/penna/boards` by DMI (`PENNA_BOARDS` or `pennad --boards` for another directory). This desk's entry names its tachs and temperatures, drops the unconnected `EC_TEMP` inputs and the fixed-290 K `acpitz`, and gives the doctor the driver to load and its risk. Until pairing names them, hwmon controls are called by chip and channel ("IT8688E pwm1"), because two chips both have a `pwm1`.
+  - **The doctor** reports each fan driver's tier, says why a driver's fans can't be driven, checks Secure Boot when a DKMS module is the answer, and doesn't ask a laptop for a Super I/O chip.
+  - `tools/m5-hardware-test.sh` holds every it87 channel at 60 %. It ends `pennad` in the five ways of §9.4 and checks every `pwm_enable` comes back exactly. It also watches 40 s for channels that revert (the IT8792E question), checks full speed, and spins one control at a time to see which header it drives.
+
+  Still to do: the hardware test on this desk, with the driver loaded. The write test (§5.1) moves to M7, where setup's procedures run in the loop. `firmware.json` arrives with the first kind whose state outlives a reboot (M9); `penna reset` already restores everything there is today.
 - **M6** — Packaging, README, first release. **Done 21 Oct 2026**, ahead of M5 (motherboard fans need the it87 decision, §13): 0.6.0 is packaged, installed and running as a service on this desk, with 136 Rust tests and 17 plugin logic tests (§7.6, as built). Still to do for a public release: publish the repository and the plugin as its own repo (§11, decision 9), and switch the PKGBUILD to a tagged tarball (now M10).
 - **D2** *(draft 3)* — Visual review of the new UI: the setup view, the Defaults pill, and kind, tier and drift on fan cards. Mockups in real theme tokens across the four review themes, before their QML.
 - **M7** — **Setup** (§5.1–5.4, §5.6): write test, pairing, roles with *Identify*, calibration and drift, in the studio and `penna setup`. Run on this desk and on every simulated driver.
@@ -1014,7 +1028,7 @@ The review (companion artifact, section G) asked for eight calls, and the user a
 7. **Three profiles ship: Quiet, Balanced, Render.** Names are editable. Up to five show as pills; more go into a dropdown.
 8. **Motion constants:** linear glide over one tick, a text dead band of 0.6 of a step, a 140 ms text ease, and `OutCubic` for everything else.
 
-### 11.2 Design review 02: any machine (proposed 21 Oct 2026)
+### 11.2 Design review 02: any machine (approved 21 Oct 2026)
 
 Asked for on 21 Oct 2026, in the user's words: "control all the systems fans with this app, same level of control as the GPU fans", "auto calibration, or auto curve profile creation", "always have the ability to reset to bios or driver defaults", and "this has to work on a myriad of workstations and laptops". Calls:
 
@@ -1028,6 +1042,8 @@ Asked for on 21 Oct 2026, in the user's words: "control all the systems fans wit
 8. **Platform profiles** are switched by Penna's profiles only where they are a machine's only fan lever, and through power-profiles-daemon when it runs (§3.5).
 9. **Rediscovery without a restart** when hwmon devices come and go (§3.6).
 10. **Order:** M5 (this desk, the kinds) → D2 (visual review) → M7 (setup) → M8 (generated curves) → M9 (laptops and other drivers) → M10 (public release).
+
+The user approved all ten recommendations on 21 Oct 2026 ("go ahead with your reccos").
 
 ## 12. Prior art, read but not copied
 

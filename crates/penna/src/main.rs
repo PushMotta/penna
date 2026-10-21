@@ -101,6 +101,14 @@ enum Command {
         #[arg(long, value_name = "FILE", default_value = "/run/penna/held.json")]
         from: PathBuf,
     },
+    /// Every fan back to its BIOS or driver, and kept there: the Defaults profile. Through pennad when it runs; without it
+    /// (as root), restores held.json and saves Defaults so a restarted pennad leaves the fans alone.
+    Reset {
+        #[arg(long, value_name = "FILE", default_value = "/run/penna/held.json")]
+        held: PathBuf,
+        #[arg(long, value_name = "FILE", default_value = "/etc/penna/config.toml")]
+        config: PathBuf,
+    },
     /// What stands between this machine and Penna running its fans, each with what to do. Read-only. Exits 1 when something
     /// needs attention.
     Doctor {
@@ -201,6 +209,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::Events { json } => events(json),
         Command::Waybar { follow, sensor } => bar(follow, sensor.as_deref()),
         Command::Restore { from } => restore(&from),
+        Command::Reset { held, config } => reset(&held, &config),
         Command::Check { config, measured } => check(&opts, &config, measured.as_deref()),
         Command::Doctor { json } => {
             if doctor::run(json)? > 0 {
@@ -406,8 +415,14 @@ fn restore(from: &std::path::Path) -> Result<()> {
     for d in &r.done {
         println!("restored {d}");
     }
-    if r.failed.is_empty() {
+    for g in &r.gone {
+        println!("{}: its device is gone (a driver unloaded?), so it stays in {} until it returns", g.key(), from.display());
+    }
+    if r.failed.is_empty() && r.gone.is_empty() {
         println!("Every fan is back as Penna found it; removed {}.", from.display());
+        Ok(())
+    } else if r.failed.is_empty() {
+        println!("Every fan that is here is back as Penna found it.");
         Ok(())
     } else {
         for f in &r.failed {
@@ -415,6 +430,40 @@ fn restore(from: &std::path::Path) -> Result<()> {
         }
         bail!("{} of {} controls could not be restored; {} is kept", r.failed.len(), r.failed.len() + r.done.len(), from.display())
     }
+}
+
+/// Defaults, with or without the daemon (§6.7).
+fn reset(held: &std::path::Path, config: &std::path::Path) -> Result<()> {
+    // SAFETY: geteuid has no preconditions.
+    let root = unsafe { libc::geteuid() } == 0;
+    if let Some(c) = Client::find()
+        && (c.hello.can_write || !root)
+    {
+        drop(c);
+        return say(Op::ProfileSet { name: penna_core::config::DEFAULTS.to_owned() });
+    }
+    if !root {
+        bail!("pennad isn't running, and handing fans back without it needs root: sudo penna reset");
+    }
+    restore(held)?;
+    let text = match std::fs::read_to_string(config) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            println!("No configuration at {}, so pennad starts in Defaults anyway.", config.display());
+            return Ok(());
+        }
+        Err(e) => return Err(anyhow!(e).context(format!("reading {}", config.display()))),
+    };
+    let mut cfg =
+        penna_core::config::Config::parse(&text).map_err(|e| anyhow!("{}: {e}; its profile was left as it was", config.display()))?;
+    if cfg.profile == penna_core::config::DEFAULTS {
+        println!("{} is already in Defaults.", config.display());
+        return Ok(());
+    }
+    cfg.profile = penna_core::config::DEFAULTS.to_owned();
+    penna_hw::held::write_atomically(config, cfg.saved_text().as_bytes()).with_context(|| format!("saving {}", config.display()))?;
+    println!("Saved Defaults in {}: pennad leaves every fan with its BIOS or driver when it starts.", config.display());
+    Ok(())
 }
 
 fn check(opts: &Options, path: &std::path::Path, measured: Option<&std::path::Path>) -> Result<()> {

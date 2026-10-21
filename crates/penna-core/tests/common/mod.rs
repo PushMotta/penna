@@ -52,7 +52,7 @@ pub fn inventory() -> Inventory {
                 model: None,
                 sensors: vec![],
                 tachs: vec![],
-                controls: vec![ControlInfo { key: pwm(), label: "pwm1".into(), kind: ControlKind::Pwm }],
+                controls: vec![ControlInfo { key: pwm(), label: "pwm1".into(), kind: ControlKind::Duty { scale: 255 } }],
             },
             Device {
                 id: "nvml/GPU-1".into(),
@@ -163,7 +163,7 @@ impl Rig {
             (
                 pwm(),
                 Hw {
-                    kind: ControlKind::Pwm,
+                    kind: ControlKind::Duty { scale: 255 },
                     mode: ControlMode::Automatic(2),
                     original: ControlMode::Automatic(2),
                     raw: 102,
@@ -201,10 +201,10 @@ impl Rig {
                 Sample::Error("Input/output error".into())
             } else {
                 let percent = match h.kind {
-                    ControlKind::Pwm => h.raw as f64 * 100.0 / 255.0,
-                    ControlKind::Nvml { .. } => h.raw as f64,
+                    ControlKind::Duty { scale } => h.raw as f64 * 100.0 / scale as f64,
+                    _ => h.raw as f64,
                 };
-                let raw = matches!(h.kind, ControlKind::Pwm).then_some(h.raw);
+                let raw = matches!(h.kind, ControlKind::Duty { .. }).then_some(h.raw);
                 Sample::Value(ControlReading { percent, raw, mode: h.mode })
             };
             r.controls.insert(k.clone(), sample);
@@ -239,11 +239,11 @@ impl Rig {
         let h = self.hw.get_mut(cmd.key()).expect("commands name known controls");
         match cmd {
             Command::Take { .. } => match h.kind {
-                ControlKind::Pwm => {
+                ControlKind::Duty { scale } => {
                     h.mode = ControlMode::Manual;
-                    Outcome::Taken { duty: h.raw as f64 * 100.0 / 255.0 }
+                    Outcome::Taken { duty: h.raw as f64 * 100.0 / scale as f64 }
                 }
-                ControlKind::Nvml { .. } => Outcome::Taken { duty: h.raw as f64 },
+                _ => Outcome::Taken { duty: h.raw as f64 },
             },
             Command::Write { raw, .. } | Command::Reassert { raw, .. } => {
                 if h.fail_writes {

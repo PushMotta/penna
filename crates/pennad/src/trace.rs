@@ -24,6 +24,21 @@ pub struct Trace {
     stalls: BTreeMap<Key, u32>,
     stalled: BTreeSet<Key>,
     events: Vec<(Level, Option<Key>, String)>,
+    /// Device ids as last seen, to say what came and went (§3.6).
+    devices: BTreeMap<String, String>,
+}
+
+/// "it8688 (Motherboard): 5 fan controls, 5 fans, 6 temperatures".
+fn describe(d: &penna_core::Device) -> String {
+    let count = |n: usize, one: &str| format!("{n} {one}{}", if n == 1 { "" } else { "s" });
+    format!(
+        "{} ({}): {}, {}, {}",
+        d.driver,
+        d.label,
+        count(d.controls.len(), "fan control"),
+        count(d.tachs.len(), "fan"),
+        count(d.sensors.len(), "temperature")
+    )
 }
 
 fn t(now: f64) -> String {
@@ -51,6 +66,35 @@ impl Trace {
             stalls: BTreeMap::new(),
             stalled: BTreeSet::new(),
             events: Vec::new(),
+            devices: BTreeMap::new(),
+        }
+    }
+
+    fn learn(&mut self, inventory: &penna_core::Inventory) {
+        for d in &inventory.devices {
+            for s in &d.sensors {
+                let short = if d.source == penna_core::Source::Nvml { "GPU".to_owned() } else { s.label.clone() };
+                self.labels.entry(s.key.clone()).or_insert(short);
+            }
+        }
+        self.devices = inventory.devices.iter().map(|d| (d.id.clone(), describe(d))).collect();
+    }
+
+    /// The hwmon devices changed while running (§3.6): what appeared and what went.
+    pub fn devices_changed(&mut self, now: f64, inventory: &penna_core::Inventory) {
+        let before = self.devices.clone();
+        self.learn(inventory);
+        let appeared: Vec<String> = self.devices.iter().filter(|(id, _)| !before.contains_key(*id)).map(|(_, d)| d.clone()).collect();
+        let gone: Vec<String> = before.iter().filter(|(id, _)| !self.devices.contains_key(*id)).map(|(_, d)| d.clone()).collect();
+        let mut parts = Vec::new();
+        if !appeared.is_empty() {
+            parts.push(format!("appeared: {}", appeared.join("; ")));
+        }
+        if !gone.is_empty() {
+            parts.push(format!("gone: {}", gone.join("; ")));
+        }
+        if !parts.is_empty() {
+            self.note(now, Level::Info, None, format!("Devices changed. {}", parts.join(". ")));
         }
     }
 
@@ -70,12 +114,7 @@ impl Trace {
         seconds: Option<f64>,
     ) {
         let (held, socket) = paths;
-        for d in &machine.inventory.devices {
-            for s in &d.sensors {
-                let short = if d.source == penna_core::Source::Nvml { "GPU".to_owned() } else { s.label.clone() };
-                self.labels.insert(s.key.clone(), short);
-            }
-        }
+        self.learn(&machine.inventory);
         for v in &plan.config.sensors {
             self.labels.insert(v.key.clone(), v.label.clone().unwrap_or_else(|| v.key.channel().to_owned()));
         }

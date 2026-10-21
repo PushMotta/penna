@@ -4,8 +4,9 @@ use crate::{
     ControlKindName, ControlTick, CurveKindName, CurveTick, DraftInfo, DraftTick, EmergencyTick, FirmwareTick, MixSpec, NvmlRange,
     OverrideTick, ProfileTick, SensorTick, Studio, StudioControl, StudioCurve, StudioProfile, StudioSensor, Tick, TriggerSpec, VERSION,
 };
-use penna_core::config::{ControlConfig, CurveKind, Measured, words};
+use penna_core::config::{ControlConfig, CurveKind, DEFAULTS, Measured, words};
 use penna_core::control::{LoopState, State};
+use penna_core::drivers::{self, Tier};
 use penna_core::plan::Plan;
 use penna_core::{ControlKind, Inventory, Key, LimitKind, Readings, Sample, Source};
 use std::collections::BTreeMap;
@@ -41,8 +42,10 @@ pub fn tick(cx: &Context) -> Tick {
     let sensors = sensors(cx);
     let label_of = |k: &Key| sensors.iter().find(|s| &s.key == k).map(display).unwrap_or_else(|| k.to_string());
 
-    let mut profiles: Vec<ProfileTick> = plan.config.profiles.keys().map(|id| ProfileTick { id: id.clone(), label: words(id) }).collect();
+    let mut profiles: Vec<ProfileTick> =
+        plan.config.profiles.keys().map(|id| ProfileTick { id: id.clone(), label: words(id), builtin: false }).collect();
     profiles.sort_by_key(|p| profile_rank(&p.id));
+    profiles.insert(0, ProfileTick { id: DEFAULTS.to_owned(), label: words(DEFAULTS), builtin: true });
 
     let emergency = st
         .emergency
@@ -70,10 +73,8 @@ pub fn tick(cx: &Context) -> Tick {
             ControlTick {
                 key: key.clone(),
                 label: c.label.clone(),
-                kind: c.kind.map(|k| match k {
-                    ControlKind::Pwm => ControlKindName::Pwm,
-                    ControlKind::Nvml { .. } => ControlKindName::Nvml,
-                }),
+                kind: c.kind.map(ControlKindName::from),
+                tier: c.kind.and(tier_of(cx.inventory, key)),
                 fans: tachs.len() as u32,
                 rpm,
                 rpms,
@@ -146,6 +147,11 @@ pub fn tick(cx: &Context) -> Tick {
     }
 }
 
+/// How far the driver behind a control has been checked (§3.6).
+fn tier_of(inventory: &Inventory, key: &Key) -> Option<Tier> {
+    inventory.devices.iter().find(|d| d.controls.iter().any(|c| &c.key == key)).map(|d| drivers::tier(&d.driver))
+}
+
 fn profile_rank(id: &str) -> (usize, String) {
     (PROFILE_ORDER.iter().position(|o| *o == id).unwrap_or(PROFILE_ORDER.len()), id.to_owned())
 }
@@ -170,9 +176,13 @@ pub fn studio(cx: &StudioContext) -> Studio {
         cx.sensors.iter().find(|s| &s.key == k).map(display).or_else(|| cfg.labels.get(k).cloned()).unwrap_or_else(|| k.to_string())
     };
 
-    let mut profiles: Vec<StudioProfile> =
-        cfg.profiles.iter().map(|(id, assign)| StudioProfile { id: id.clone(), label: words(id), assign: assign.clone() }).collect();
+    let mut profiles: Vec<StudioProfile> = cfg
+        .profiles
+        .iter()
+        .map(|(id, assign)| StudioProfile { id: id.clone(), label: words(id), assign: assign.clone(), builtin: false })
+        .collect();
     profiles.sort_by_key(|p| profile_rank(&p.id));
+    profiles.insert(0, StudioProfile { id: DEFAULTS.to_owned(), label: words(DEFAULTS), assign: BTreeMap::new(), builtin: true });
 
     let curves = cfg
         .curves
@@ -215,11 +225,11 @@ pub fn studio(cx: &StudioContext) -> Studio {
         })
         .collect();
 
-    let mut controls: Vec<StudioControl> = plan.controls.values().map(|c| studio_control(c, cx.measured)).collect();
+    let mut controls: Vec<StudioControl> = plan.controls.values().map(|c| studio_control(c, cx.inventory, cx.measured)).collect();
     for c in cx.inventory.devices.iter().flat_map(|d| &d.controls).filter(|c| !plan.controls.contains_key(&c.key)) {
         let label = cfg.labels.get(&c.key).cloned().unwrap_or_else(|| c.label.clone());
         let (p, _) = penna_core::plan::control_plan(&ControlConfig::defaults(c.key.clone()), Some((c.kind, label.as_str())), cx.measured);
-        controls.push(studio_control(&p, cx.measured));
+        controls.push(studio_control(&p, cx.inventory, cx.measured));
     }
 
     Studio {
@@ -236,14 +246,13 @@ pub fn studio(cx: &StudioContext) -> Studio {
     }
 }
 
-fn studio_control(c: &penna_core::plan::ControlPlan, measured: &Measured) -> StudioControl {
+fn studio_control(c: &penna_core::plan::ControlPlan, inventory: &Inventory, measured: &Measured) -> StudioControl {
     StudioControl {
         key: c.key.clone(),
         label: c.label.clone(),
-        kind: c.kind.map(|k| match k {
-            ControlKind::Pwm => ControlKindName::Pwm,
-            ControlKind::Nvml { .. } => ControlKindName::Nvml,
-        }),
+        kind: c.kind.map(ControlKindName::from),
+        tier: c.kind.and(tier_of(inventory, &c.key)),
+        why: c.kind.and_then(ControlKind::undrivable_reason),
         min: c.min,
         max: c.max,
         offset: c.offset,
@@ -262,6 +271,10 @@ fn studio_control(c: &penna_core::plan::ControlPlan, measured: &Measured) -> Stu
     }
 }
 
+fn is_motherboard(driver: &str) -> bool {
+    matches!(driver, "asus_ec_sensors" | "gigabyte_wmi") || drivers::lookup(driver).is_some_and(|e| e.class == drivers::Class::Motherboard)
+}
+
 /// "AMD CPU · Tctl", or a virtual sensor's own label.
 pub fn display(s: &SensorTick) -> String {
     if s.is_virtual { s.label.clone() } else { format!("{} · {}", s.device, s.label) }
@@ -273,7 +286,7 @@ fn rank(source: Source, driver: &str) -> u8 {
     match (source, driver) {
         (_, "k10temp" | "zenpower" | "coretemp") => 0,
         (Source::Nvml, _) | (_, "amdgpu") => 1,
-        (_, "it87" | "nct6775" | "nct6683" | "w83627ehf" | "f71882fg") => 2,
+        (_, d) if is_motherboard(d) => 2,
         (_, "nvme" | "drivetemp") => 3,
         _ => 4,
     }

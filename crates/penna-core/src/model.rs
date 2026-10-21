@@ -95,13 +95,57 @@ pub struct ControlInfo {
     pub kind: ControlKind,
 }
 
+/// What a control accepts (DESIGN.md §3.5). Penna drives `Duty` and `Nvml` from M5; the others are listed for what they are and
+/// driven from M9.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase", tag = "type")]
+#[serde(rename_all = "kebab-case", tag = "type")]
 pub enum ControlKind {
-    /// hwmon `pwmN`, 0–255
-    Pwm,
+    /// hwmon `pwmN` in manual mode: any duty. `scale` is what 100 % is written as: 255 almost everywhere, 100 on nouveau.
+    Duty { scale: u32 },
     /// An NVML fan, settable between `min` and `max` NVML percent (30–100 on the 3090, DESIGN.md §0)
     Nvml { min: u32, max: u32 },
+    /// A few fixed steps: a ThinkPad's 8 levels, Dell's off, low and high.
+    Levels { steps: u32 },
+    /// A target RPM between the driver's bounds.
+    Speed { min: u32, max: u32 },
+    /// Points the firmware runs by itself.
+    FirmwareCurve { points: u32 },
+    /// Automatic, full speed, or a vendor's named modes.
+    Modes,
+    /// Nothing Penna can write: the driver offers no control, or not one Penna will use.
+    ReadOnly,
+}
+
+impl ControlKind {
+    /// Whether this Penna drives it.
+    pub fn drivable(self) -> bool {
+        matches!(self, ControlKind::Duty { .. } | ControlKind::Nvml { .. })
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            ControlKind::Duty { .. } => "duty",
+            ControlKind::Nvml { .. } => "nvml",
+            ControlKind::Levels { .. } => "levels",
+            ControlKind::Speed { .. } => "speed",
+            ControlKind::FirmwareCurve { .. } => "firmware-curve",
+            ControlKind::Modes => "modes",
+            ControlKind::ReadOnly => "read-only",
+        }
+    }
+
+    /// Why Penna doesn't drive it, in words, or `None` when it does.
+    pub fn undrivable_reason(self) -> Option<String> {
+        let later = "Penna drives these from M9 (DESIGN.md §3.5)";
+        match self {
+            ControlKind::Duty { .. } | ControlKind::Nvml { .. } => None,
+            ControlKind::Levels { steps } => Some(format!("This fan takes {steps} fixed steps; {later}.")),
+            ControlKind::Speed { .. } => Some(format!("This fan takes a target speed in RPM; {later}.")),
+            ControlKind::FirmwareCurve { points } => Some(format!("Its firmware runs a {points}-point curve itself; {later}.")),
+            ControlKind::Modes => Some(format!("This fan only switches between its firmware's modes; {later}.")),
+            ControlKind::ReadOnly => Some("Its driver offers no control Penna can use.".to_owned()),
+        }
+    }
 }
 
 /// A device that exists but that no backend can reach, and why.
@@ -144,7 +188,7 @@ pub struct ControlReading {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ControlMode {
-    /// hwmon `pwmN_enable` = 0: no control, full speed
+    /// hwmon `pwmN_enable` = 0: no control, full speed. it87 and nct6775 also read 0 for a manual channel at 100 % (§3.5).
     Full,
     /// hwmon `pwmN_enable` = 1, or NVML's manual policy
     Manual,

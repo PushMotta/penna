@@ -1,23 +1,23 @@
 //! hwmon through sysfs (DESIGN.md §3.4). The sysfs root is injectable, so the same code reads `/sys` and a captured fixture.
 use crate::{Backend, Readback};
 use anyhow::{Context, Result, anyhow, bail};
+use penna_core::drivers::{self, Class, Driver, Offers};
 use penna_core::held::HeldEntry;
 use penna_core::{
     ControlInfo, ControlKind, ControlMode, ControlReading, Device, Key, Limit, LimitKind, Readings, Sample, SensorInfo, Source, TachInfo,
     sanity,
 };
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-
-/// Drivers that put a motherboard's fan headers on hwmon.
-pub const SUPER_IO_DRIVERS: &[&str] =
-    &["it87", "nct6775", "nct6683", "nct6687", "f71882fg", "f71808e", "w83627ehf", "w83627hf", "w83795", "asus_ec_sensors", "dell_smm"];
 
 pub struct Hwmon {
     root: PathBuf,
     chips: Vec<Chip>,
     /// Writes allowed: only through [`Hwmon::controlling`].
     control: bool,
+    /// `class/hwmon` as `discover` last saw it: each entry and where its link points (§3.6).
+    listing: Vec<(String, PathBuf)>,
 }
 
 struct Chip {
@@ -28,28 +28,54 @@ struct Chip {
 
 struct Pwm {
     key: Key,
+    kind: ControlKind,
     value: PathBuf,
     enable: PathBuf,
+}
+
+impl Pwm {
+    /// What 100 % is written as, for a duty control.
+    fn scale(&self) -> u32 {
+        match self.kind {
+            ControlKind::Duty { scale } => scale,
+            _ => 255,
+        }
+    }
 }
 
 impl Hwmon {
     /// Read-only.
     pub fn new(sysfs_root: impl Into<PathBuf>) -> Hwmon {
-        Hwmon { root: sysfs_root.into(), chips: Vec::new(), control: false }
+        Hwmon { root: sysfs_root.into(), chips: Vec::new(), control: false, listing: Vec::new() }
     }
 
-    /// Reads and writes. M1 refuses the real `/sys`; the root is made absolute so `held.json` names files anyone can find.
+    /// Reads and writes. The root is made absolute so `held.json` names files anyone can find.
     pub fn controlling(sysfs_root: &Path) -> Result<Hwmon> {
-        crate::refuse_real_sysfs(sysfs_root)?;
         let root = fs::canonicalize(sysfs_root).with_context(|| format!("opening {}", sysfs_root.display()))?;
-        Ok(Hwmon { root, chips: Vec::new(), control: true })
+        Ok(Hwmon { root, chips: Vec::new(), control: true, listing: Vec::new() })
     }
 
+    /// A control Penna may write: opened for control, and of a kind it drives (§3.5).
     fn pwm(&self, key: &Key) -> Result<&Pwm> {
         if !self.control {
             bail!("hwmon was opened read-only");
         }
-        self.chips.iter().flat_map(|c| &c.pwms).find(|p| &p.key == key).ok_or_else(|| anyhow!("{key} is not a PWM control here"))
+        let p =
+            self.chips.iter().flat_map(|c| &c.pwms).find(|p| &p.key == key).ok_or_else(|| anyhow!("{key} is not a PWM control here"))?;
+        match p.kind.undrivable_reason() {
+            Some(why) => bail!("{key}: {why}"),
+            None => Ok(p),
+        }
+    }
+
+    fn listing(&self) -> Vec<(String, PathBuf)> {
+        let Ok(entries) = fs::read_dir(self.root.join("class/hwmon")) else { return Vec::new() };
+        let mut out: Vec<(String, PathBuf)> = entries
+            .filter_map(|e| e.ok())
+            .map(|e| (e.file_name().to_string_lossy().into_owned(), fs::read_link(e.path()).unwrap_or_default()))
+            .collect();
+        out.sort();
+        out
     }
 }
 
@@ -67,8 +93,13 @@ impl Backend for Hwmon {
         "hwmon"
     }
 
+    fn changed(&mut self) -> bool {
+        self.listing() != self.listing
+    }
+
     fn discover(&mut self) -> Result<Vec<Device>> {
         self.chips.clear();
+        self.listing = self.listing();
         let class = self.root.join("class/hwmon");
         let mut dirs: Vec<(u32, PathBuf)> = match fs::read_dir(&class) {
             Ok(entries) => entries
@@ -82,8 +113,12 @@ impl Backend for Hwmon {
         dirs.sort();
 
         let mut devices: Vec<Device> = Vec::new();
-        for (_, dir) in dirs {
+        for (_, link) in dirs {
+            // Files are named through the device's real path, not `class/hwmon/hwmonN`: `held.json` then can't point at another
+            // device that took the same number after a driver was reloaded.
+            let dir = fs::canonicalize(&link).unwrap_or(link);
             let Some(name) = read_trimmed(&dir.join("name")) else { continue };
+            let entry = drivers::lookup(&name);
             let device_dir = fs::canonicalize(dir.join("device")).ok();
             let mut location = device_dir.as_deref().map_or_else(|| "virtual".to_owned(), device_component);
             let base = location.clone();
@@ -139,8 +174,10 @@ impl Backend for Hwmon {
             }
             for n in channels.pwms {
                 let key = Key::hwmon(&name, &location, &format!("pwm{n}"));
-                device.controls.push(ControlInfo { key: key.clone(), label: format!("pwm{n}"), kind: ControlKind::Pwm });
-                chip.pwms.push(Pwm { key, value: dir.join(format!("pwm{n}")), enable: dir.join(format!("pwm{n}_enable")) });
+                let (value, enable) = (dir.join(format!("pwm{n}")), dir.join(format!("pwm{n}_enable")));
+                let kind = control_kind(entry, &value, &enable);
+                device.controls.push(ControlInfo { key: key.clone(), label: format!("pwm{n}"), kind });
+                chip.pwms.push(Pwm { key, kind, value, enable });
             }
 
             devices.push(device);
@@ -168,10 +205,11 @@ impl Backend for Hwmon {
                 out.rpms.insert(key.clone(), sample);
             }
             for pwm in &chip.pwms {
+                let scale = pwm.scale() as i64;
                 let sample = match read_int_sample(&pwm.value) {
-                    Sample::Value(raw @ 0..=255) => {
+                    Sample::Value(raw) if (0..=scale).contains(&raw) => {
                         let mode = read_int(&pwm.enable).map_or(ControlMode::Unknown, ControlMode::from_pwm_enable);
-                        Sample::Value(ControlReading { percent: raw as f64 * 100.0 / 255.0, raw: Some(raw as u32), mode })
+                        Sample::Value(ControlReading { percent: raw as f64 * 100.0 / scale as f64, raw: Some(raw as u32), mode })
                     }
                     Sample::Value(raw) => Sample::Implausible(raw as f64),
                     Sample::Implausible(v) => Sample::Implausible(v),
@@ -186,35 +224,66 @@ impl Backend for Hwmon {
     fn original(&mut self, key: &Key) -> Result<HeldEntry> {
         let p = self.pwm(key)?;
         let original_enable = read_number(&p.enable)?;
-        let original_pwm = read_number(&p.value)?.clamp(0, 255) as u32;
+        let original_pwm = read_number(&p.value)?.clamp(0, p.scale() as i64) as u32;
         Ok(HeldEntry::Hwmon { key: key.clone(), enable: p.enable.clone(), original_enable, pwm: p.value.clone(), original_pwm })
     }
 
     /// Manual mode, then the duty the firmware was running written straight back: no jump (§6.1).
+    /// Manual first: several drivers refuse a duty outside manual mode (`EBUSY`, `EROFS`, §3.5).
     fn take(&mut self, key: &Key) -> Result<f64> {
         let p = self.pwm(key)?;
-        let raw = read_number(&p.value)?.clamp(0, 255);
+        let scale = p.scale() as i64;
+        let raw = read_number(&p.value)?.clamp(0, scale);
         write_number(&p.enable, 1)?;
         write_number(&p.value, raw)?;
-        Ok(raw as f64 * 100.0 / 255.0)
+        Ok(raw as f64 * 100.0 / scale as f64)
     }
 
     fn write(&mut self, key: &Key, raw: u32) -> Result<Readback> {
         let p = self.pwm(key)?;
-        write_number(&p.value, raw.min(255) as i64)?;
+        write_number(&p.value, raw.min(p.scale()) as i64)?;
         readback(p)
     }
 
     fn reassert(&mut self, key: &Key, raw: u32) -> Result<Readback> {
         let p = self.pwm(key)?;
         write_number(&p.enable, 1)?;
-        write_number(&p.value, raw.min(255) as i64)?;
+        write_number(&p.value, raw.min(p.scale()) as i64)?;
         readback(p)
+    }
+
+    fn relocate(&self, entry: &HeldEntry) -> Option<HeldEntry> {
+        let HeldEntry::Hwmon { key, original_enable, original_pwm, .. } = entry else { return None };
+        let p = self.chips.iter().flat_map(|c| &c.pwms).find(|p| &p.key == key)?;
+        Some(HeldEntry::Hwmon {
+            key: key.clone(),
+            enable: p.enable.clone(),
+            original_enable: *original_enable,
+            pwm: p.value.clone(),
+            original_pwm: *original_pwm,
+        })
     }
 }
 
+/// What a channel offers: its driver's kind (§3.5), or the generic hwmon ABI for a driver Penna doesn't know. A duty control
+/// needs a writable `pwmN` and a `pwmN_enable`, or nobody can tell who is in charge of it.
+fn control_kind(entry: Option<&Driver>, value: &Path, enable: &Path) -> ControlKind {
+    match entry.map_or(Offers::Duty { scale: 255 }, |d| d.offers) {
+        Offers::Duty { scale } if writable(value) && enable.exists() => ControlKind::Duty { scale },
+        Offers::Duty { .. } | Offers::ReadOnly => ControlKind::ReadOnly,
+        Offers::Levels { steps } => ControlKind::Levels { steps },
+        Offers::FirmwareCurve { points } => ControlKind::FirmwareCurve { points },
+        Offers::Modes => ControlKind::Modes,
+    }
+}
+
+/// sysfs marks attributes a driver won't take writes for as read-only (0444), for root as well.
+fn writable(path: &Path) -> bool {
+    fs::metadata(path).is_ok_and(|m| m.permissions().mode() & 0o222 != 0)
+}
+
 fn readback(p: &Pwm) -> Result<Readback> {
-    let raw = read_number(&p.value).ok().map(|v| v.clamp(0, 255) as u32);
+    let raw = read_number(&p.value).ok().map(|v| v.clamp(0, p.scale() as i64) as u32);
     let mode = read_number(&p.enable).map_or(ControlMode::Unknown, ControlMode::from_pwm_enable);
     Ok(Readback { raw, mode })
 }
@@ -239,10 +308,17 @@ pub fn friendly_label(driver: &str) -> &str {
         "nvme" => "NVMe",
         "drivetemp" => "Drive",
         "acpitz" => "ACPI thermal zone",
-        "amdgpu" => "AMD GPU",
-        d if SUPER_IO_DRIVERS.contains(&d) => "Motherboard",
-        d => d,
+        "asus_ec_sensors" | "gigabyte_wmi" => "Motherboard",
+        d => match drivers::lookup(d) {
+            Some(e) if !e.label.is_empty() => e.label,
+            _ => d,
+        },
     }
+}
+
+/// Whether an hwmon `name` belongs to a motherboard's fan chip.
+pub fn is_motherboard(driver: &str) -> bool {
+    drivers::lookup(driver).is_some_and(|e| e.class == Class::Motherboard)
 }
 
 #[derive(Default)]
@@ -317,6 +393,8 @@ mod tests {
     fn friendly_labels() {
         assert_eq!(friendly_label("k10temp"), "AMD CPU");
         assert_eq!(friendly_label("it87"), "Motherboard");
+        assert_eq!(friendly_label("it8688"), "Motherboard");
+        assert_eq!(friendly_label("thinkpad"), "ThinkPad");
         assert_eq!(friendly_label("mystery"), "mystery");
     }
 }

@@ -8,6 +8,7 @@ pub mod build;
 pub mod hardware;
 
 use penna_core::control::{State, Trend};
+use penna_core::drivers::Tier;
 use penna_core::{Key, Limit, Unreachable};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -266,6 +267,9 @@ pub struct Tick {
 pub struct ProfileTick {
     pub id: String,
     pub label: String,
+    /// Defaults (§4.7): built in, first, and not editable.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub builtin: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -295,11 +299,36 @@ pub struct SensorTick {
     pub error: Option<String>,
 }
 
+/// What a control accepts (§3.5).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
 pub enum ControlKindName {
-    Pwm,
+    Duty,
     Nvml,
+    Levels,
+    Speed,
+    FirmwareCurve,
+    Modes,
+    ReadOnly,
+}
+
+impl From<penna_core::ControlKind> for ControlKindName {
+    fn from(k: penna_core::ControlKind) -> ControlKindName {
+        use penna_core::ControlKind as K;
+        match k {
+            K::Duty { .. } => ControlKindName::Duty,
+            K::Nvml { .. } => ControlKindName::Nvml,
+            K::Levels { .. } => ControlKindName::Levels,
+            K::Speed { .. } => ControlKindName::Speed,
+            K::FirmwareCurve { .. } => ControlKindName::FirmwareCurve,
+            K::Modes => ControlKindName::Modes,
+            K::ReadOnly => ControlKindName::ReadOnly,
+        }
+    }
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -308,6 +337,9 @@ pub struct ControlTick {
     pub label: String,
     /// `None`: named by the configuration but not on this machine.
     pub kind: Option<ControlKindName>,
+    /// How far its driver has been checked (§3.6); `None` when it is not on this machine.
+    #[serde(default)]
+    pub tier: Option<Tier>,
     /// Paired tachs: the fans this control drives that Penna can hear.
     pub fans: u32,
     /// The mean of the paired tachs that read, or `null`.
@@ -390,6 +422,9 @@ pub struct StudioProfile {
     pub label: String,
     /// Control key → curve id, or `"firmware"`.
     pub assign: BTreeMap<Key, String>,
+    /// Defaults (§4.7): built in, assigns nothing, and can't be edited.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub builtin: bool,
 }
 
 /// A curve as the studio shows it and sends it back. Only the fields of its kind are present. On the way in, `label`,
@@ -443,6 +478,12 @@ pub struct StudioControl {
     pub key: Key,
     pub label: String,
     pub kind: Option<ControlKindName>,
+    /// How far its driver has been checked (§3.6).
+    #[serde(default)]
+    pub tier: Option<Tier>,
+    /// Why Penna can't drive it, when it can't (§3.5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
     pub min: f64,
     pub max: f64,
     pub offset: f64,

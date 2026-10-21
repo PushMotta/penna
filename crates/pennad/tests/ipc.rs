@@ -151,7 +151,10 @@ fn a_client_reads_subscribes_and_changes_what_the_daemon_does() {
     assert_eq!(state["ok"], true);
     let s = &state["result"];
     assert_eq!(s["profile"], "balanced");
-    assert_eq!(s["profiles"].as_array().unwrap().iter().map(|p| p["label"].as_str().unwrap()).collect::<Vec<_>>(), ["Quiet", "Balanced"]);
+    assert_eq!(
+        s["profiles"].as_array().unwrap().iter().map(|p| p["label"].as_str().unwrap()).collect::<Vec<_>>(),
+        ["Defaults", "Quiet", "Balanced"]
+    );
     assert_eq!(s["controls"].as_array().unwrap().len(), 5);
     assert_eq!(s["firmware"][0]["key"], SPARE);
     let tctl = s["sensors"].as_array().unwrap().iter().find(|x| x["key"] == "hwmon/k10temp/0000:00:18.3/temp1").unwrap();
@@ -177,6 +180,19 @@ fn a_client_reads_subscribes_and_changes_what_the_daemon_does() {
     let saved = fs::read_to_string(dir.join("tree/etc/penna/config.toml")).unwrap();
     assert!(saved.contains("profile = \"quiet\""), "{saved}");
     assert_eq!(c.call(json!({"op": "profile.set", "name": "balanced"}))["ok"], true);
+
+    // Defaults hands every fan back and keeps them there; it can't be edited (§4.7).
+    let r = c.call(json!({"op": "profile.set", "name": "defaults"}));
+    assert_eq!(r["result"]["text"], "Profile: Defaults. Every fan goes back to its BIOS or driver", "{r}");
+    c.tick_where(10, "every fan with its firmware", |t| {
+        t["profile"] == "defaults"
+            && t["controls"].as_array().unwrap().iter().all(|c| matches!(c["state"].as_str(), Some("firmware" | "absent")))
+    });
+    assert!(fs::read_to_string(dir.join("tree/etc/penna/config.toml")).unwrap().contains("profile = \"defaults\""));
+    let r = c.call(json!({"op": "adopt", "control": SPARE, "curve": "Case"}));
+    assert!(r["error"].as_str().unwrap().starts_with("Defaults leaves every fan with its BIOS or driver, and can't be changed."), "{r}");
+    assert_eq!(c.call(json!({"op": "profile.set", "name": "balanced"}))["ok"], true);
+    c.tick_where(10, "the curves again", |t| control(t, CPU)["state"] == "curve");
 
     // A timed override shows its deadline, then expires on its own.
     let r = c.call(json!({"op": "override", "control": "CPU cooler", "duty": 77, "seconds": 0.6}));
@@ -208,7 +224,7 @@ fn a_client_reads_subscribes_and_changes_what_the_daemon_does() {
     assert_eq!(r["ok"], false);
     assert!(r["error"].as_str().unwrap().starts_with("Penna doesn't know the operation \"turbo\""), "{r}");
     let r = c.call(json!({"op": "profile.set", "name": "silent"}));
-    assert_eq!(r["error"], "There is no profile \"silent\". Profiles: balanced, quiet.");
+    assert_eq!(r["error"], "There is no profile \"silent\". Profiles: defaults, balanced, quiet.");
     let r = c.call(json!({"op": "override", "control": "GPU", "duty": 50}));
     assert!(r["error"].as_str().unwrap().contains("could be GPU fan 1 or GPU fan 2"), "{r}");
     let r = c.call(json!({"op": "override", "duty": 140}));
@@ -343,9 +359,10 @@ fn drafts_preview_save_discard_and_die_with_their_connection() {
     assert_eq!(cpu["calibration"].as_array().unwrap().last().unwrap(), &json!([100.0, 1800.0]));
     assert!(cpu["nvml"].is_null());
     assert_eq!(ctl(s, GPU1)["nvml"], json!({"min": 30, "max": 100}));
-    assert_eq!(ctl(s, SPARE)["label"], "pwm4", "a control no profile names is in the studio too");
+    assert_eq!(ctl(s, SPARE)["label"], "it87 pwm4", "a control no profile names is in the studio too, named for its chip");
     assert_eq!(s["draft"], json!({"mine": false, "dirty": false, "curves": [], "controls": []}));
-    assert!(s["profiles"][1]["assign"][CPU] == "cpu-quiet" || s["profiles"][0]["assign"][CPU] == "cpu-quiet");
+    assert_eq!(s["profiles"][0], json!({"id": "defaults", "label": "Defaults", "assign": {}, "builtin": true}));
+    assert!(s["profiles"].as_array().unwrap().iter().any(|p| p["assign"][CPU] == "cpu-quiet"));
 
     // A draft previews on the fans at once, and everyone's tick says so.
     assert_eq!(a.call(json!({"op": "subscribe"}))["ok"], true);
@@ -447,5 +464,114 @@ fn hold_until_names_where_a_held_curve_lets_go() {
     assert!(until < smoothed && until > smoothed - 3.0 - 0.01, "held at {smoothed} °C until {until} °C");
     let free = c.tick_where(4000, "CPU quiet following", |t| curve(t, "cpu-quiet")["held"] == false);
     assert!(curve(&free, "cpu-quiet")["hold_until"].is_null());
+    d.stop();
+}
+
+/// A driver loaded while pennad runs: its chip under `devices`, then the class link, as the kernel adds them (§3.6).
+fn plug(sys: &Path, platform: &str, hwmon: u32, name: &str, enable: &str) -> PathBuf {
+    let dir = sys.join(format!("devices/platform/{platform}/hwmon/hwmon{hwmon}"));
+    fs::create_dir_all(&dir).unwrap();
+    for (file, v) in [("name", name), ("pwm1", "100"), ("pwm1_enable", enable), ("fan1_input", "1200"), ("temp1_input", "41000")] {
+        fs::write(dir.join(file), format!("{v}\n")).unwrap();
+    }
+    std::os::unix::fs::symlink("../..", dir.join("device")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("../../devices/platform/{platform}/hwmon/hwmon{hwmon}"),
+        sys.join(format!("class/hwmon/hwmon{hwmon}")),
+    )
+    .unwrap();
+    dir
+}
+
+fn unplug(sys: &Path, platform: &str, hwmon: u32) {
+    fs::remove_file(sys.join(format!("class/hwmon/hwmon{hwmon}"))).unwrap();
+    fs::remove_dir_all(sys.join(format!("devices/platform/{platform}"))).unwrap();
+}
+
+fn event_where(c: &mut Client, what: &str, ok: impl Fn(&str) -> bool) -> Value {
+    let end = Instant::now() + Duration::from_secs(20);
+    loop {
+        let v = c.line();
+        if v["ev"] == "event" && v["text"].as_str().is_some_and(&ok) {
+            return v;
+        }
+        assert!(Instant::now() < end, "no event for {what}");
+    }
+}
+
+#[test]
+fn a_chip_that_comes_and_goes_while_running_is_found_held_and_given_back() {
+    let dir = fresh("hotplug");
+    let d = Daemon::start(&dir, &["--speed", "4"]);
+    let mut c = d.connect();
+    c.line();
+    assert_eq!(c.call(json!({"op": "subscribe"}))["ok"], true);
+    let sys = dir.join("tree/sys");
+    let key = "hwmon/it8792/it87.2656/pwm1";
+
+    // A driver is loaded: the chip appears, its fan with its firmware.
+    plug(&sys, "it87.2656", 20, "it8792", "2");
+    let e = event_where(&mut c, "the new chip", |t| t.starts_with("Devices changed. appeared: it8792"));
+    assert_eq!(e["text"], "Devices changed. appeared: it8792 (Motherboard): 1 fan control, 1 fan, 1 temperature");
+    c.tick_where(20, "the new fan, under firmware", |t| t["firmware"].as_array().unwrap().iter().any(|f| f["key"] == key));
+
+    // Adopted, it is taken: manual, with the way back on disk.
+    let r = c.call(json!({"op": "adopt", "control": key, "curve": "Case"}));
+    assert_eq!(r["ok"], true, "{r}");
+    c.tick_where(20, "the new fan on its curve", |t| control(t, key)["state"] == "curve");
+    let enable = |hwmon: u32| fs::read_to_string(sys.join(format!("devices/platform/it87.2656/hwmon/hwmon{hwmon}/pwm1_enable"))).unwrap();
+    assert_eq!(enable(20).trim(), "1");
+
+    // The driver is unloaded while Penna holds the fan: said loudly, and the fan is absent.
+    unplug(&sys, "it87.2656", 20);
+    let e = event_where(&mut c, "the held fan going away", |t| t.contains("went away while Penna held it"));
+    assert_eq!(e["level"], "alert");
+    c.tick_where(20, "the fan absent", |t| control(t, key)["state"] == "absent");
+
+    // Loaded again, as another hwmonN, still manual where Penna left it: Penna carries on, and held.json follows the files.
+    plug(&sys, "it87.2656", 21, "it8792", "1");
+    c.tick_where(20, "the fan back on its curve", |t| control(t, key)["state"] == "curve");
+    let held = fs::read_to_string(dir.join("run/held.json")).unwrap();
+    assert!(held.contains("hwmon21/pwm1_enable") && held.contains("\"original_enable\": 2"), "{held}");
+
+    // Stopping puts it back as it was first found, not as Penna left it.
+    d.stop();
+    assert_eq!(enable(21).trim(), "2");
+}
+
+#[test]
+fn a_fan_whose_device_was_gone_at_stop_is_put_back_when_it_returns_to_a_later_pennad() {
+    let dir = fresh("waiting");
+    let sys = dir.join("tree/sys");
+    let key = "hwmon/it8792/it87.2656/pwm1";
+    let d = Daemon::start(&dir, &["--speed", "4"]);
+    let mut c = d.connect();
+    c.line();
+    assert_eq!(c.call(json!({"op": "subscribe"}))["ok"], true);
+    plug(&sys, "it87.2656", 20, "it8792", "2");
+    event_where(&mut c, "the new chip", |t| t.starts_with("Devices changed. appeared: it8792"));
+    assert_eq!(c.call(json!({"op": "adopt", "control": key, "curve": "Case"}))["ok"], true);
+    c.tick_where(20, "the new fan on its curve", |t| control(t, key)["state"] == "curve");
+    unplug(&sys, "it87.2656", 20);
+    event_where(&mut c, "the held fan going away", |t| t.contains("went away while Penna held it"));
+    drop(c);
+    // A clean stop, though one fan can't be put back: it waits in held.json.
+    d.stop();
+    let held = fs::read_to_string(dir.join("run/held.json")).expect("the waiting entry is kept");
+    assert!(held.contains(key), "{held}");
+
+    // A later pennad, same runtime directory, a fresh desk whose configuration doesn't name the fan.
+    let d = Daemon::start_in(&dir, "tree2", &["--speed", "4"]);
+    let mut c = d.connect();
+    c.line();
+    assert_eq!(c.call(json!({"op": "subscribe"}))["ok"], true);
+    assert!(d.log().contains("stay in held.json until their device returns"), "{}", d.log());
+    let sys = dir.join("tree2/sys");
+    let back = plug(&sys, "it87.2656", 22, "it8792", "1");
+    let e = event_where(&mut c, "the fan put back", |t| t.starts_with("Back, and put back as Penna found it"));
+    assert_eq!(e["control"], key);
+    assert_eq!(fs::read_to_string(back.join("pwm1_enable")).unwrap().trim(), "2");
+    let held = fs::read_to_string(dir.join("run/held.json")).unwrap_or_default();
+    assert!(!held.contains(key), "nothing is left waiting: {held}");
     d.stop();
 }

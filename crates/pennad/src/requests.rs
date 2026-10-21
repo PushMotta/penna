@@ -4,7 +4,7 @@
 //! changes: checked the same way, run at once as a preview, and kept only by `draft.save`. A draft belongs to its connection.
 use crate::trace::Trace;
 use crate::{Draft, Live};
-use penna_core::config::{self, Config, ControlConfig, Curve, CurveKind, FIRMWARE, LABEL_MAX, changes, explain_points, words};
+use penna_core::config::{self, Config, ControlConfig, Curve, CurveKind, DEFAULTS, FIRMWARE, LABEL_MAX, changes, explain_points, words};
 use penna_core::control::{Request, Scope};
 use penna_core::plan::{self, Plan};
 use penna_core::{Inventory, Key};
@@ -35,7 +35,11 @@ pub fn handle(live: &mut Live, inventory: &Inventory, out: &mut Trace, op: Op, u
                 Ok(())
             })?;
             live.state.apply(&live.plan, Request::Profile(id.clone()), now)?;
-            note(out, None, format!("Profile: {}", words(&id)));
+            if id == DEFAULTS {
+                note(out, None, "Profile: Defaults. Every fan goes back to its BIOS or driver".into());
+            } else {
+                note(out, None, format!("Profile: {}", words(&id)));
+            }
         }
         Op::FullSpeed { on } => {
             live.state.apply(&live.plan, Request::FullSpeed(on), now)?;
@@ -92,7 +96,8 @@ pub fn handle(live: &mut Live, inventory: &Inventory, out: &mut Trace, op: Op, u
         Op::Adopt { control, curve } => {
             let key = control_key(&every_control(live, inventory), &control)?;
             let id = curve_id(&live.saved, &curve)?;
-            let active = live.saved.profile.clone();
+            let active = editable(&live.saved)?;
+            drivable(inventory, &key)?;
             change_saved(live, inventory, |c| {
                 let active = c.profile.clone();
                 c.profiles.entry(active).or_default().insert(key.clone(), id.clone());
@@ -103,7 +108,7 @@ pub fn handle(live: &mut Live, inventory: &Inventory, out: &mut Trace, op: Op, u
         }
         Op::Release { control } => {
             let key = control_key(&every_control(live, inventory), &control)?;
-            let active = live.saved.profile.clone();
+            let active = editable(&live.saved)?;
             change_saved(live, inventory, |c| {
                 let active = c.profile.clone();
                 c.profiles.entry(active).or_default().insert(key.clone(), FIRMWARE.to_owned());
@@ -165,7 +170,10 @@ pub fn handle(live: &mut Live, inventory: &Inventory, out: &mut Trace, op: Op, u
             let key = control_key(&every_control(live, inventory), &control)?;
             let mut cfg = draft_base(live, conn)?;
             let id = if curve.trim().eq_ignore_ascii_case(FIRMWARE) { FIRMWARE.to_owned() } else { curve_id(&cfg, &curve)? };
-            let active = cfg.profile.clone();
+            let active = editable(&cfg)?;
+            if id != FIRMWARE {
+                drivable(inventory, &key)?;
+            }
             cfg.profiles.entry(active).or_default().insert(key, id);
             preview(live, inventory, out, conn, cfg)?;
             return Ok(Some(studio(live, inventory, conn)));
@@ -264,7 +272,6 @@ fn draft_base(live: &Live, conn: u64) -> Result<Config, String> {
 /// Runs `cfg` as connection `conn`'s draft, at once: a refused one changes nothing and says why. A draft that matches what is
 /// saved is no draft. A changed curve starts over from its new shape, so the preview is not held back by hysteresis.
 fn preview(live: &mut Live, inventory: &Inventory, out: &mut Trace, conn: u64, cfg: Config) -> Result<(), String> {
-    motherboard_guard(live, &cfg)?;
     let plan = Plan::new(cfg.clone(), inventory, &live.measured, live.cpu_model.as_deref()).map_err(|p| config::sentence(&p))?;
     restart_changed_curves(live, &cfg);
     let started = live.draft.is_none();
@@ -424,15 +431,29 @@ fn change_saved(live: &mut Live, inventory: &Inventory, change: impl Fn(&mut Con
     Ok(())
 }
 
-/// On this machine's real hardware, motherboard fans are read but not driven until M5 (DESIGN.md §10).
-fn motherboard_guard(live: &Live, cfg: &Config) -> Result<(), String> {
-    let assigned = if live.motherboard { Vec::new() } else { cfg.assigned_motherboard() };
-    if assigned.is_empty() { Ok(()) } else { Err(format!("Motherboard fans arrive in M5; that would assign {}.", assigned.join(", "))) }
+/// The active profile, when it can be changed: Defaults can't (§4.7).
+fn editable(cfg: &Config) -> Result<String, String> {
+    if cfg.profile == DEFAULTS {
+        let others: Vec<String> = cfg.profiles.keys().map(|p| words(p)).collect();
+        return Err(format!(
+            "Defaults leaves every fan with its BIOS or driver, and can't be changed. Choose {} first.",
+            if others.is_empty() { "another profile".to_owned() } else { others.join(", ") }
+        ));
+    }
+    Ok(cfg.profile.clone())
+}
+
+/// A control Penna can drive, or why not (§3.5).
+fn drivable(inventory: &Inventory, key: &Key) -> Result<(), String> {
+    let found = inventory.devices.iter().flat_map(|d| &d.controls).find(|c| &c.key == key);
+    match found.and_then(|c| c.kind.undrivable_reason().map(|why| (c, why))) {
+        Some((c, why)) => Err(format!("{} can't follow a curve. {why}", c.label)),
+        None => Ok(()),
+    }
 }
 
 /// A configuration as a plan for this machine, or why it can't be one.
 fn plan_for(live: &Live, inventory: &Inventory, cfg: Config) -> Result<Plan, String> {
-    motherboard_guard(live, &cfg)?;
     Plan::new(cfg, inventory, &live.measured, live.cpu_model.as_deref()).map_err(|problems| {
         let list: Vec<String> = problems.iter().map(|p| p.to_string()).collect();
         format!("That would make the configuration invalid: {}.", list.join("; "))
@@ -447,12 +468,7 @@ fn persist(live: &Live, cfg: &Config) -> Result<(), String> {
 }
 
 fn save(path: &Path, cfg: &Config) -> anyhow::Result<()> {
-    let text = format!(
-        "# Penna's configuration (DESIGN.md §7.5). pennad rewrites this file when a surface changes it: edit it while pennad is\n\
-         # stopped, then run `penna check`.\n{}",
-        cfg.to_toml()
-    );
-    penna_hw::held::write_atomically(path, text.as_bytes())
+    penna_hw::held::write_atomically(path, cfg.saved_text().as_bytes())
 }
 
 /// Controls the active configuration knows, with their labels.
@@ -495,12 +511,15 @@ pub fn control_key(candidates: &[(Key, String)], name: &str) -> Result<Key, Stri
 
 fn profile(cfg: &Config, name: &str) -> Result<String, String> {
     let lower = name.trim().to_lowercase();
+    if lower == DEFAULTS {
+        return Ok(DEFAULTS.to_owned());
+    }
     cfg.profiles
         .keys()
         .find(|id| id.as_str() == name || id.to_lowercase() == lower || words(id).to_lowercase() == lower)
         .cloned()
         .ok_or_else(|| {
-            let ids: Vec<&str> = cfg.profiles.keys().map(String::as_str).collect();
+            let ids: Vec<&str> = std::iter::once(DEFAULTS).chain(cfg.profiles.keys().map(String::as_str)).collect();
             format!("There is no profile {name:?}. Profiles: {}.", ids.join(", "))
         })
 }

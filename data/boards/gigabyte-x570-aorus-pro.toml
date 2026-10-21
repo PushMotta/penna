@@ -1,0 +1,41 @@
+# Gigabyte X570 AORUS PRO (DESIGN.md §3.6). Header and sensor names are the board's own, from the sources below; pairing on
+# this desk (§5.2) confirms which PWM drives which header before any control is named after one.
+vendor = "Gigabyte Technology Co., Ltd."
+board = "X570 AORUS PRO"
+sources = [
+  "github.com/frankcrawford/it87 at bd7a566 (2 Oct 2026): Sensors configs/old configs/GA-X570-AORUS-PRO.conf",
+  "This desk, 21 Oct 2026: DMI board fields, BIOS F36d; the stock it87 in Linux 7.2 lacks the IT8688E; the boot log's ACPI resource conflict",
+]
+
+[driver]
+module = "it87"
+package = "it87-dkms-git"
+options = "ignore_resource_conflict=1"
+why = "The stock it87 in Linux 7.2 doesn't know the IT8688E, and the firmware claims the chips' ports (the ACPI resource conflict), so neither driver binds without this option."
+risk = "The driver's README calls ignore_resource_conflict \"inherently risky\": ACPI and the driver may use the chip at the same time, which can cause unexpected reboots."
+
+[[chip]]
+hwmon = "it8688"
+chip = "IT8688E"
+fans = { 1 = "CPU_FAN", 2 = "SYS_FAN1", 3 = "SYS_FAN2", 4 = "PCH_FAN", 5 = "CPU_OPT" }
+roles = { 1 = "cpu", 4 = "chipset", 5 = "cpu" }
+temps = { 1 = "System 1", 3 = "CPU", 4 = "PCIEX16", 5 = "VRM MOS", 6 = "PCH" }
+# EC_TEMP1 is a thermistor header: with nothing plugged in it reads −55 °C.
+ignore = ["temp2"]
+
+[[chip]]
+hwmon = "it8792"
+chip = "IT8792E"
+fans = { 1 = "SYS_FAN5_PUMP", 2 = "SYS_FAN6_PUMP", 3 = "SYS_FAN4" }
+roles = { 1 = "pump-header", 2 = "pump-header" }
+temps = { 1 = "PCIEX8", 3 = "System 2" }
+# EC_TEMP2, as on the IT8688E.
+ignore = ["temp2"]
+quirks = [
+  "Gigabyte's own fan firmware runs on this chip and has been reported to write over fan speeds within a second (§6.4, §6.6). The it87 fork has Gigabyte workarounds since August 2026; whether they hold on this board is what the M5 hardware test finds out.",
+]
+
+[[chip]]
+hwmon = "acpitz"
+# The ACPI tables return a fixed 290 K (16.85 °C) on both channels, so they never measure anything.
+ignore = ["temp1", "temp2"]

@@ -102,8 +102,8 @@ Item {
   property string notice: ""
 
   readonly property var actions: [
-    { id: "pair", label: "Pair…", enabled: false, tip: "Pairing arrives with motherboard fans (M5)" },
-    { id: "calibrate", label: "Calibrate…", enabled: false, tip: "Calibration arrives with motherboard fans (M5)" },
+    { id: "pair", label: "Pair…", enabled: false, tip: "Pairing arrives with setup (M7)" },
+    { id: "calibrate", label: "Calibrate…", enabled: false, tip: "Calibration arrives with setup (M7)" },
     { id: "discard", label: "Discard", enabled: client.dirty, tip: "" },
     { id: "save", label: "Save", enabled: client.dirty, tip: "" }
   ]

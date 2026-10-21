@@ -9,6 +9,9 @@ use std::fmt;
 pub const VERSION: u32 = 1;
 /// The curve name a profile uses to leave a control with its firmware.
 pub const FIRMWARE: &str = "firmware";
+/// The built-in profile that leaves every control with its firmware (DESIGN.md §4.7). It is never stored in `profiles`, so it
+/// can't be edited, renamed or deleted.
+pub const DEFAULTS: &str = "defaults";
 /// The longest label a person can give a sensor, tach or control.
 pub const LABEL_MAX: usize = 48;
 
@@ -16,7 +19,7 @@ pub const LABEL_MAX: usize = 48;
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub version: u32,
-    /// The active profile.
+    /// The active profile, or [`DEFAULTS`].
     pub profile: String,
     #[serde(default, rename = "sensor", skip_serializing_if = "Vec::is_empty")]
     pub sensors: Vec<VirtualSensor>,
@@ -421,6 +424,15 @@ impl Config {
         toml::to_string(self).expect("a config always serializes")
     }
 
+    /// The file as `pennad` and `penna reset` write it: a header saying who rewrites it, then the TOML.
+    pub fn saved_text(&self) -> String {
+        format!(
+            "# Penna's configuration (DESIGN.md §7.5). pennad rewrites this file when a surface changes it: edit it while pennad is\n\
+             # stopped, then run `penna check`.\n{}",
+            self.to_toml()
+        )
+    }
+
     pub fn curve(&self, id: &str) -> Option<&Curve> {
         self.curves.iter().find(|c| c.id == id)
     }
@@ -439,8 +451,14 @@ impl Config {
         if self.version != VERSION {
             out.push(problem("version", format!("is {}, this Penna reads version {VERSION}", self.version)));
         }
-        if !self.profiles.contains_key(&self.profile) {
-            out.push(problem("profile", format!("{:?} is not one of the profiles ({})", self.profile, names(self.profiles.keys()))));
+        if self.profile != DEFAULTS && !self.profiles.contains_key(&self.profile) {
+            out.push(problem(
+                "profile",
+                format!("{:?} is not one of the profiles ({}), nor the built-in {DEFAULTS:?}", self.profile, names(self.profiles.keys())),
+            ));
+        }
+        if self.profiles.contains_key(DEFAULTS) {
+            out.push(problem(format!("profile {DEFAULTS:?}"), "is Penna's built-in profile; give yours another name"));
         }
 
         let mut seen = BTreeSet::new();
@@ -596,20 +614,6 @@ impl Config {
     }
 
     /// Every physical sensor any curve reads, through virtual sensors.
-    /// Motherboard (hwmon) controls some profile gives a curve, as "label (profile)" words: what production refuses until M5.
-    pub fn assigned_motherboard(&self) -> Vec<String> {
-        let mut out = Vec::new();
-        for (profile, assign) in &self.profiles {
-            for (key, curve) in assign {
-                if key.as_str().starts_with("hwmon/") && curve != FIRMWARE {
-                    let label = self.controls.iter().find(|c| &c.key == key).and_then(|c| c.label.clone());
-                    out.push(format!("{} in profile {profile:?}", label.unwrap_or_else(|| key.to_string())));
-                }
-            }
-        }
-        out
-    }
-
     pub fn physical_sources(&self) -> BTreeSet<Key> {
         let mut out = BTreeSet::new();
         let mut stack: Vec<Key> = self.curves.iter().filter_map(|c| c.kind.source().cloned()).collect();
@@ -940,6 +944,15 @@ failsafe = 100
     fn the_active_profile_must_exist() {
         let text = EXAMPLE.replace("profile = \"balanced\"", "profile = \"quiet\"");
         assert!(Config::parse(&text).unwrap().validate().iter().any(|p| p.at == "profile"));
+    }
+
+    #[test]
+    fn defaults_is_built_in() {
+        let text = EXAMPLE.replace("profile = \"balanced\"", "profile = \"defaults\"");
+        assert_eq!(Config::parse(&text).unwrap().validate(), [], "Defaults needs no [profiles.defaults]");
+        let text = format!("{EXAMPLE}\n[profiles.defaults]\n");
+        let p = Config::parse(&text).unwrap().validate();
+        assert!(p.iter().any(|p| p.message.contains("built-in")), "{p:?}");
     }
 
     #[test]

@@ -312,7 +312,7 @@ fn rank(d: &DeviceSnapshot) -> u8 {
     match (d.source, d.driver.as_str()) {
         (_, "k10temp" | "zenpower" | "coretemp") => 0,
         (Source::Nvml, _) | (_, "amdgpu") => 1,
-        (_, d) if penna_hw::hwmon::SUPER_IO_DRIVERS.contains(&d) => 2,
+        (_, d) if penna_hw::hwmon::is_motherboard(d) => 2,
         (_, "nvme" | "drivetemp") => 3,
         _ => 4,
     }

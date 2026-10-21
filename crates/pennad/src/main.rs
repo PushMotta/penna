@@ -1,6 +1,6 @@
 //! Penna's daemon (DESIGN.md §6, §7.1). Three ways to run it:
-//! * production, as root: `--config` (default /etc/penna/config.toml) on this machine. NVIDIA fans are controlled for real
-//!   (M4); motherboard fans are read but not driven until M5, so a configuration that assigns one is refused;
+//! * production, as root: `--config` (default /etc/penna/config.toml) on this machine: NVIDIA fans (M4) and every hwmon fan of a
+//!   kind Penna drives (M5, §3.5). New hwmon devices are found while it runs (§3.6);
 //! * `--mock <scenario>` builds a mock desk and runs the simulator in lockstep with the control loop;
 //! * `--sysfs-root <dir>` drives a tree kept by someone else.
 //!
@@ -42,13 +42,13 @@ const REQUEST_POLL: Duration = Duration::from_millis(20);
 #[command(
     name = "pennad",
     version = env!("PENNA_VERSION"),
-    about = "Penna's daemon: as root, this machine's fans (NVIDIA from M4, motherboard from M5); or a mock desk."
+    about = "Penna's daemon: as root, this machine's fans; or a mock desk."
 )]
 struct Args {
     /// Build a mock desk from a scenario (render-burst, faults, or a scenario file) and run the simulator in lockstep.
     #[arg(long, value_name = "SCENARIO", conflicts_with = "sysfs_root")]
     mock: Option<String>,
-    /// Drive the hwmon tree under DIR, which is never the real /sys until M5. Needs --config.
+    /// Drive the hwmon tree under DIR instead of /sys: a test tree kept by someone else. Needs --config.
     #[arg(long, value_name = "DIR")]
     sysfs_root: Option<PathBuf>,
     /// The configuration, where changes from surfaces are saved. Default: /etc/penna/config.toml; for --mock, the one the
@@ -61,6 +61,9 @@ struct Args {
     /// Where surfaces connect. Default: /run/penna/penna.sock, or $XDG_RUNTIME_DIR/penna/penna.sock with --mock.
     #[arg(long, value_name = "PATH")]
     socket: Option<PathBuf>,
+    /// The board database (DESIGN.md §3.6).
+    #[arg(long, value_name = "DIR", default_value = penna_hw::BOARDS)]
+    boards: PathBuf,
     /// Seconds between ticks, 0.25 to 5.
     #[arg(long, default_value_t = 1.0, value_parser = parse_tick)]
     tick: f64,
@@ -123,7 +126,7 @@ fn main() -> ExitCode {
 
 struct Setup {
     sim: Option<Sim>,
-    /// This machine's real hardware: NVIDIA under control, motherboard fans read only (M4).
+    /// This machine's real hardware, rather than a mock desk or a test tree.
     real: bool,
     sysfs_root: PathBuf,
     /// `None` on a first start: there is no configuration yet, and the loop writes a starter (§7.5).
@@ -155,11 +158,6 @@ fn setup(args: &Args) -> Result<Setup> {
                         .context(format!("reading {} (write one, check it with `penna check`, or pass --config)", path.display())));
                 }
             };
-            // What the configuration asks for is explained first, root or not.
-            let assigned = config.as_deref().and_then(|c| Config::parse(c).ok()).map(|c| c.assigned_motherboard()).unwrap_or_default();
-            if !assigned.is_empty() {
-                bail!("Motherboard fans arrive in M5; this config assigns {}. Set them to \"firmware\" for now.", assigned.join(", "));
-            }
             if !root {
                 bail!("{NOT_ROOT}");
             }
@@ -224,7 +222,6 @@ fn setup(args: &Args) -> Result<Setup> {
             })
         }
         (None, Some(root)) => {
-            penna_hw::refuse_real_sysfs(root)?;
             let path = args.config.as_ref().ok_or_else(|| anyhow!("--sysfs-root needs --config"))?;
             Ok(Setup {
                 sim: None,
@@ -302,8 +299,6 @@ pub struct Live {
     pub now: f64,
     /// Loop seconds per wall-clock second.
     pub rate: f64,
-    /// Motherboard fans may be assigned curves: false on this machine's real hardware until M5.
-    pub motherboard: bool,
 }
 
 /// A draft belongs to the connection that made it: when that connection closes, the daemon goes back to `saved`.
@@ -341,10 +336,9 @@ fn run(args: Args) -> Result<()> {
         setup(&args)?;
     let mock = sim.is_some();
     let opts = if real {
-        // Motherboard fans read only; NVIDIA fans under control.
-        Options { sysfs_root, nvml: true, mock_nvml: None, control: false }
+        Options { sysfs_root, nvml: true, mock_nvml: None, control: true, boards: Some(args.boards.clone()) }
     } else {
-        Options { sysfs_root, nvml: false, mock_nvml: sim.as_ref().map(Sim::mock_nvml_root), control: true }
+        Options { sysfs_root, nvml: false, mock_nvml: sim.as_ref().map(Sim::mock_nvml_root), control: true, boards: None }
     };
     let mut machine = Machine::open(&opts)?;
     let config = match config {
@@ -366,13 +360,21 @@ fn run(args: Args) -> Result<()> {
             .with_context(|| format!("opening up {}", runtime_dir.display()))?;
     }
     let held_path = runtime_dir.join(held::FILE);
+    let mut waiting = Vec::new();
     if held_path.exists() {
         // A daemon before this one died holding fans: put them back before anything else.
         let r = held::restore_file(&held_path)?;
-        eprintln!("pennad: restored what a previous run left in {}: {}", held_path.display(), r.done.join(", "));
+        if !r.done.is_empty() {
+            eprintln!("pennad: restored what a previous run left in {}: {}", held_path.display(), r.done.join(", "));
+        }
         if !r.failed.is_empty() {
             bail!("could not restore {}: {}", held_path.display(), r.failed.join("; "));
         }
+        if !r.gone.is_empty() {
+            let keys: Vec<String> = r.gone.iter().map(|e| e.key().to_string()).collect();
+            eprintln!("pennad: {} stay in held.json until their device returns: {}", keys.len(), keys.join(", "));
+        }
+        waiting = r.gone;
     }
 
     let rate = if mock { args.speed } else { 1.0 };
@@ -388,7 +390,6 @@ fn run(args: Args) -> Result<()> {
         readings: machine.read(),
         now: 0.0,
         rate,
-        motherboard: !real,
     };
     let mut ring = history::Ring::default();
 
@@ -426,7 +427,7 @@ fn run(args: Args) -> Result<()> {
 
     let mut out = trace::Trace::new(&live.plan, &live.measured, args.quiet);
     out.banner(&live.plan, &machine, sim.as_ref(), (&held_path, &socket), args.tick, args.speed, seconds);
-    let mut held = Held::new(&held_path);
+    let mut held = Held::resume(&held_path, waiting);
     // The loop pings the watchdog after every tick, and between ticks whenever half of WatchdogSec has passed: never from a
     // thread of its own, so a loop that stops stops the pings (§6.2).
     let ping_every = sd_notify::watchdog_enabled().map(|d| d / 2);
@@ -456,6 +457,9 @@ fn run(args: Args) -> Result<()> {
                 Ok(events) => out.sim_events(now, &events),
                 Err(e) => break Err(e.context("simulator")),
             }
+        }
+        if machine.rediscover() {
+            rediscovered(&mut live, &mut machine, &mut held, &mut out, now);
         }
         let readings = machine.read();
         let (next, cmds) = tick(&live.plan, &live.state, &readings, now);
@@ -537,6 +541,62 @@ fn run(args: Args) -> Result<()> {
     Ok(())
 }
 
+/// The hwmon devices changed (§3.6): plan again against what is there now, say what came and went, and point `held.json` at
+/// the files of a held control that came back under a new path.
+fn rediscovered(live: &mut Live, machine: &mut Machine, held: &mut Held, out: &mut trace::Trace, now: f64) {
+    let before: std::collections::BTreeMap<penna_core::Key, String> =
+        live.plan.controls.iter().filter(|(_, c)| c.kind.is_some()).map(|(k, c)| (k.clone(), c.label.clone())).collect();
+    out.devices_changed(now, &machine.inventory);
+    let cfg = live.draft.as_ref().map_or_else(|| live.saved.clone(), |d| d.config.clone());
+    match Plan::new(cfg, &machine.inventory, &live.measured, live.cpu_model.as_deref()) {
+        Ok(plan) => live.plan = plan,
+        Err(problems) => {
+            let list: Vec<String> = problems.iter().map(|p| p.to_string()).collect();
+            out.note(
+                now,
+                penna_proto::Level::Alert,
+                None,
+                format!("The machine changed, and the configuration no longer fits it: {}. Penna keeps the last plan.", list.join("; ")),
+            );
+            return;
+        }
+    }
+    for (key, label) in &before {
+        let gone = live.plan.controls.get(key).is_none_or(|c| c.kind.is_none());
+        if gone && live.state.controls.get(key).is_some_and(|c| c.held) {
+            out.note(
+                now,
+                penna_proto::Level::Alert,
+                Some(key.clone()),
+                format!(
+                    "{label} went away while Penna held it: its chip keeps the last duty until the driver is loaded again or the \
+                     machine restarts"
+                ),
+            );
+        }
+    }
+    let entries: Vec<_> = held.entries().to_vec();
+    for e in entries {
+        let Some(moved) = machine.relocate(&e) else { continue };
+        let key = e.key().clone();
+        if live.state.controls.get(&key).is_some_and(|c| c.held) {
+            if moved != e
+                && let Err(err) = held.add(moved)
+            {
+                out.note(now, penna_proto::Level::Alert, Some(key), format!("could not update held.json: {err:#}"));
+            }
+            continue;
+        }
+        // Back from a previous run's held.json: it was waiting for this device to return, to be put back as it was found.
+        let result =
+            machine.release(&moved).map_err(|e| format!("{e:#}")).and_then(|s| held.remove(&key).map(|_| s).map_err(|e| format!("{e:#}")));
+        match result {
+            Ok(s) => out.note(now, penna_proto::Level::Info, Some(key), format!("Back, and put back as Penna found it: {s}")),
+            Err(err) => out.note(now, penna_proto::Level::Alert, Some(key), format!("Back, but could not be put back: {err}")),
+        }
+    }
+}
+
 fn send_events(events: &broadcast::Sender<Arc<str>>, out: &mut trace::Trace, seq: u64, t: f64) {
     for (level, control, text) in out.take_events() {
         // No subscriber is not an error: the event is simply not wanted yet.
@@ -548,7 +608,11 @@ fn send_events(events: &broadcast::Sender<Arc<str>>, out: &mut trace::Trace, seq
 fn carry_out(machine: &mut Machine, held: &mut Held, cmd: &Command) -> Outcome {
     let r: Result<Outcome> = (|| match cmd {
         Command::Take { key } => {
-            let entry = machine.original(key)?;
+            // A control Penna already held before its device went away keeps what it was found as, not the manual mode Penna left.
+            let entry = match held.get(key).and_then(|old| machine.relocate(old)) {
+                Some(kept) => kept,
+                None => machine.original(key)?,
+            };
             held.add(entry.clone()).context("writing held.json")?;
             match machine.take(key) {
                 Ok(duty) => Ok(Outcome::Taken { duty }),
@@ -572,11 +636,16 @@ fn carry_out(machine: &mut Machine, held: &mut Held, cmd: &Command) -> Outcome {
     r.unwrap_or_else(|e| Outcome::Failed(format!("{e:#}")))
 }
 
-/// Every held control back to exactly what it was. What cannot go back stays in held.json for `penna restore`.
+/// Every held control back to exactly what it was. What cannot go back stays in held.json for `penna restore`, and so does a
+/// control whose device is gone, which waits there for the device to return (§3.6).
 fn hand_back(machine: &mut Machine, held: &mut Held) -> Vec<Result<String, String>> {
     let entries: Vec<_> = held.entries().to_vec();
     let mut out = Vec::new();
     for e in entries {
+        if held::gone(&e) {
+            out.push(Ok(format!("{}: its device is gone; kept in held.json until it returns", e.key())));
+            continue;
+        }
         match machine.release(&e) {
             Ok(s) => {
                 let _ = held.remove(e.key());
