@@ -33,8 +33,14 @@ ln -s ~/Projects/penna/plugin ~/.config/omarchy/plugins/io.github.pushmotta.penn
 omarchy plugin enable io.github.pushmotta.penna
 cargo run -p pennad -- --mock render-burst --forever
 omarchy-shell shell toggle io.github.pushmotta.penna '{}'   # open the popup
-node --test plugin/test/model.test.js                        # the popup's logic
+cargo run -p penna -- open                                   # open the studio (or Curves… in the popup)
+node --test plugin/test/model.test.js plugin/test/studio.test.js
 ```
+
+`tools/frame-timing/run.sh` is the §8.6 frame-timing test. With `pennad --mock … --forever` running, it shows the popup's
+rows and then the studio on the second screen for about a minute: 5 s of popup, 30 s of studio, a 10 s scripted drag. It
+doesn't take the keyboard. It prints frame pacing per phase and the render thread's own timings, and exits non-zero when a
+budget is missed.
 
 With the plugin symlinked, the shell doesn't notice edits inside it. It also keeps a plugin's scripts in memory across its own
 plugin reload. So after editing, restart the shell with `omarchy-restart-shell`. `omarchy plugin disable

@@ -420,7 +420,8 @@ impl Sim {
         Ok(())
     }
 
-    /// What pairing and calibration would have found: the tachs each PWM drives and their stop and start duties.
+    /// What pairing and calibration would have found: the tachs each PWM drives, their stop and start duties, and the duty → RPM
+    /// table (§5.2) from the simulator's own fan model, so the editor's RPM axis says what the fans here actually do.
     pub fn measured(&self) -> Measured {
         let mut controls = Vec::new();
         for chip in &self.sc.chips {
@@ -430,12 +431,28 @@ impl Sim {
                 if fans.is_empty() {
                     continue;
                 }
+                let stop = fans.iter().map(|f| f.stop).reduce(f64::max);
+                let calibration = calibration_steps(stop.unwrap_or(0.0))
+                    .into_iter()
+                    .map(|d| {
+                        let rpm = fans.iter().map(|f| f.max_rpm * (d / 100.0).powf(0.8)).sum::<f64>() / fans.len() as f64;
+                        [d, rpm.round()]
+                    })
+                    .collect();
                 controls.push(MeasuredControl {
                     key: Key::hwmon(&chip.driver, &device, &format!("pwm{}", p.channel)),
-                    stop: fans.iter().map(|f| f.stop).reduce(f64::max),
+                    stop,
                     start: fans.iter().map(|f| f.start).reduce(f64::max),
                     tachs: fans.iter().map(|f| Key::hwmon(&chip.driver, &device, &format!("fan{}", f.channel))).collect(),
+                    calibration,
                 });
+            }
+        }
+        // NVML fans need no pairing; calibration only records percent → RPM over the settable range, for the axis (§5.2).
+        for g in &self.sc.gpus {
+            for i in 0..g.fans {
+                let calibration = calibration_steps(g.min as f64).into_iter().map(|d| [d, gpu_rpm(g, d).round()]).collect();
+                controls.push(MeasuredControl { key: Key::nvml_fan(&g.uuid, i), stop: None, start: None, tachs: vec![], calibration });
             }
         }
         Measured { controls }
@@ -591,13 +608,7 @@ impl Sim {
                 } else {
                     0.0
                 };
-                let target = if duty <= 0.0 {
-                    0.0
-                } else if duty < g.min as f64 {
-                    600.0 * duty / g.min as f64
-                } else {
-                    600.0 + (duty - g.min as f64) / (100.0 - g.min as f64) * (g.max_rpm - 600.0)
-                };
+                let target = gpu_rpm(g, duty);
                 let st = self.fans.entry(format!("{}-fan{i}", g.id)).or_default();
                 st.spinning = target > 0.0;
                 st.rpm += (target - st.rpm) * (1.0 - (-h / 2.0f64).exp());
@@ -710,6 +721,27 @@ impl Sim {
 
 fn raw(duty: f64) -> i64 {
     (duty.clamp(0.0, 100.0) * 255.0 / 100.0).round() as i64
+}
+
+/// A mock GPU fan's RPM at an NVML percent: what the driver spins it to.
+fn gpu_rpm(g: &GpuSpec, duty: f64) -> f64 {
+    if duty <= 0.0 {
+        0.0
+    } else if duty < g.min as f64 {
+        600.0 * duty / g.min as f64
+    } else {
+        600.0 + (duty - g.min as f64) / (100.0 - g.min as f64) * (g.max_rpm - 600.0)
+    }
+}
+
+/// The duties calibration measures (§5.2): down from 100 % in 5 % steps to the lowest that still turns the fan, ascending.
+fn calibration_steps(stop: f64) -> Vec<f64> {
+    let mut d: Vec<f64> = (0..=20).map(|i| 100.0 - 5.0 * i as f64).filter(|d| *d >= stop && *d > 0.0).collect();
+    if stop > 0.0 && d.last() != Some(&stop) {
+        d.push(stop);
+    }
+    d.reverse();
+    d
 }
 
 fn put(path: &Path, s: &str) -> Result<()> {

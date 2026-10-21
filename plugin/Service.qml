@@ -70,6 +70,12 @@ Item {
   }
 
   function ingestTick(msg) {
+    // After a write the daemon re-sends the current tick with the same seq (§7.3, as built): the state is news, the
+    // second isn't. It updates what surfaces show but adds no history and moves no sparkline.
+    if (tick && msg.seq === tick.seq) {
+      tick = msg
+      return
+    }
     var sensors = Model.sensors(msg)
     for (var i = 0; i < sensors.length; i++) append(sensors[i].key, sensors[i].celsius)
     var controls = Model.controls(msg)

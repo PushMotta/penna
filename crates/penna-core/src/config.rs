@@ -379,6 +379,10 @@ pub struct MeasuredControl {
     pub start: Option<f64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tachs: Vec<Key>,
+    /// Duty → RPM, ascending (§5.2): what calibration measured, for the editor's RPM axis. NVML fans have one too, over their
+    /// settable range.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub calibration: Vec<[f64; 2]>,
 }
 
 impl Measured {
@@ -648,6 +652,87 @@ fn check_points(at: &str, points: &[[f64; 2]], out: &mut Vec<Problem>) {
     }
 }
 
+/// A number as a person writes it: `72`, `72.5`.
+pub fn num(v: f64) -> String {
+    let r = (v * 100.0).round() / 100.0;
+    if r.fract() == 0.0 { format!("{r:.0}") } else { format!("{r}") }
+}
+
+/// What is wrong with a graph's points, in one sentence that names the values, or `None` when nothing is (§7.3, decision 3).
+/// The studio shows it as it is, so it speaks of temperatures and duties, not point numbers.
+pub fn explain_points(points: &[[f64; 2]]) -> Option<String> {
+    if points.len() < 2 {
+        return Some(format!("A graph needs at least two points; this one has {}.", points.len()));
+    }
+    for [t, p] in points {
+        if !(-40.0..=150.0).contains(t) {
+            return Some(format!("A point at {} °C is outside the −40 to 150 °C a sensor can read.", num(*t)));
+        }
+        if !(0.0..=100.0).contains(p) {
+            return Some(format!("A point at {} °C → {} % is outside 0 to 100 %.", num(*t), num(*p)));
+        }
+    }
+    for w in points.windows(2) {
+        let ([t0, p0], [t1, p1]) = (w[0], w[1]);
+        if t1 <= t0 {
+            return Some(format!(
+                "Each point must be hotter than the one before it: {} °C → {} % comes after {} °C → {} %.",
+                num(t1),
+                num(p1),
+                num(t0),
+                num(p0)
+            ));
+        }
+        if p1 < p0 {
+            return Some(format!(
+                "A curve can't fall as the temperature rises: {} °C → {} % is below {} °C → {} %.",
+                num(t1),
+                num(p1),
+                num(t0),
+                num(p0)
+            ));
+        }
+    }
+    None
+}
+
+/// Problems as one sentence for a person: the first capitalised, the rest after semicolons.
+pub fn sentence(problems: &[Problem]) -> String {
+    let mut parts: Vec<String> = problems.iter().map(|p| p.message.clone()).collect();
+    parts.dedup();
+    let text = parts.join("; ");
+    let mut c = text.chars();
+    let first: String = c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default();
+    if first.ends_with('.') { first } else { format!("{first}.") }
+}
+
+/// What a draft changes against the saved configuration: the curves added, changed or removed, and the controls whose limits or
+/// assignment in any profile differ. Both sorted.
+pub fn changes(saved: &Config, draft: &Config) -> (Vec<String>, Vec<Key>) {
+    let mut curves = BTreeSet::new();
+    for c in saved.curves.iter().chain(&draft.curves) {
+        if saved.curve(&c.id) != draft.curve(&c.id) {
+            curves.insert(c.id.clone());
+        }
+    }
+    let mut controls = BTreeSet::new();
+    for c in saved.controls.iter().chain(&draft.controls) {
+        if saved.control(&c.key) != draft.control(&c.key) {
+            controls.insert(c.key.clone());
+        }
+    }
+    let empty = BTreeMap::new();
+    for name in saved.profiles.keys().chain(draft.profiles.keys()) {
+        let (a, b) = (saved.profiles.get(name).unwrap_or(&empty), draft.profiles.get(name).unwrap_or(&empty));
+        for key in a.keys().chain(b.keys()) {
+            if a.get(key) != b.get(key) {
+                controls.insert(key.clone());
+            }
+        }
+    }
+    (curves.into_iter().collect(), controls.into_iter().collect())
+}
+
 /// Curves in an order where every mix comes after what it mixes. `Err` names a curve in a loop.
 pub fn curve_order(cfg: &Config) -> Result<Vec<String>, String> {
     let deps = |c: &Curve| match &c.kind {
@@ -877,6 +962,55 @@ failsafe = 100
         assert_eq!(parse_seconds("fast"), None);
         let numeric = EXAMPLE.replace("response = \"5s\"", "response = 2.5");
         assert_eq!(Config::parse(&numeric).unwrap().curve("cpu-quiet").unwrap().response, Some(2.5));
+    }
+
+    #[test]
+    fn refused_points_are_explained_with_their_values() {
+        assert_eq!(explain_points(&[[45.0, 30.0], [65.0, 40.0], [78.0, 65.0], [88.0, 100.0]]), None);
+        assert_eq!(
+            explain_points(&[[45.0, 30.0], [65.0, 60.0], [72.0, 58.0], [88.0, 100.0]]).as_deref(),
+            Some("A curve can't fall as the temperature rises: 72 °C → 58 % is below 65 °C → 60 %.")
+        );
+        assert_eq!(
+            explain_points(&[[45.0, 30.0], [70.0, 50.0], [65.0, 55.0]]).as_deref(),
+            Some("Each point must be hotter than the one before it: 65 °C → 55 % comes after 70 °C → 50 %.")
+        );
+        assert_eq!(explain_points(&[[45.0, 30.0]]).as_deref(), Some("A graph needs at least two points; this one has 1."));
+        assert_eq!(explain_points(&[[45.0, 30.0], [72.5, 120.0]]).as_deref(), Some("A point at 72.5 °C → 120 % is outside 0 to 100 %."));
+        assert_eq!(
+            explain_points(&[[45.0, 30.0], [160.0, 100.0]]).as_deref(),
+            Some("A point at 160 °C is outside the −40 to 150 °C a sensor can read.")
+        );
+    }
+
+    #[test]
+    fn problems_read_as_one_sentence() {
+        let p = |m: &str| Problem { at: "control x".into(), message: m.into() };
+        assert_eq!(sentence(&[p("min (60 %) is above max (50 %)")]), "Min (60 %) is above max (50 %).");
+        assert_eq!(sentence(&[p("a"), p("b"), p("b")]), "A; b.");
+    }
+
+    #[test]
+    fn changes_name_curves_and_controls() {
+        let saved = example();
+        let mut draft = saved.clone();
+        assert_eq!(changes(&saved, &draft), (vec![], vec![]));
+        if let CurveKind::Graph { points, .. } = &mut draft.curves[0].kind {
+            points[1] = [65.0, 45.0];
+        }
+        draft.curves.retain(|c| c.id != "boost");
+        let pwm2 = Key::parse("hwmon/it87/it87.2608/pwm2").unwrap();
+        draft.profiles.get_mut("balanced").unwrap().insert(pwm2.clone(), "case".into());
+        let (curves, controls) = changes(&saved, &draft);
+        assert_eq!(curves, ["boost", "cpu-quiet"]);
+        assert_eq!(controls, [pwm2]);
+    }
+
+    #[test]
+    fn numbers_as_people_write_them() {
+        assert_eq!(num(72.0), "72");
+        assert_eq!(num(72.5), "72.5");
+        assert_eq!(num(0.333333), "0.33");
     }
 
     #[test]

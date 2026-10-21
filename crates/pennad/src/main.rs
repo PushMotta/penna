@@ -194,7 +194,12 @@ fn unix_now() -> f64 {
 
 /// The loop's state between ticks, which requests change.
 pub struct Live {
+    /// What the loop runs: the saved configuration, or a studio's draft on top of it.
     pub plan: Plan,
+    /// The configuration as saved (§7.5).
+    pub saved: Config,
+    /// A studio's unsaved changes, previewing on the fans (§7.4). There is one only while it differs from `saved`.
+    pub draft: Option<Draft>,
     pub state: LoopState,
     pub config_path: Option<PathBuf>,
     pub measured: Measured,
@@ -206,8 +211,21 @@ pub struct Live {
     pub rate: f64,
 }
 
+/// A draft belongs to the connection that made it: when that connection closes, the daemon goes back to `saved`.
+pub struct Draft {
+    pub owner: u64,
+    pub config: Config,
+}
+
 impl Live {
-    fn tick_body(&self, inventory: &Inventory) -> penna_proto::Tick {
+    pub fn draft_tick(&self) -> Option<penna_proto::DraftTick> {
+        self.draft.as_ref().map(|d| {
+            let (curves, controls) = penna_core::config::changes(&self.saved, &d.config);
+            penna_proto::DraftTick { curves, controls }
+        })
+    }
+
+    pub fn tick_body(&self, inventory: &Inventory) -> penna_proto::Tick {
         penna_proto::build::tick(&penna_proto::build::Context {
             plan: &self.plan,
             state: &self.state,
@@ -218,6 +236,7 @@ impl Live {
             t: unix_now(),
             now: self.now,
             rate: self.rate,
+            draft: self.draft_tick(),
         })
     }
 }
@@ -247,7 +266,19 @@ fn run(args: Args) -> Result<()> {
     }
 
     let rate = if mock { args.speed } else { 1.0 };
-    let mut live = Live { state: LoopState::new(&plan), plan, config_path, measured, cpu_model, readings: machine.read(), now: 0.0, rate };
+    let saved = plan.config.clone();
+    let mut live = Live {
+        state: LoopState::new(&plan),
+        plan,
+        saved,
+        draft: None,
+        config_path,
+        measured,
+        cpu_model,
+        readings: machine.read(),
+        now: 0.0,
+        rate,
+    };
     let mut ring = history::Ring::default();
 
     // The socket comes up before any fan is taken: if it cannot, nothing has changed.
@@ -255,6 +286,8 @@ fn run(args: Args) -> Result<()> {
     let (publish, published) = watch::channel(Arc::new(first));
     let (events, _) = broadcast::channel::<Arc<str>>(ipc::EVENT_BACKLOG);
     let (jobs_tx, jobs) = std::sync::mpsc::sync_channel::<ipc::Job>(ipc::QUEUE);
+    // Connections that closed, so a draft dies with the studio that made it. Unbounded: one notice per connection.
+    let (closed_tx, closed) = std::sync::mpsc::channel::<u64>();
     let server = ipc::start(
         &socket,
         ipc::Setup {
@@ -270,6 +303,7 @@ fn run(args: Args) -> Result<()> {
             published,
             events: events.clone(),
             jobs: jobs_tx,
+            closed: closed_tx,
         },
     )?;
 
@@ -332,9 +366,13 @@ fn run(args: Args) -> Result<()> {
         while Instant::now() < due && !stop.load(Ordering::SeqCst) {
             let mut changed = false;
             while let Ok(job) = jobs.try_recv() {
-                let result = requests::handle(&mut live, &machine.inventory, &mut out, job.op, job.uid);
-                changed |= result.is_ok();
+                let writes = job.op.writes();
+                let result = requests::handle(&mut live, &machine.inventory, &mut out, job.op, job.uid, job.conn);
+                changed |= writes && result.is_ok();
                 let _ = job.reply.send(result);
+            }
+            while let Ok(conn) = closed.try_recv() {
+                changed |= requests::closed(&mut live, &machine.inventory, &mut out, conn);
             }
             if changed {
                 // `state` right after a change shows it, without waiting for the next tick.

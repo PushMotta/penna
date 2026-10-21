@@ -10,6 +10,7 @@
     { "id": "render", "label": "Render" }
   ],
   "full_speed": false,
+  "draft": { "curves": ["cpu-quiet"], "controls": ["hwmon/it87/it87.2608/pwm2"] },
   "emergency": [
     { "sensor": "hwmon/k10temp/0000:00:18.3/temp1", "label": "AMD CPU · Tctl", "celsius": 94.5, "limit": 90.0, "release": 85.0 }
   ],
@@ -142,10 +143,11 @@
       "source": "hwmon/k10temp/0000:00:18.3/temp1",
       "smoothed": 93.12,
       "out": 100.0,
-      "held": false,
+      "held": true,
+      "hold_until": 90.12,
       "error": null
     },
-    { "id": "case", "label": "Case", "kind": "mix", "source": null, "smoothed": null, "out": 100.0, "held": false, "error": null },
+    { "id": "case", "label": "Case", "kind": "mix", "source": null, "smoothed": null, "out": 100.0, "held": false, "hold_until": null, "error": null },
     {
       "id": "exhaust",
       "label": "Exhaust",
@@ -154,6 +156,7 @@
       "smoothed": null,
       "out": null,
       "held": false,
+      "hold_until": null,
       "error": "virt/case: hwmon/nvme/0000:04:00.0/temp1: Input/output error"
     }
   ],

@@ -40,6 +40,17 @@ Panel {
   readonly property var notes: tick && Array.isArray(tick.notes) ? tick.notes : []
   readonly property var profileOptions: Model.profileOptions(tick)
 
+  // Repeater keys: replaced only when the set of rows changes, so rows survive ticks and keep their glides.
+  property var tempKeys: []
+  property var controlKeys: []
+  function syncKeys() {
+    var t = Model.keysOf(tempRows)
+    if (!Model.sameKeys(t, tempKeys)) tempKeys = t
+    var c = Model.keysOf(controlsList)
+    if (!Model.sameKeys(c, controlKeys)) controlKeys = c
+  }
+  Component.onCompleted: syncKeys()
+
   // Optimistic choices: shown at once, confirmed (or rolled back with the reason) when the daemon answers (§8.6).
   property string pendingProfile: ""
   property var pendingFull: null
@@ -112,6 +123,7 @@ Panel {
     target: root.service
     function onTicked() {
       var t = root.tick
+      root.syncKeys()
       root.nowSec = Date.now() / 1000
       if (root.pendingProfile !== "" && t && t.profile === root.pendingProfile) root.pendingProfile = ""
       if (root.pendingFull !== null && t && t.full_speed === root.pendingFull) root.pendingFull = null
@@ -171,6 +183,12 @@ Panel {
     if (focusSection === "profiles" && profileOptions[selectedIndex]) chooseProfile(profileOptions[selectedIndex].value)
     else if (focusSection === "retry" && retryKeys[selectedIndex]) retryControl(retryKeys[selectedIndex])
     else if (focusSection === "actions" && selectedIndex === 0) toggleFullSpeed()
+    else if (focusSection === "actions" && selectedIndex === 1) openStudio()
+  }
+
+  function openStudio() {
+    close()
+    if (bar && bar.shell) bar.shell.summon(root.moduleName, "{}")
   }
 
   function hoverInto(section, index) {
@@ -304,17 +322,18 @@ Panel {
 
           Repeater {
             id: tempRepeater
-            model: root.tempRows
+            model: root.tempKeys
             TempRow {
               required property var modelData
-              readonly property string key: modelData.key
+              readonly property string key: modelData
+              readonly property var row: Model.byKey(root.tempRows, modelData) || ({})
               width: parent.width
-              name: modelData.name
-              detail: modelData.detail
-              celsius: modelData.celsius === null || modelData.celsius === undefined ? NaN : Number(modelData.celsius)
-              failed: modelData.error !== ""
-              lo: modelData.lo
-              hi: modelData.hi
+              name: row.name || ""
+              detail: row.detail || ""
+              celsius: row.celsius === null || row.celsius === undefined ? NaN : Number(row.celsius)
+              failed: !!row.error
+              lo: row.lo || 20
+              hi: row.hi || 100
               foreground: root.fg
               urgent: root.urgentColor
               fontFamily: root.fam
@@ -336,11 +355,11 @@ Panel {
           PanelSectionHeader { text: "FANS"; foreground: root.fg; fontFamily: root.fam }
 
           Repeater {
-            model: root.controlsList
+            model: root.controlKeys
             FanRow {
               required property var modelData
               width: parent.width
-              control: modelData
+              control: Model.byKey(root.controlsList, modelData)
               tick: root.tick
               nowSec: root.nowSec
               canWrite: root.canWrite
@@ -351,9 +370,9 @@ Panel {
               tickMs: root.tickMs
               live: root.live
               reducedMotion: root.reducedMotion
-              hasCursor: root.cursorActive && root.focusSection === "retry" && root.retryKeys[root.selectedIndex] === modelData.key
+              hasCursor: root.cursorActive && root.focusSection === "retry" && root.retryKeys[root.selectedIndex] === modelData
               onRetryRequested: function(key) { root.retryControl(key) }
-              onHovered: function(h) { if (h) root.hoverInto("retry", root.retryKeys.indexOf(modelData.key)) }
+              onHovered: function(h) { if (h) root.hoverInto("retry", root.retryKeys.indexOf(modelData)) }
             }
           }
 
@@ -376,18 +395,15 @@ Panel {
             fontFamily: root.fam
           }
 
-          Repeater {
-            model: root.notes
-            Text {
-              required property var modelData
-              width: parent.width
-              text: String(modelData)
-              textFormat: Text.PlainText
-              wrapMode: Text.Wrap
-              color: root.dimColor
-              font.family: root.fam
-              font.pixelSize: Style.font.caption
-            }
+          Text {
+            width: parent.width
+            visible: root.notes.length > 0
+            text: root.notes.join("\n")
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+            color: root.dimColor
+            font.family: root.fam
+            font.pixelSize: Style.font.caption
           }
         }
 
@@ -432,11 +448,10 @@ Panel {
             anchors.right: parent.right
             text: "Curves…"
             bordered: true
-            opacity: 0.5
-            tooltipText: "The curve studio arrives in the next milestone"
             foreground: root.fg
             fontFamily: root.fam
             hasCursor: root.cursorActive && root.focusSection === "actions" && root.selectedIndex === 1
+            onClicked: root.openStudio()
             onHovered: function(h) { if (h) root.hoverInto("actions", 1) }
           }
         }

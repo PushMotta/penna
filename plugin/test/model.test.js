@@ -99,3 +99,9 @@ test("writes blocked by the daemon say how to fix it", () => {
   assert.equal(M.writeBlockedReason(false, false), "")
   assert.match(M.writeBlockedReason(true, false), /penna group/)
 })
+
+test("the popup says when the studio is previewing unsaved changes", () => {
+  const h = M.hero(tick({ draft: { curves: ["cpu-quiet"], controls: [] } }), true, 0, 0)
+  assert.equal(h.meta, "PREVIEWING UNSAVED CHANGES FROM THE STUDIO")
+  assert.equal(M.hero(tick({ draft: null }), true, 0, 0).meta, null)
+})

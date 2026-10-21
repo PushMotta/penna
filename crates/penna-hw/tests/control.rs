@@ -156,6 +156,15 @@ fn the_simulator_knows_what_pairing_would_find() {
     assert_eq!(front.tachs.len(), 3);
     assert_eq!((front.stop, front.start), (Some(22.0), Some(32.0)));
     assert_eq!(m.get(&pwm(4)).unwrap().tachs, [Key::hwmon("it87", "it87.2608", "fan6")]);
+
+    // Calibration: from the stop duty to 100 %, ascending, as the fan model spins the fans.
+    let cpu = &m.get(&pwm(1)).unwrap().calibration;
+    assert_eq!(cpu.first(), Some(&[20.0, (1800.0 * 0.2f64.powf(0.8)).round()]));
+    assert_eq!(cpu.last(), Some(&[100.0, 1800.0]));
+    assert!(cpu.windows(2).all(|w| w[0][0] < w[1][0] && w[0][1] <= w[1][1]));
+    assert_eq!(front.calibration.first().map(|p| p[0]), Some(22.0), "a stop off the 5 % grid is measured too");
+    let gpu = m.get(&Key::nvml_fan("GPU-5a1d3090-0000-4000-8000-00000000mock", 1)).unwrap();
+    assert_eq!((gpu.calibration.first(), gpu.calibration.last()), (Some(&[30.0, 600.0]), Some(&[100.0, 1820.0])));
 }
 
 #[test]

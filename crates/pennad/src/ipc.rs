@@ -52,10 +52,11 @@ impl Published {
     }
 }
 
-/// A request for the control loop, with who asked.
+/// A request for the control loop, with who asked and on which connection (a draft belongs to its connection, §7.4).
 pub struct Job {
     pub op: Op,
     pub uid: u32,
+    pub conn: u64,
     pub reply: oneshot::Sender<Result<Option<Value>, String>>,
 }
 
@@ -65,6 +66,8 @@ pub struct Setup {
     pub published: watch::Receiver<Arc<Published>>,
     pub events: broadcast::Sender<Arc<str>>,
     pub jobs: SyncSender<Job>,
+    /// Every connection's number when it closes.
+    pub closed: std::sync::mpsc::Sender<u64>,
 }
 
 pub struct Ipc {
@@ -126,11 +129,13 @@ async fn serve(listener: std::os::unix::net::UnixListener, setup: Setup) {
     };
     let setup = Arc::new(setup);
     let mut stopping = setup.published.clone();
+    let mut next: u64 = 0;
     loop {
         tokio::select! {
             accepted = listener.accept() => match accepted {
                 Ok((stream, _)) => {
-                    tokio::spawn(connection(stream, setup.clone()));
+                    next += 1;
+                    tokio::spawn(connection(stream, setup.clone(), next));
                 }
                 Err(e) => eprintln!("pennad: accepting a connection failed: {e}"),
             },
@@ -143,7 +148,13 @@ async fn serve(listener: std::os::unix::net::UnixListener, setup: Setup) {
     }
 }
 
-async fn connection(stream: UnixStream, setup: Arc<Setup>) {
+async fn connection(stream: UnixStream, setup: Arc<Setup>, conn: u64) {
+    talk(stream, &setup, conn).await;
+    // The loop drops this connection's draft, if it has one.
+    let _ = setup.closed.send(conn);
+}
+
+async fn talk(stream: UnixStream, setup: &Setup, conn: u64) {
     let peer = match stream.peer_cred() {
         Ok(c) => Peer { uid: c.uid(), gid: c.gid(), groups: c.pid().map(auth::groups_of).unwrap_or_default() },
         Err(e) => {
@@ -196,7 +207,8 @@ async fn connection(stream: UnixStream, setup: Arc<Setup>) {
                         events = None;
                         vec![Reply::ok(id, None).line()]
                     }
-                    op => vec![write(&setup, &decision, op, id, peer.uid).await.line()],
+                    op if op.writes() => vec![write(setup, &decision, op, id, peer.uid, conn).await.line()],
+                    op => vec![ask(setup, op, id, peer.uid, conn).await.line()],
                 };
                 for l in out {
                     if send(&mut wr, &l, peer.uid).await.is_err() { return }
@@ -224,12 +236,17 @@ async fn connection(stream: UnixStream, setup: Arc<Setup>) {
 }
 
 /// A request that changes fans: checked against the peer, then carried out by the control loop.
-async fn write(setup: &Setup, decision: &Result<(), String>, op: Op, id: Option<Value>, uid: u32) -> Reply {
+async fn write(setup: &Setup, decision: &Result<(), String>, op: Op, id: Option<Value>, uid: u32, conn: u64) -> Reply {
     if let Err(why) = decision {
         return Reply::error(id, why.clone());
     }
+    ask(setup, op, id, uid, conn).await
+}
+
+/// A request the control loop answers.
+async fn ask(setup: &Setup, op: Op, id: Option<Value>, uid: u32, conn: u64) -> Reply {
     let (tx, rx) = oneshot::channel();
-    match setup.jobs.try_send(Job { op, uid, reply: tx }) {
+    match setup.jobs.try_send(Job { op, uid, conn, reply: tx }) {
         Ok(()) => {}
         Err(TrySendError::Full(_)) => return Reply::error(id, "Penna is busy with other requests; try again in a moment."),
         Err(TrySendError::Disconnected(_)) => return Reply::error(id, "Penna is shutting down."),

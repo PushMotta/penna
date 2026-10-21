@@ -90,12 +90,11 @@ impl Plan {
             .iter()
             .map(|id| {
                 let c = config.curve(id).expect("ordered curves exist");
-                let cpu = c.kind.source().is_some_and(is_cpu_sensor);
                 CurvePlan {
                     id: c.id.clone(),
                     kind: c.kind.clone(),
-                    response: c.response.unwrap_or(if cpu { CPU_RESPONSE } else { 0.0 }),
-                    hysteresis: c.hysteresis.unwrap_or(if matches!(c.kind, CurveKind::Graph { .. }) { DEFAULT_HYSTERESIS } else { 0.0 }),
+                    response: c.response.unwrap_or_else(|| default_response(&c.kind)),
+                    hysteresis: c.hysteresis.unwrap_or_else(|| default_hysteresis(&c.kind)),
                     direction: c.hysteresis_direction,
                 }
             })
@@ -116,53 +115,9 @@ impl Plan {
         let mut controls = BTreeMap::new();
         for key in keys {
             let cfg = config.control(&key).cloned().unwrap_or_else(|| config::ControlConfig::defaults(key.clone()));
-            let found = present.get(&key);
-            let m = measured.get(&key);
-            let stop = m.and_then(|m| m.stop);
-            let kind = found.map(|f| f.0);
-            let at = format!("control {key}");
-            let floor = match kind {
-                Some(ControlKind::Nvml { min, .. }) => cfg.min.max(min as f64),
-                _ if cfg.may_stop => cfg.min.max(stop.unwrap_or(0.0)),
-                _ => cfg.min.max(stop.map_or(UNCALIBRATED_FLOOR, |s| s + STOP_MARGIN)),
-            };
-            if kind.is_some() && !matches!(kind, Some(ControlKind::Nvml { .. })) && cfg.may_stop && stop.is_none() {
-                problems.push(Problem { at: at.clone(), message: "may_stop needs a calibrated stop duty (penna calibrate)".into() });
-            }
-            if let Some(ControlKind::Nvml { max, .. }) = kind
-                && cfg.failsafe > max as f64
-            {
-                problems.push(Problem {
-                    at: at.clone(),
-                    message: format!("failsafe ({} %) is above what this GPU accepts ({max} %)", cfg.failsafe),
-                });
-            }
-            if kind.is_some() && cfg.failsafe < floor {
-                problems.push(Problem {
-                    at: at.clone(),
-                    message: format!("failsafe ({} %) is below this fan's floor ({floor} %)", cfg.failsafe),
-                });
-            }
-            let start = cfg.start.or(m.and_then(|m| m.start)).unwrap_or(floor.max(50.0)).max(floor);
-            let label = cfg.label.clone().or_else(|| found.map(|f| f.1.to_owned())).unwrap_or_else(|| key.channel().to_owned());
-            controls.insert(
-                key.clone(),
-                ControlPlan {
-                    key,
-                    label,
-                    kind,
-                    min: cfg.min,
-                    max: cfg.max.max(floor),
-                    offset: cfg.offset,
-                    step_up: cfg.step_up,
-                    step_down: cfg.step_down,
-                    may_stop: cfg.may_stop,
-                    stop,
-                    start: start.min(cfg.max.max(floor)),
-                    failsafe: cfg.failsafe,
-                    floor,
-                },
-            );
+            let (plan, found) = control_plan(&cfg, present.get(&key).map(|f| (f.0, f.1)), measured);
+            problems.extend(found);
+            controls.insert(key, plan);
         }
         if !problems.is_empty() {
             return Err(problems);
@@ -178,6 +133,62 @@ impl Plan {
         let curve = self.config.profiles.get(profile)?.get(key)?;
         (curve != config::FIRMWARE).then_some(curve.as_str())
     }
+}
+
+/// One control's limits resolved against what is on the machine (`present`: its kind and hardware label) and what calibration
+/// measured, with what is wrong with them. The studio uses it for controls no profile names yet.
+pub fn control_plan(cfg: &config::ControlConfig, present: Option<(ControlKind, &str)>, measured: &Measured) -> (ControlPlan, Vec<Problem>) {
+    let key = &cfg.key;
+    let mut problems = Vec::new();
+    let m = measured.get(key);
+    let stop = m.and_then(|m| m.stop);
+    let kind = present.map(|f| f.0);
+    let at = format!("control {key}");
+    let floor = match kind {
+        Some(ControlKind::Nvml { min, .. }) => cfg.min.max(min as f64),
+        _ if cfg.may_stop => cfg.min.max(stop.unwrap_or(0.0)),
+        _ => cfg.min.max(stop.map_or(UNCALIBRATED_FLOOR, |s| s + STOP_MARGIN)),
+    };
+    if kind.is_some() && !matches!(kind, Some(ControlKind::Nvml { .. })) && cfg.may_stop && stop.is_none() {
+        problems.push(Problem { at: at.clone(), message: "may_stop needs a calibrated stop duty (penna calibrate)".into() });
+    }
+    if let Some(ControlKind::Nvml { max, .. }) = kind
+        && cfg.failsafe > max as f64
+    {
+        problems
+            .push(Problem { at: at.clone(), message: format!("failsafe ({} %) is above what this GPU accepts ({max} %)", cfg.failsafe) });
+    }
+    if kind.is_some() && cfg.failsafe < floor {
+        problems.push(Problem { at: at.clone(), message: format!("failsafe ({} %) is below this fan's floor ({floor} %)", cfg.failsafe) });
+    }
+    let start = cfg.start.or(m.and_then(|m| m.start)).unwrap_or(floor.max(50.0)).max(floor);
+    let label = cfg.label.clone().or_else(|| present.map(|f| f.1.to_owned())).unwrap_or_else(|| key.channel().to_owned());
+    let plan = ControlPlan {
+        key: key.clone(),
+        label,
+        kind,
+        min: cfg.min,
+        max: cfg.max.max(floor),
+        offset: cfg.offset,
+        step_up: cfg.step_up,
+        step_down: cfg.step_down,
+        may_stop: cfg.may_stop,
+        stop,
+        start: start.min(cfg.max.max(floor)),
+        failsafe: cfg.failsafe,
+        floor,
+    };
+    (plan, problems)
+}
+
+/// A curve's response time when the configuration names none (§4.4): 5 s on a CPU sensor, none otherwise.
+pub fn default_response(kind: &CurveKind) -> f64 {
+    if kind.source().is_some_and(is_cpu_sensor) { CPU_RESPONSE } else { 0.0 }
+}
+
+/// A curve's hysteresis when the configuration names none (§4.4): 3 °C on a graph, none otherwise.
+pub fn default_hysteresis(kind: &CurveKind) -> f64 {
+    if matches!(kind, CurveKind::Graph { .. }) { DEFAULT_HYSTERESIS } else { 0.0 }
 }
 
 fn is_cpu_sensor(key: &Key) -> bool {

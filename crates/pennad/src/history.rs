@@ -84,6 +84,7 @@ mod tests {
             profile: "p".into(),
             profiles: vec![],
             full_speed: false,
+            draft: None,
             emergency: vec![],
             sensors: sensors
                 .iter()

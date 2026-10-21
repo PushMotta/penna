@@ -2,6 +2,7 @@ import QtQuick
 import qs.Commons
 
 // A folded list of things Penna isn't running: headers the firmware still drives, devices it can't reach. Each says why.
+// The lines are one text block, so a tick that re-sends the same lines rebuilds nothing.
 Column {
   id: root
 
@@ -41,18 +42,16 @@ Column {
     }
   }
 
-  Repeater {
-    model: root.expanded ? root.lines : []
-    Text {
-      required property var modelData
-      width: root.width
-      leftPadding: Style.space(18)
-      text: String(modelData)
-      textFormat: Text.PlainText
-      wrapMode: Text.Wrap
-      color: root.dim
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.caption
-    }
+  Text {
+    visible: root.expanded
+    width: root.width
+    leftPadding: Style.space(18)
+    text: (root.lines || []).join("\n")
+    textFormat: Text.PlainText
+    wrapMode: Text.Wrap
+    color: root.dim
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.caption
+    lineHeight: 1.2
   }
 }

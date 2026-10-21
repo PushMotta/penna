@@ -77,6 +77,8 @@ enum Command {
     Release { control: String },
     /// Rename a sensor, tach or control (by key or current name).
     Label { key: String, label: String },
+    /// Open the curve studio in the Omarchy shell.
+    Open,
     /// Stream what changes: takes, hand-backs, failsafes, emergencies.
     Events {
         #[arg(long)]
@@ -112,6 +114,22 @@ enum Command {
 enum OnOff {
     On,
     Off,
+}
+
+/// The plugin whose overlay is the studio.
+const PLUGIN: &str = "io.github.pushmotta.penna";
+
+/// Summons the studio through the shell's IPC (§8.3).
+fn open_studio() -> Result<()> {
+    let status = std::process::Command::new("omarchy-shell").args(["shell", "summon", PLUGIN, "{}"]).status();
+    match status {
+        Ok(s) if s.success() => Ok(()),
+        Ok(s) => bail!("omarchy-shell couldn't open the studio ({s}); is the Penna plugin enabled? (omarchy plugin enable {PLUGIN})"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            bail!("the studio needs the Omarchy shell, and omarchy-shell was not found")
+        }
+        Err(e) => bail!("couldn't run omarchy-shell: {e}"),
+    }
 }
 
 fn parse_interval(s: &str) -> Result<f64, String> {
@@ -172,6 +190,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::Adopt { control, curve } => say(Op::Adopt { control, curve }),
         Command::Release { control } => say(Op::Release { control }),
         Command::Label { key, label } => say(Op::Label { key, label }),
+        Command::Open => open_studio(),
         Command::Events { json } => events(json),
         Command::Waybar { follow, sensor } => bar(follow, sensor.as_deref()),
         Command::Restore { from } => restore(&from),

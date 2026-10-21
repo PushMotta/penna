@@ -1,10 +1,10 @@
 //! The UI-shaped [`Tick`] made from the control loop's state (DESIGN.md §7.3). Pure: the daemon calls it once a tick, and
 //! again after a request changes something, so `state` never shows the past.
 use crate::{
-    ControlKindName, ControlTick, CurveKindName, CurveTick, EmergencyTick, FirmwareTick, OverrideTick, ProfileTick, SensorTick, Tick,
-    VERSION,
+    ControlKindName, ControlTick, CurveKindName, CurveTick, DraftInfo, DraftTick, EmergencyTick, FirmwareTick, MixSpec, NvmlRange,
+    OverrideTick, ProfileTick, SensorTick, Studio, StudioControl, StudioCurve, StudioProfile, StudioSensor, Tick, TriggerSpec, VERSION,
 };
-use penna_core::config::{CurveKind, Measured, words};
+use penna_core::config::{ControlConfig, CurveKind, Measured, words};
 use penna_core::control::{LoopState, State};
 use penna_core::plan::Plan;
 use penna_core::{ControlKind, Inventory, Key, LimitKind, Readings, Sample, Source};
@@ -24,6 +24,8 @@ pub struct Context<'a> {
     pub now: f64,
     /// Loop seconds per wall-clock second: 1, except on a mock desk running faster than real time.
     pub rate: f64,
+    /// What a studio is previewing, if anything.
+    pub draft: Option<DraftTick>,
 }
 
 /// A sparkline starts here (§11.1, call 5).
@@ -40,7 +42,7 @@ pub fn tick(cx: &Context) -> Tick {
     let label_of = |k: &Key| sensors.iter().find(|s| &s.key == k).map(display).unwrap_or_else(|| k.to_string());
 
     let mut profiles: Vec<ProfileTick> = plan.config.profiles.keys().map(|id| ProfileTick { id: id.clone(), label: words(id) }).collect();
-    profiles.sort_by_key(|p| (PROFILE_ORDER.iter().position(|o| *o == p.id).unwrap_or(PROFILE_ORDER.len()), p.id.clone()));
+    profiles.sort_by_key(|p| profile_rank(&p.id));
 
     let emergency = st
         .emergency
@@ -105,6 +107,8 @@ pub fn tick(cx: &Context) -> Tick {
         .map(|c| {
             let cs = st.curves.get(&c.id);
             let out = st.outputs.get(&c.id);
+            let held = cs.is_some_and(|s| s.held);
+            let hysteresis = plan.curves.iter().find(|p| p.id == c.id).map_or(0.0, |p| p.hysteresis);
             CurveTick {
                 id: c.id.clone(),
                 label: c.label(),
@@ -117,7 +121,8 @@ pub fn tick(cx: &Context) -> Tick {
                 source: c.kind.source().cloned(),
                 smoothed: cs.and_then(|s| s.smoothed).map(r2),
                 out: out.and_then(|o| o.as_ref().ok()).copied().map(r1),
-                held: cs.is_some_and(|s| s.held),
+                held,
+                hold_until: cs.filter(|_| held).map(|s| r2(s.anchor - hysteresis)),
                 error: out.and_then(|o| o.as_ref().err()).cloned(),
             }
         })
@@ -130,6 +135,7 @@ pub fn tick(cx: &Context) -> Tick {
         profile: st.profile.clone(),
         profiles,
         full_speed: st.full_speed,
+        draft: cx.draft.clone(),
         emergency,
         sensors,
         controls,
@@ -137,6 +143,122 @@ pub fn tick(cx: &Context) -> Tick {
         curves,
         unreachable: cx.inventory.unreachable.clone(),
         notes: cx.inventory.notes.clone(),
+    }
+}
+
+fn profile_rank(id: &str) -> (usize, String) {
+    (PROFILE_ORDER.iter().position(|o| *o == id).unwrap_or(PROFILE_ORDER.len()), id.to_owned())
+}
+
+/// Everything the studio body is made of.
+pub struct StudioContext<'a> {
+    pub plan: &'a Plan,
+    pub inventory: &'a Inventory,
+    pub measured: &'a Measured,
+    /// The sensors as the latest tick shows them.
+    pub sensors: &'a [SensorTick],
+    pub draft: DraftInfo,
+}
+
+/// The studio body (§7.3, M3): the plan's configuration (the draft, while there is one) with the values in force, every
+/// control on the machine including those no profile names yet, and what calibration measured for the RPM axis.
+pub fn studio(cx: &StudioContext) -> Studio {
+    let plan = cx.plan;
+    let cfg = &plan.config;
+    let active = cfg.profiles.get(&cfg.profile);
+    let source_label = |k: &Key| {
+        cx.sensors.iter().find(|s| &s.key == k).map(display).or_else(|| cfg.labels.get(k).cloned()).unwrap_or_else(|| k.to_string())
+    };
+
+    let mut profiles: Vec<StudioProfile> =
+        cfg.profiles.iter().map(|(id, assign)| StudioProfile { id: id.clone(), label: words(id), assign: assign.clone() }).collect();
+    profiles.sort_by_key(|p| profile_rank(&p.id));
+
+    let curves = cfg
+        .curves
+        .iter()
+        .map(|c| {
+            let p = plan.curves.iter().find(|p| p.id == c.id);
+            let mut out = StudioCurve {
+                id: c.id.clone(),
+                label: Some(c.label()),
+                kind: CurveKindName::Flat,
+                source: c.kind.source().cloned(),
+                source_label: c.kind.source().map(source_label),
+                points: None,
+                response: None,
+                hysteresis: None,
+                mix: None,
+                duty: None,
+                trigger: None,
+                used_by: active.map(|a| a.iter().filter(|(_, id)| **id == c.id).map(|(k, _)| k.clone()).collect()).unwrap_or_default(),
+            };
+            match &c.kind {
+                CurveKind::Flat { percent } => out.duty = Some(*percent),
+                CurveKind::Graph { points, .. } => {
+                    out.kind = CurveKindName::Graph;
+                    out.points = Some(points.clone());
+                    out.response = p.map(|p| p.response);
+                    out.hysteresis = p.map(|p| p.hysteresis);
+                }
+                CurveKind::Mix { op, curves } => {
+                    out.kind = CurveKindName::Mix;
+                    out.mix = Some(MixSpec { op: *op, of: curves.clone() });
+                }
+                CurveKind::Trigger { idle, load, on, off, .. } => {
+                    out.kind = CurveKindName::Trigger;
+                    out.trigger = Some(TriggerSpec { idle: *idle, load: *load, on: *on, off: *off });
+                    out.response = p.map(|p| p.response);
+                }
+            }
+            out
+        })
+        .collect();
+
+    let mut controls: Vec<StudioControl> = plan.controls.values().map(|c| studio_control(c, cx.measured)).collect();
+    for c in cx.inventory.devices.iter().flat_map(|d| &d.controls).filter(|c| !plan.controls.contains_key(&c.key)) {
+        let label = cfg.labels.get(&c.key).cloned().unwrap_or_else(|| c.label.clone());
+        let (p, _) = penna_core::plan::control_plan(&ControlConfig::defaults(c.key.clone()), Some((c.kind, label.as_str())), cx.measured);
+        controls.push(studio_control(&p, cx.measured));
+    }
+
+    Studio {
+        profile: cfg.profile.clone(),
+        profiles,
+        curves,
+        controls,
+        sensors: cx
+            .sensors
+            .iter()
+            .map(|s| StudioSensor { key: s.key.clone(), label: s.label.clone(), device: s.device.clone(), is_virtual: s.is_virtual })
+            .collect(),
+        draft: cx.draft.clone(),
+    }
+}
+
+fn studio_control(c: &penna_core::plan::ControlPlan, measured: &Measured) -> StudioControl {
+    StudioControl {
+        key: c.key.clone(),
+        label: c.label.clone(),
+        kind: c.kind.map(|k| match k {
+            ControlKind::Pwm => ControlKindName::Pwm,
+            ControlKind::Nvml { .. } => ControlKindName::Nvml,
+        }),
+        min: c.min,
+        max: c.max,
+        offset: c.offset,
+        step_up: c.step_up,
+        step_down: c.step_down,
+        may_stop: c.may_stop,
+        stop: c.stop,
+        start: r1(c.start),
+        floor: r1(c.floor),
+        failsafe: c.failsafe,
+        nvml: match c.kind {
+            Some(ControlKind::Nvml { min, max }) => Some(NvmlRange { min, max }),
+            _ => None,
+        },
+        calibration: measured.get(&c.key).map(|m| m.calibration.clone()).filter(|t| !t.is_empty()),
     }
 }
 

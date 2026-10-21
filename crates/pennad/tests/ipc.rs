@@ -304,3 +304,148 @@ fn a_live_socket_is_never_taken_over_and_a_stale_one_is() {
     assert_eq!(c.line()["ev"], "hello");
     second.stop();
 }
+
+fn curve<'a>(v: &'a Value, id: &str) -> &'a Value {
+    v["curves"].as_array().unwrap().iter().find(|c| c["id"] == id).unwrap_or(&Value::Null)
+}
+
+const SAVED_POINTS: [[f64; 2]; 4] = [[45.0, 30.0], [65.0, 40.0], [78.0, 65.0], [88.0, 100.0]];
+const GPU1: &str = "nvml/GPU-5a1d3090-0000-4000-8000-00000000mock/fan0";
+
+/// The studio (DESIGN.md §7.3, M3): a draft previews at once, is refused with its values when it would make a curve fall, is
+/// one connection's alone, dies with that connection, and is kept only by `draft.save`.
+#[test]
+fn drafts_preview_save_discard_and_die_with_their_connection() {
+    let dir = fresh("drafts");
+    let d = Daemon::start(&dir, &["--speed", "20"]);
+    let config = || fs::read_to_string(dir.join("tree/etc/penna/config.toml")).unwrap();
+    let mut a = d.connect();
+    a.line();
+    while a.call(json!({"op": "state"}))["result"]["seq"].as_u64() < Some(3) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    // The studio body: curves with the values in force, every control with its limits and calibration, nobody's draft.
+    let s = a.call(json!({"op": "studio"}));
+    assert_eq!(s["ok"], true, "{s}");
+    let s = &s["result"];
+    assert_eq!(s["profile"], "balanced");
+    let cq = curve(s, "cpu-quiet").clone();
+    assert_eq!(cq["points"], json!(SAVED_POINTS));
+    assert_eq!((cq["response"].as_f64(), cq["hysteresis"].as_f64()), (Some(5.0), Some(3.0)));
+    assert_eq!(cq["source_label"], "AMD CPU · Tctl");
+    assert_eq!(cq["used_by"], json!([CPU]));
+    assert_eq!(curve(s, "case")["mix"], json!({"op": "max", "of": ["cpu-quiet", "gpu"]}));
+    assert_eq!(curve(s, "exhaust")["trigger"], json!({"idle": 35.0, "load": 70.0, "on": 70.0, "off": 60.0}));
+    let ctl = |s: &Value, key: &str| s["controls"].as_array().unwrap().iter().find(|c| c["key"] == key).cloned().unwrap_or(Value::Null);
+    let cpu = ctl(s, CPU);
+    assert_eq!((cpu["stop"].as_f64(), cpu["floor"].as_f64(), cpu["min"].as_f64()), (Some(20.0), Some(25.0), Some(25.0)));
+    assert_eq!(cpu["calibration"].as_array().unwrap().last().unwrap(), &json!([100.0, 1800.0]));
+    assert!(cpu["nvml"].is_null());
+    assert_eq!(ctl(s, GPU1)["nvml"], json!({"min": 30, "max": 100}));
+    assert_eq!(ctl(s, SPARE)["label"], "pwm4", "a control no profile names is in the studio too");
+    assert_eq!(s["draft"], json!({"mine": false, "dirty": false, "curves": [], "controls": []}));
+    assert!(s["profiles"][1]["assign"][CPU] == "cpu-quiet" || s["profiles"][0]["assign"][CPU] == "cpu-quiet");
+
+    // A draft previews on the fans at once, and everyone's tick says so.
+    assert_eq!(a.call(json!({"op": "subscribe"}))["ok"], true);
+    let mut flat_out = cq.clone();
+    flat_out["points"] = json!([[20.0, 100.0], [100.0, 100.0]]);
+    let r = a.call(json!({"op": "draft.put_curve", "curve": flat_out}));
+    assert_eq!(r["ok"], true, "{r}");
+    assert_eq!(r["result"]["draft"], json!({"mine": true, "dirty": true, "curves": ["cpu-quiet"], "controls": []}));
+    let t = a.tick_where(40, "the preview", |t| control(t, CPU)["target"] == 100.0);
+    assert_eq!(t["draft"], json!({"curves": ["cpu-quiet"], "controls": []}));
+
+    // A curve that falls is refused with its values, and the draft stays as it was.
+    let mut dip = cq.clone();
+    dip["points"] = json!([[45, 30], [65, 60], [72, 58], [88, 100]]);
+    let r = a.call(json!({"op": "draft.put_curve", "curve": dip}));
+    assert_eq!(r["error"], "A curve can't fall as the temperature rises: 72 °C → 58 % is below 65 °C → 60 %.");
+    assert_eq!(curve(&a.call(json!({"op": "studio"}))["result"], "cpu-quiet")["points"], json!([[20.0, 100.0], [100.0, 100.0]]));
+    let r = a.call(json!({"op": "draft.limits", "control": "CPU cooler", "min": 60, "max": 50}));
+    assert_eq!(r["error"], "Min (60 %) is above max (50 %).");
+
+    // One studio at a time.
+    let mut b = d.connect();
+    b.line();
+    assert_eq!(b.call(json!({"op": "subscribe"}))["ok"], true);
+    let r = b.call(json!({"op": "draft.put_curve", "curve": cq}));
+    assert_eq!(r["error"], "Another studio has unsaved changes.");
+    assert_eq!(b.call(json!({"op": "draft.save"}))["error"], "Another studio has unsaved changes.");
+    let theirs = b.call(json!({"op": "studio"}));
+    assert_eq!(theirs["result"]["draft"], json!({"mine": false, "dirty": true, "curves": ["cpu-quiet"], "controls": []}));
+
+    // The studio that made the draft closes without saving: back to what is saved, and everyone is told.
+    drop(a);
+    let end = Instant::now() + Duration::from_secs(10);
+    loop {
+        let v = b.line();
+        if v["ev"] == "event"
+            && v["text"].as_str().unwrap().starts_with("The studio closed without saving; back to the saved configuration")
+        {
+            assert_eq!(v["text"], "The studio closed without saving; back to the saved configuration (CPU quiet)");
+            break;
+        }
+        assert!(Instant::now() < end, "no event for the closed studio");
+    }
+    b.tick_where(10, "no draft", |t| t["draft"].is_null());
+    b.tick_where(200, "the saved curve back on the fan", |t| control(t, CPU)["target"].as_f64() < Some(100.0));
+    assert!(!config().contains("[20.0, 100.0]"), "a preview is never saved:\n{}", config());
+
+    // Saved: kept on disk and in force, with nobody's draft left.
+    let mut kept = cq.clone();
+    kept["points"] = json!([[40.0, 35.0], [65.0, 45.0], [78.0, 70.0], [88.0, 100.0]]);
+    assert_eq!(b.call(json!({"op": "draft.put_curve", "curve": kept.clone()}))["ok"], true);
+    let r = b.call(json!({"op": "draft.save"}));
+    assert_eq!(r["result"]["text"], "Saved: CPU quiet", "{r}");
+    assert!(config().contains("[40.0, 35.0]"), "{}", config());
+    b.tick_where(10, "no draft after saving", |t| t["draft"].is_null());
+    let s = b.call(json!({"op": "studio"}));
+    assert_eq!(s["result"]["draft"]["dirty"], false);
+    assert_eq!(curve(&s["result"], "cpu-quiet")["points"], kept["points"]);
+
+    // Discarded: back to what was just saved.
+    let mut tried = cq.clone();
+    tried["points"] = json!([[30.0, 50.0], [90.0, 100.0]]);
+    assert_eq!(b.call(json!({"op": "draft.put_curve", "curve": tried}))["ok"], true);
+    let r = b.call(json!({"op": "draft.discard"}));
+    assert_eq!(r["ok"], true, "{r}");
+    assert_eq!(r["result"]["draft"]["dirty"], false);
+    assert_eq!(curve(&r["result"], "cpu-quiet")["points"], kept["points"]);
+    assert_eq!(b.call(json!({"op": "draft.save"}))["error"], "There are no unsaved changes.");
+
+    // Assigning in a draft, and a curve that is used can't be deleted.
+    let r = b.call(json!({"op": "draft.assign", "control": SPARE, "curve": "case"}));
+    assert_eq!(r["result"]["draft"]["controls"], json!([SPARE]), "{r}");
+    let r = b.call(json!({"op": "draft.delete_curve", "curve": "gpu"}));
+    assert_eq!(
+        r["error"],
+        "GPU is used by GPU fan 1 in Balanced, GPU fan 2 in Balanced, GPU fan 1 in Quiet, GPU fan 2 in Quiet; give it another curve first."
+    );
+    let r = b.call(json!({"op": "draft.delete_curve", "curve": "exhaust"}));
+    assert_eq!(r["error"], "Exhaust is used by Rear exhaust in Balanced; give it another curve first.");
+    assert_eq!(b.call(json!({"op": "draft.assign", "control": "Rear exhaust", "curve": "case"}))["ok"], true);
+    let r = b.call(json!({"op": "draft.delete_curve", "curve": "exhaust"}));
+    assert_eq!(r["ok"], true, "{r}");
+    assert!(curve(&r["result"], "exhaust").is_null());
+    assert_eq!(b.call(json!({"op": "draft.discard"}))["ok"], true);
+    d.stop();
+}
+
+/// `hold_until` says where a held curve lets go (§4.4), and is null otherwise.
+#[test]
+fn hold_until_names_where_a_held_curve_lets_go() {
+    let dir = fresh("hold");
+    let d = Daemon::start(&dir, &["--speed", "40"]);
+    let mut c = d.connect();
+    c.line();
+    assert_eq!(c.call(json!({"op": "subscribe"}))["ok"], true);
+    let held = c.tick_where(4000, "CPU quiet held", |t| curve(t, "cpu-quiet")["held"] == true);
+    let cq = curve(&held, "cpu-quiet");
+    let (until, smoothed) = (cq["hold_until"].as_f64().expect("a number while held"), cq["smoothed"].as_f64().unwrap());
+    assert!(until < smoothed && until > smoothed - 3.0 - 0.01, "held at {smoothed} °C until {until} °C");
+    let free = c.tick_where(4000, "CPU quiet following", |t| curve(t, "cpu-quiet")["held"] == false);
+    assert!(curve(&free, "cpu-quiet")["hold_until"].is_null());
+    d.stop();
+}

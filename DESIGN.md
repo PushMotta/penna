@@ -1,6 +1,6 @@
 # Penna — design specification
 
-Draft 2 · 21 October 2026 · status: decisions approved (§11), UI quality bar added (§8.6), M0, M1 and M2 done, design review 01 approved (milestone D, §11.1). Next: M3, the studio.
+Draft 2 · 21 October 2026 · status: decisions approved (§11), UI quality bar added (§8.6), M0–M3 done, design review 01 approved (milestone D, §11.1). Next: M4, real control of the 3090 (needs root).
 
 Companion: design review 01 — mockups in real theme tokens, live motion prototypes, and eight calls before QML — is published as an artifact (https://claude.ai/artifact/DmFftUzWVBd11NNBv4e8aK). Its source is `design/penna-design-review.html`.
 
@@ -319,7 +319,58 @@ Errors are sentences a person can act on, in the voice of §8.
 | ✎ `release` | `control` | Unassigns it in the active profile, handing it back to firmware; persisted |
 | ✎ `label` | `key`, `label` | Renames a sensor or control; persisted |
 
-`draft.*`, `pair` and `calibrate` arrive with the studio (M3) and pairing (M5).
+`pair` and `calibrate` arrive with pairing (M5).
+
+**Operations added in M3 (the studio).**
+
+| op | Arguments | Result |
+|---|---|---|
+| `studio` | — | The studio body (below) for this connection |
+| ✎ `draft.put_curve` | `curve` (a curve object as in the studio body; a new `id` creates a curve) | The updated studio body |
+| ✎ `draft.delete_curve` | `curve` (its id; `id` is the request's own field) | The updated studio body. Refused while a control in any profile uses the curve. |
+| ✎ `draft.assign` | `control`, `curve` (id, or `"firmware"`) | The updated studio body. Applies to the active profile. |
+| ✎ `draft.limits` | `control`, then any of `min`, `max`, `offset`, `step_up`, `step_down`, `may_stop`, `failsafe` | The updated studio body |
+| ✎ `draft.save` | — | `ok` with `result.text`. Persists the whole draft (§7.5). |
+| ✎ `draft.discard` | — | The studio body at the saved configuration |
+
+A draft is validated like `penna check`; a refused change leaves the draft as it was and says why, e.g. "A curve can't fall as the temperature rises: 72 °C → 58 % is below 65 °C → 60 %." A valid draft applies to the fans at once (preview, §7.4). Only one connection may hold a draft at a time; a second one is refused with "Another studio has unsaved changes." When the connection holding a draft closes without `draft.save`, the daemon returns to the saved configuration and sends an `event` saying so.
+
+**Studio body.** Everything static the editor needs, with the draft applied:
+
+```
+{"profile":"balanced",
+ "profiles":[{"id":"balanced","label":"Balanced","assign":{"<control key>":"cpu-quiet","<key>":"firmware"}}],
+ "curves":[{"id":"cpu-quiet","label":"CPU quiet","kind":"graph","source":"<sensor key>","source_label":"AMD CPU · Tctl",
+            "points":[[45,30],[65,40],[78,65],[88,100]],"response":5.0,"hysteresis":3.0,"used_by":["<control key>"]},
+           {"id":"case","label":"Case","kind":"mix","mix":{"op":"max","of":["cpu-quiet","gpu"]},"used_by":[…]},
+           {"id":"idle","label":"Idle","kind":"flat","duty":35.0,"used_by":[]},
+           {"id":"pump","label":"Pump","kind":"trigger","source":"<key>","trigger":{"idle":40,"load":80,"on":60,"off":52},"used_by":[]}],
+ "controls":[{"key":"<key>","label":"CPU cooler","kind":"pwm","min":25.0,"max":100.0,"offset":0.0,"step_up":20.0,"step_down":5.0,
+              "may_stop":false,"stop":20.0,"start":30.0,"floor":30.0,"failsafe":100.0,"nvml":null,
+              "calibration":[[20,420],[30,610],…,[100,1800]]}],
+ "sensors":[{"key":"<key>","label":"Tctl","device":"AMD CPU","virtual":false}],
+ "draft":{"mine":true,"dirty":true,"curves":["cpu-quiet"],"controls":[]}}
+```
+
+- **`nvml`** is `{"min":30,"max":100}` for an NVIDIA fan, else `null`.
+- **`calibration`** is the measured duty → RPM table (§5.2), or `null` before calibration. The editor draws no RPM axis without one.
+- **`draft.mine`** says whether this connection holds the draft; `dirty` whether it differs from the saved configuration.
+
+**Additions to `tick`.**
+- **`curves[].hold_until`** is the temperature below which a held output may fall (§4.4), or `null` when the curve is not held.
+- **`draft`** at the top level is `null`, or `{"curves":[…],"controls":[…]}` while some connection is previewing changes. The popup shows "Previewing unsaved changes" when it is set.
+
+**As built in M3.**
+- **A draft exists only while it differs from the saved configuration.** An edit back to the saved values drops it. So `dirty` is true whenever a draft exists; with none, the body shows `{mine:false, dirty:false, curves:[], controls:[]}` and the tick's `draft` is `null`.
+- **`used_by`** lists the active profile's controls. Deletion is still refused if any profile uses the curve, and the refusal names each control with its profile.
+- **Writes to the saved configuration during a draft.** `profile.set`, `adopt`, `release` and `label` apply to both the saved configuration and the draft. If one would conflict with the draft, it is refused: "That conflicts with a studio's unsaved changes: …".
+- **A changed curve's hysteresis starts over,** on preview and on revert, so the change shows on the fans at once instead of being held.
+- **`draft.put_curve` merges.** A field left out keeps what the curve had, so echoing the studio body back changes nothing. The source must be a sensor on this machine or a virtual one.
+- **Studio `controls` lists every control on the machine,** including those no profile names, with their default limits.
+- **`hold_until` is the anchor minus the hysteresis.**
+- **`config` returns the running configuration,** so it includes a draft while one is previewing.
+- **Events, all `info`:** previewing started, saved, discarded, and "The studio closed without saving; back to the saved configuration (…)".
+- **Re-sent ticks.** Surfaces treat a tick that repeats the last `seq` as new state but not as a new second: no history, no sparkline step. Before this, the re-sent ticks during a drag (ten a second) cost 63 dropped frames in 10 s.
 
 **`tick` event.** UI-shaped: everything a surface draws, with no second request.
 
@@ -529,6 +580,21 @@ penna waybar                       # one JSON line for a Waybar custom module (n
 - The marker leaves a 10 s trail. While hysteresis holds the output, the marker sits inside the shaded band, visibly off the curve: that is the answer to "why isn't it slowing down?".
 - When the step rate limits the output, the inspector says so: `Rising 5 %/s → 64 %`.
 
+**Measured in M3.** `tools/frame-timing/run.sh` runs the session above against `pennad --mock` on the second screen. It records frame intervals per phase with a `FrameAnimation`, and the render thread's own `sync + render` time with `QSG_RENDER_TIMING`. On this desk (threaded render loop, NVIDIA 615, 74.92 Hz, two runs):
+
+| Phase | Frames | Interval p50 / p99 / max | Dropped |
+|---|---|---|---|
+| Popup, 5 s | 381 | 13.3 / 13.8–13.9 / 15.0 ms | 0 |
+| Studio, 30 s live | 2,308 | 13.1–13.2 / 13.7–13.8 / 16.6 ms | 0 |
+| Drag, 10 s | 771 | 13.1 / 13.8–13.9 / 15.1 ms | 0 |
+
+The render thread took 1 ms at p99 and 6 ms at most, against the 6.7 ms half-budget. The studio's first frame came 77–82 ms after the summon (budget: 100 ms).
+
+The first run failed, with 0.3–1 % of frames taking two refresh cycles, and every slow frame came 2–30 ms after a tick. Three causes, all fixed:
+1. **A Repeater given a fresh array every tick rebuilds every delegate.** That meant every card, sparkline and number, each tick, which also silently reset every glide. Repeaters are now keyed by lists of ids that change only when the set of rows does, and each delegate looks up its row by key.
+2. **Re-sent ticks after writes.** The daemon re-sends the current tick after each write, and the surfaces were treating each one as a new second (§7.3, as built in M3).
+3. **Nine five-minute sparklines rebuilt in one frame.** The studio now rebuilds one per frame after each tick. Each glides from its own moment, so the stagger is invisible.
+
 **Review before code.** As with Candela, the design is reviewed before any QML is written (milestone D, §10). The review covers mockups in real theme tokens across miasma, tokyo-night, catppuccin-latte and vantablack. It also covers motion prototypes of the three live behaviours: value glide, sparkline slide and marker ride.
 
 ## 9. Building without hardware
@@ -574,7 +640,11 @@ Milestones, each ending in something visible:
   - the daemon-backed CLI and `penna waybar`;
   - 107 Rust tests and 8 plugin logic tests;
   - the popup running live in this shell against `pennad --mock`.
-- **M3** — Studio and curve editor against the mock, with the §8.6 frame-timing test passing.
+- **M3** — Studio and curve editor against the mock, with the §8.6 frame-timing test passing. **Done 21 Oct 2026**:
+  - drafts bound to their connection, previewing live and reverting on close;
+  - a studio with control cards, an editor for Graph, Trigger and Flat curves, a Mix view, and sensors over 5 minutes;
+  - frame timing passing twice in a row (table in §8.6);
+  - 114 Rust tests and 16 plugin logic tests.
 - **M4** — Real NVML control of the 3090 as root: hand-back, exit paths, `kill -9` on real hardware.
 - **M5** — Motherboard fans: bind `it87` (stock first, the fork if the IT8688E needs it), `doctor`, pairing, calibration, contested detection on the IT8792E.
 - **M6** — Packaging, README, first release.
@@ -623,4 +693,4 @@ These need root or a shell restart, and were not run for this draft.
 4. **NVML on the 3090 as root.** Set both fans to 40 %, read back percent and RPM, then `SetDefaultFanSpeed_v2` and confirm zero RPM returns at idle.
 5. **`pwm_enable` after suspend and after hibernate.**
 6. **Cost of a tick** (`strace -c` on the daemon). Goal: under 1 ms.
-7. **The shell's render loop on this NVIDIA stack** (`QSG_INFO=1`), and a baseline frame-timing run of the shipped popups for comparison. A `threaded` loop keeps animation off the GUI thread. If it is `basic`, every glide competes with QML logic, and §8.6's budgets need re-checking against that.
+7. ~~**The shell's render loop on this NVIDIA stack.**~~ Verified in M3: `threaded` (Quickshell 0.3.2, NVIDIA 615.78.08). A baseline run of the shipped popups, for comparison, is still to do.

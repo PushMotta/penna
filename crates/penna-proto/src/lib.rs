@@ -93,15 +93,71 @@ pub enum Op {
     Release { control: String },
     #[serde(rename = "label")]
     Label { key: String, label: String },
+    /// Everything static the curve editor needs, with this connection's draft applied (M3).
+    #[serde(rename = "studio")]
+    Studio,
+    #[serde(rename = "draft.put_curve")]
+    DraftPutCurve { curve: StudioCurve },
+    /// The curve's id is `curve`: `id` is the request's own (§7.3).
+    #[serde(rename = "draft.delete_curve")]
+    DraftDeleteCurve { curve: String },
+    /// `curve` is a curve id or `"firmware"`; applies to the active profile.
+    #[serde(rename = "draft.assign")]
+    DraftAssign { control: String, curve: String },
+    #[serde(rename = "draft.limits")]
+    DraftLimits {
+        control: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        min: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        offset: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        step_up: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        step_down: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        may_stop: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        failsafe: Option<f64>,
+    },
+    #[serde(rename = "draft.save")]
+    DraftSave,
+    #[serde(rename = "draft.discard")]
+    DraftDiscard,
 }
 
 impl Op {
     /// Every operation this version knows, in the order the protocol lists them.
-    pub const NAMES: &[&str] =
-        &["state", "subscribe", "unsubscribe", "config", "profile.set", "full_speed", "override", "retry", "adopt", "release", "label"];
+    pub const NAMES: &[&str] = &[
+        "state",
+        "subscribe",
+        "unsubscribe",
+        "config",
+        "profile.set",
+        "full_speed",
+        "override",
+        "retry",
+        "adopt",
+        "release",
+        "label",
+        "studio",
+        "draft.put_curve",
+        "draft.delete_curve",
+        "draft.assign",
+        "draft.limits",
+        "draft.save",
+        "draft.discard",
+    ];
 
     /// Changes fans or the configuration, so it needs `can_write`.
     pub fn writes(&self) -> bool {
+        !matches!(self, Op::State | Op::Subscribe | Op::Unsubscribe | Op::Config | Op::Studio)
+    }
+
+    /// Answered by the control loop, which knows the plan and the drafts, rather than by the socket from what was published.
+    pub fn needs_loop(&self) -> bool {
         !matches!(self, Op::State | Op::Subscribe | Op::Unsubscribe | Op::Config)
     }
 
@@ -118,6 +174,13 @@ impl Op {
             Op::Adopt { .. } => "adopt",
             Op::Release { .. } => "release",
             Op::Label { .. } => "label",
+            Op::Studio => "studio",
+            Op::DraftPutCurve { .. } => "draft.put_curve",
+            Op::DraftDeleteCurve { .. } => "draft.delete_curve",
+            Op::DraftAssign { .. } => "draft.assign",
+            Op::DraftLimits { .. } => "draft.limits",
+            Op::DraftSave => "draft.save",
+            Op::DraftDiscard => "draft.discard",
         }
     }
 }
@@ -186,6 +249,8 @@ pub struct Tick {
     pub profile: String,
     pub profiles: Vec<ProfileTick>,
     pub full_speed: bool,
+    /// What a studio is previewing, or `null` (M3).
+    pub draft: Option<DraftTick>,
     pub emergency: Vec<EmergencyTick>,
     pub sensors: Vec<SensorTick>,
     /// The controls the configuration knows.
@@ -296,7 +361,128 @@ pub struct CurveTick {
     pub out: Option<f64>,
     /// Hysteresis is holding the output.
     pub held: bool,
+    /// While held: the temperature below which the output may fall (§4.4); otherwise `null`.
+    pub hold_until: Option<f64>,
     pub error: Option<String>,
+}
+
+/// The changes some connection is previewing (§7.4): the curves and controls a draft touches.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct DraftTick {
+    pub curves: Vec<String>,
+    pub controls: Vec<Key>,
+}
+
+/// Everything static the curve editor needs, with the connection's draft applied (§7.3, M3).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Studio {
+    pub profile: String,
+    pub profiles: Vec<StudioProfile>,
+    pub curves: Vec<StudioCurve>,
+    pub controls: Vec<StudioControl>,
+    pub sensors: Vec<StudioSensor>,
+    pub draft: DraftInfo,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StudioProfile {
+    pub id: String,
+    pub label: String,
+    /// Control key → curve id, or `"firmware"`.
+    pub assign: BTreeMap<Key, String>,
+}
+
+/// A curve as the studio shows it and sends it back. Only the fields of its kind are present. On the way in, `label`,
+/// `response` and `hysteresis` may be left out to keep what the curve had, and `source_label` and `used_by` are ignored.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StudioCurve {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    pub kind: CurveKindName,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<Key>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub points: Option<Vec<[f64; 2]>>,
+    /// Seconds of smoothing on the source; in the studio body, the value in force (default included).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response: Option<f64>,
+    /// °C; in the studio body, the value in force (default included).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hysteresis: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mix: Option<MixSpec>,
+    /// A flat curve's duty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duty: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<TriggerSpec>,
+    /// The controls the active profile gives this curve.
+    #[serde(default)]
+    pub used_by: Vec<Key>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MixSpec {
+    pub op: penna_core::config::MixOp,
+    pub of: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TriggerSpec {
+    pub idle: f64,
+    pub load: f64,
+    pub on: f64,
+    pub off: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StudioControl {
+    pub key: Key,
+    pub label: String,
+    pub kind: Option<ControlKindName>,
+    pub min: f64,
+    pub max: f64,
+    pub offset: f64,
+    pub step_up: f64,
+    pub step_down: f64,
+    pub may_stop: bool,
+    /// Calibrated: the lowest duty that still turns the fan; `null` before calibration.
+    pub stop: Option<f64>,
+    pub start: f64,
+    pub floor: f64,
+    pub failsafe: f64,
+    /// An NVIDIA fan's settable range, else `null`.
+    pub nvml: Option<NvmlRange>,
+    /// Measured duty → RPM, ascending (§5.2), or `null` before calibration.
+    pub calibration: Option<Vec<[f64; 2]>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NvmlRange {
+    pub min: u32,
+    pub max: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StudioSensor {
+    pub key: Key,
+    pub label: String,
+    pub device: String,
+    #[serde(rename = "virtual")]
+    pub is_virtual: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct DraftInfo {
+    /// This connection holds the draft.
+    pub mine: bool,
+    /// The draft differs from the saved configuration.
+    pub dirty: bool,
+    pub curves: Vec<String>,
+    pub controls: Vec<Key>,
 }
 
 /// The last ticks, oldest first, sent once after `subscribe`. `null` is a failed read.
@@ -365,6 +551,26 @@ mod tests {
         assert_eq!(r.op, Op::Override { control: None, duty: None, seconds: None });
         assert!(Request::parse(r#"{"op":"state"}"#).unwrap().id.is_none());
         assert!(r.op.writes() && !Op::State.writes());
+    }
+
+    #[test]
+    fn studio_requests_parse_and_read_or_write() {
+        let r = Request::parse(r#"{"id":1,"op":"studio"}"#).unwrap();
+        assert!(r.op == Op::Studio && !r.op.writes() && r.op.needs_loop());
+        // A curve straight from the studio body, with what the daemon ignores on the way in.
+        let line = r#"{"id":2,"op":"draft.put_curve","curve":{"id":"cpu-quiet","label":"CPU quiet","kind":"graph",
+            "source":"hwmon/k10temp/0000:00:18.3/temp1","source_label":"AMD CPU · Tctl","points":[[45,30],[88,100]],
+            "response":5.0,"hysteresis":3.0,"used_by":["hwmon/it87/it87.2608/pwm1"]}}"#;
+        let Op::DraftPutCurve { curve } = Request::parse(line).unwrap().op else { panic!("not a put_curve") };
+        assert_eq!((curve.kind, curve.points.as_deref()), (CurveKindName::Graph, Some(&[[45.0, 30.0], [88.0, 100.0]][..])));
+        let r = Request::parse(r#"{"id":3,"op":"draft.limits","control":"CPU cooler","min":35,"may_stop":false}"#).unwrap();
+        let Op::DraftLimits { min, max, may_stop, .. } = r.op else { panic!("not limits") };
+        assert_eq!((min, max, may_stop), (Some(35.0), None, Some(false)));
+        for op in ["draft.save", "draft.discard"] {
+            assert!(Request::parse(&format!(r#"{{"op":"{op}"}}"#)).unwrap().op.writes(), "{op}");
+        }
+        let e = Request::parse(r#"{"id":4,"op":"draft.assign","control":"CPU cooler"}"#).unwrap_err();
+        assert_eq!(e.error.as_deref(), Some("draft.assign needs \"curve\"."));
     }
 
     #[test]
