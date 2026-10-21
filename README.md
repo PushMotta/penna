@@ -46,6 +46,21 @@ With the plugin symlinked, the shell doesn't notice edits inside it. It also kee
 plugin reload. So after editing, restart the shell with `omarchy-restart-shell`. `omarchy plugin disable
 io.github.pushmotta.penna` takes the widget off the bar.
 
+## Real hardware (M4: NVIDIA fans)
+
+Production `pennad` runs as root and controls NVIDIA fans; motherboard fans arrive in M5.
+
+```
+sudo ./target/debug/pennad --config test/fixtures/desk-3090.config.toml   # this desk's RTX 3090
+python3 -I tools/nvml-state.py                                            # what NVML says about every fan, no root
+pkexec tools/m4-hardware-test.sh                                          # every way out hands the fans back (§9.4)
+```
+
+The hardware test runs `pennad` as a transient systemd service, holds the fans at 45 %, and ends the daemon six ways:
+stop, `kill -9`, a whole-unit kill with restart, panic, a watchdog-caught hang, and idle. After each, it checks through NVML
+that both fans are back on the driver's curve. `pkexec` asks for the password through the shell's polkit dialog, which also
+works from tools that have no terminal.
+
 ## Tests
 
 `cargo test --workspace` runs the control loop on simulated time (including property tests), the real hwmon backend against

@@ -1,6 +1,10 @@
-//! Penna's daemon (DESIGN.md §6, §7.1). It drives simulated hardware only until M4: `--mock <scenario>` builds a mock desk and
-//! runs the simulator in lockstep with the control loop, and `--sysfs-root <dir>` drives a tree kept by someone else. Surfaces
-//! talk to it over the socket in [`ipc`] (§7.3); the loop never waits for them.
+//! Penna's daemon (DESIGN.md §6, §7.1). Three ways to run it:
+//! * production, as root: `--config` (default /etc/penna/config.toml) on this machine. NVIDIA fans are controlled for real
+//!   (M4); motherboard fans are read but not driven until M5, so a configuration that assigns one is refused;
+//! * `--mock <scenario>` builds a mock desk and runs the simulator in lockstep with the control loop;
+//! * `--sysfs-root <dir>` drives a tree kept by someone else.
+//!
+//! Surfaces talk to it over the socket in [`ipc`] (§7.3); the loop never waits for them.
 //!
 //! Every way out hands the fans back: a clean stop restores each held control; a panic restores from `held.json` in the panic
 //! hook; anything that kills the process outright leaves `held.json` for `penna restore` (the unit's `ExecStopPost`).
@@ -28,22 +32,30 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{broadcast, watch};
 
 const DEFAULT_RUNTIME_DIR: &str = "/run/penna";
+const DEFAULT_CONFIG: &str = "/etc/penna/config.toml";
+const DEFAULT_MEASURED: &str = "/var/lib/penna/measured.toml";
+const NOT_ROOT: &str = "pennad controls fans and has to run as root. For a simulated desk: pennad --mock render-burst";
 /// How often the loop looks for requests between ticks.
 const REQUEST_POLL: Duration = Duration::from_millis(20);
 
 #[derive(Parser)]
-#[command(name = "pennad", version, about = "Penna's daemon. Until M4 it controls simulated hardware only.")]
+#[command(
+    name = "pennad",
+    version,
+    about = "Penna's daemon: as root, this machine's fans (NVIDIA from M4, motherboard from M5); or a mock desk."
+)]
 struct Args {
     /// Build a mock desk from a scenario (render-burst, faults, or a scenario file) and run the simulator in lockstep.
     #[arg(long, value_name = "SCENARIO", conflicts_with = "sysfs_root")]
     mock: Option<String>,
-    /// Drive the hwmon tree under DIR, which is never the real /sys until M4. Needs --config.
+    /// Drive the hwmon tree under DIR, which is never the real /sys until M5. Needs --config.
     #[arg(long, value_name = "DIR")]
     sysfs_root: Option<PathBuf>,
-    /// The configuration. Default for --mock: the one the scenario names, copied into the mock tree, where changes are saved.
+    /// The configuration, where changes from surfaces are saved. Default: /etc/penna/config.toml; for --mock, the one the
+    /// scenario names, copied into the mock tree.
     #[arg(long, value_name = "FILE")]
     config: Option<PathBuf>,
-    /// Pairing and calibration. Default for --mock: what the simulator knows.
+    /// Pairing and calibration. Default: /var/lib/penna/measured.toml when it exists; for --mock, what the simulator knows.
     #[arg(long, value_name = "FILE")]
     measured: Option<PathBuf>,
     /// Where surfaces connect. Default: /run/penna/penna.sock, or $XDG_RUNTIME_DIR/penna/penna.sock with --mock.
@@ -73,6 +85,10 @@ struct Args {
     /// Test only: panic after this many ticks, to prove the panic hook hands the fans back.
     #[arg(long, hide = true)]
     test_panic_after: Option<u64>,
+    /// Test only: after this many ticks the loop stops ticking and stops pinging the watchdog, as a deadlock would, so systemd's
+    /// WatchdogSec kills it. SIGTERM still stops it cleanly.
+    #[arg(long, hide = true)]
+    test_hang_after: Option<u64>,
 }
 
 fn parse_tick(s: &str) -> Result<f64, String> {
@@ -89,7 +105,12 @@ fn main() -> ExitCode {
     match run(Args::parse()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("pennad: {e:#}");
+            let text = format!("{e:#}");
+            if text.starts_with("pennad ") {
+                eprintln!("{text}")
+            } else {
+                eprintln!("pennad: {text}")
+            }
             ExitCode::FAILURE
         }
     }
@@ -97,6 +118,8 @@ fn main() -> ExitCode {
 
 struct Setup {
     sim: Option<Sim>,
+    /// This machine's real hardware: NVIDIA under control, motherboard fans read only (M4).
+    real: bool,
     sysfs_root: PathBuf,
     config: String,
     /// Where changes from surfaces are saved.
@@ -112,10 +135,45 @@ struct Setup {
 
 fn setup(args: &Args) -> Result<Setup> {
     match (&args.mock, &args.sysfs_root) {
-        (None, None) => bail!(
-            "until M4 Penna controls simulated hardware only; real control arrives in M4 (NVIDIA) and M5 (motherboard).\n\
-             Try: pennad --mock render-burst --forever, or pennad --mock faults --speed 10"
-        ),
+        (None, None) => {
+            // SAFETY: geteuid has no preconditions.
+            let root = unsafe { libc::geteuid() } == 0;
+            let path = args.config.clone().unwrap_or_else(|| PathBuf::from(DEFAULT_CONFIG));
+            let config = match std::fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(_) if !root => bail!("{NOT_ROOT}"),
+                Err(e) => {
+                    return Err(anyhow!(e)
+                        .context(format!("reading {} (write one, check it with `penna check`, or pass --config)", path.display())));
+                }
+            };
+            // What the configuration asks for is explained first, root or not.
+            let assigned = Config::parse(&config).map(|c| c.assigned_motherboard()).unwrap_or_default();
+            if !assigned.is_empty() {
+                bail!("Motherboard fans arrive in M5; this config assigns {}. Set them to \"firmware\" for now.", assigned.join(", "));
+            }
+            if !root {
+                bail!("{NOT_ROOT}");
+            }
+            let measured = match &args.measured {
+                Some(p) => read_measured(p)?,
+                None if Path::new(DEFAULT_MEASURED).exists() => read_measured(Path::new(DEFAULT_MEASURED))?,
+                None => Measured::default(),
+            };
+            Ok(Setup {
+                sim: None,
+                real: true,
+                sysfs_root: PathBuf::from("/sys"),
+                config,
+                config_path: Some(path),
+                measured,
+                cpu_model: cpu_model(),
+                runtime_dir: args.runtime_dir.clone().unwrap_or_else(|| PathBuf::from(DEFAULT_RUNTIME_DIR)),
+                socket: args.socket.clone().unwrap_or_else(|| PathBuf::from(penna_proto::PRODUCTION_SOCKET)),
+                scratch: None,
+                seconds: args.seconds,
+            })
+        }
         (Some(name), _) => {
             let (scenario, config) = sim::load(name)?;
             let (tree, scratch) = match &args.tree {
@@ -144,6 +202,7 @@ fn setup(args: &Args) -> Result<Setup> {
                 None => sim.measured(),
             };
             Ok(Setup {
+                real: false,
                 sysfs_root: sim.root().to_path_buf(),
                 cpu_model: Some(sim.scenario().cpu_model.clone()),
                 runtime_dir: args.runtime_dir.clone().unwrap_or_else(|| tree.join("run")),
@@ -161,6 +220,7 @@ fn setup(args: &Args) -> Result<Setup> {
             let path = args.config.as_ref().ok_or_else(|| anyhow!("--sysfs-root needs --config"))?;
             Ok(Setup {
                 sim: None,
+                real: false,
                 sysfs_root: root.clone(),
                 config: std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?,
                 config_path: Some(path.clone()),
@@ -209,6 +269,8 @@ pub struct Live {
     pub now: f64,
     /// Loop seconds per wall-clock second.
     pub rate: f64,
+    /// Motherboard fans may be assigned curves: false on this machine's real hardware until M5.
+    pub motherboard: bool,
 }
 
 /// A draft belongs to the connection that made it: when that connection closes, the daemon goes back to `saved`.
@@ -242,10 +304,16 @@ impl Live {
 }
 
 fn run(args: Args) -> Result<()> {
-    let Setup { mut sim, sysfs_root, config, config_path, measured, cpu_model, runtime_dir, socket, scratch, seconds } = setup(&args)?;
+    let Setup { mut sim, real, sysfs_root, config, config_path, measured, cpu_model, runtime_dir, socket, scratch, seconds } =
+        setup(&args)?;
     let mock = sim.is_some();
     let config = Config::parse(&config).map_err(|e| anyhow!("configuration: {e}"))?;
-    let opts = Options { sysfs_root, nvml: false, mock_nvml: sim.as_ref().map(Sim::mock_nvml_root), control: true };
+    let opts = if real {
+        // Motherboard fans read only; NVIDIA fans under control.
+        Options { sysfs_root, nvml: true, mock_nvml: None, control: false }
+    } else {
+        Options { sysfs_root, nvml: false, mock_nvml: sim.as_ref().map(Sim::mock_nvml_root), control: true }
+    };
     let mut machine = Machine::open(&opts)?;
     let plan = Plan::new(config, &machine.inventory, &measured, cpu_model.as_deref()).map_err(|problems| {
         anyhow!(
@@ -255,6 +323,12 @@ fn run(args: Args) -> Result<()> {
     })?;
 
     std::fs::create_dir_all(&runtime_dir).with_context(|| format!("creating {} (try --runtime-dir)", runtime_dir.display()))?;
+    if real {
+        // Anyone may reach the socket inside; every request is then checked against its peer's credentials (§7.4).
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&runtime_dir, std::fs::Permissions::from_mode(0o755))
+            .with_context(|| format!("opening up {}", runtime_dir.display()))?;
+    }
     let held_path = runtime_dir.join(held::FILE);
     if held_path.exists() {
         // A daemon before this one died holding fans: put them back before anything else.
@@ -278,6 +352,7 @@ fn run(args: Args) -> Result<()> {
         readings: machine.read(),
         now: 0.0,
         rate,
+        motherboard: !real,
     };
     let mut ring = history::Ring::default();
 
@@ -316,6 +391,18 @@ fn run(args: Args) -> Result<()> {
     let mut out = trace::Trace::new(&live.plan, &live.measured, args.quiet);
     out.banner(&live.plan, &machine, sim.as_ref(), (&held_path, &socket), args.tick, args.speed, seconds);
     let mut held = Held::new(&held_path);
+    // The loop pings the watchdog after every tick, and between ticks whenever half of WatchdogSec has passed: never from a
+    // thread of its own, so a loop that stops stops the pings (§6.2).
+    let ping_every = sd_notify::watchdog_enabled().map(|d| d / 2);
+    if let Some(p) = ping_every
+        && p.as_secs_f64() < args.tick / rate
+    {
+        eprintln!(
+            "pennad: WatchdogSec ({:.1} s) is shorter than two ticks; the loop pings between ticks to keep up",
+            p.as_secs_f64() * 2.0
+        );
+    }
+    let mut last_ping: Instant;
     let _ = sd_notify::notify(&[sd_notify::NotifyState::Ready]);
 
     let start = Instant::now();
@@ -346,6 +433,7 @@ fn run(args: Args) -> Result<()> {
             }
         }
         let _ = sd_notify::notify(&[sd_notify::NotifyState::Watchdog]);
+        last_ping = Instant::now();
         out.tick(now, &live.plan, &live.state, &readings);
         live.readings = readings;
         live.now = now;
@@ -358,6 +446,13 @@ fn run(args: Args) -> Result<()> {
         ticks += 1;
         if args.test_panic_after == Some(ticks) {
             panic!("test panic after {ticks} ticks");
+        }
+        if args.test_hang_after == Some(ticks) {
+            eprintln!("pennad: test hang after {ticks} ticks: the loop no longer ticks or pings the watchdog");
+            while !stop.load(Ordering::SeqCst) {
+                std::thread::sleep(REQUEST_POLL);
+            }
+            break Ok(());
         }
         if seconds.is_some_and(|s| now >= s) {
             break Ok(());
@@ -380,6 +475,10 @@ fn run(args: Args) -> Result<()> {
                 send_events(&events, &mut out, live.state.seq, body.t);
                 publish.send_replace(Arc::new(ipc::Published::new(&body, ring.snapshot(body.seq, args.tick), &live.plan.config)));
             }
+            if ping_every.is_some_and(|p| last_ping.elapsed() >= p) {
+                let _ = sd_notify::notify(&[sd_notify::NotifyState::Watchdog]);
+                last_ping = Instant::now();
+            }
             std::thread::sleep((due - Instant::now()).min(REQUEST_POLL));
         }
     };
@@ -387,7 +486,7 @@ fn run(args: Args) -> Result<()> {
     let _ = sd_notify::notify(&[sd_notify::NotifyState::Stopping]);
     drop(publish);
     server.stop();
-    let handed_back = hand_back(&mut held);
+    let handed_back = hand_back(&mut machine, &mut held);
     out.shutdown(&handed_back);
     if let Some(dir) = scratch
         && result.is_ok()
@@ -418,7 +517,7 @@ fn carry_out(machine: &mut Machine, held: &mut Held, cmd: &Command) -> Outcome {
             match machine.take(key) {
                 Ok(duty) => Ok(Outcome::Taken { duty }),
                 Err(e) => {
-                    let _ = held::restore(&entry);
+                    let _ = machine.release(&entry);
                     let _ = held.remove(key);
                     Err(e)
                 }
@@ -429,7 +528,7 @@ fn carry_out(machine: &mut Machine, held: &mut Held, cmd: &Command) -> Outcome {
         Command::Handback { key } => machine.handback(key).map(|_| Outcome::Done),
         Command::Release { key } => {
             let entry = held.get(key).cloned().ok_or_else(|| anyhow!("{key} is not in held.json"))?;
-            held::restore(&entry)?;
+            machine.release(&entry)?;
             held.remove(key)?;
             Ok(Outcome::Done)
         }
@@ -438,11 +537,11 @@ fn carry_out(machine: &mut Machine, held: &mut Held, cmd: &Command) -> Outcome {
 }
 
 /// Every held control back to exactly what it was. What cannot go back stays in held.json for `penna restore`.
-fn hand_back(held: &mut Held) -> Vec<Result<String, String>> {
+fn hand_back(machine: &mut Machine, held: &mut Held) -> Vec<Result<String, String>> {
     let entries: Vec<_> = held.entries().to_vec();
     let mut out = Vec::new();
     for e in entries {
-        match held::restore(&e) {
+        match machine.release(&e) {
             Ok(s) => {
                 let _ = held.remove(e.key());
                 out.push(Ok(s));

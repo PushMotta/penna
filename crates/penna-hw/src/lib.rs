@@ -6,8 +6,8 @@
 //! * [`mock_nvml::MockNvml`] is the simulator's file-backed NVML, and [`sim`] the simulator itself (§9.1).
 //! * [`held`] writes `held.json` and restores from it (§6.1, §6.2).
 //!
-//! Control (`take`, `write`, `handback`, `release`) works against an injectable root only: M1 never writes under the real `/sys`,
-//! and real NVML control arrives in M4.
+//! Control (`take`, `write`, `handback`, `release`) of motherboard fans works against an injectable root only until M5: nothing
+//! writes under the real `/sys`. NVIDIA fans are controlled for real from M4.
 pub mod capture;
 pub mod held;
 pub mod hwmon;
@@ -54,6 +54,10 @@ pub trait Backend {
     fn handback(&mut self, key: &Key) -> Result<()> {
         bail!("{}: {key} has no driver curve to hand back to", self.name())
     }
+    /// Exactly what `held.json` recorded, with this backend's own handle where it has one.
+    fn release(&mut self, entry: &HeldEntry) -> Result<String> {
+        held::restore(entry)
+    }
 }
 
 pub struct Options {
@@ -61,7 +65,7 @@ pub struct Options {
     pub nvml: bool,
     /// The simulator's NVML, instead of the real one.
     pub mock_nvml: Option<PathBuf>,
-    /// Open controls for writing. Refused under the real `/sys` in M1.
+    /// Open motherboard controls for writing. Refused under the real `/sys` until M5.
     pub control: bool,
 }
 
@@ -71,16 +75,20 @@ impl Default for Options {
     }
 }
 
-/// M1 drives simulated hardware only.
+/// Motherboard fans are driven for real from M5: until then nothing writes under the real `/sys`.
 pub fn refuse_real_sysfs(path: &Path) -> Result<()> {
-    let real = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    if real.starts_with("/sys") {
+    if is_real_sysfs(path) {
         bail!(
-            "{} is the real /sys. This Penna (M1) controls simulated hardware only; real control arrives in M4 (NVIDIA) and M5 (motherboard). Try: pennad --mock render-burst",
+            "{} is under the real /sys, and motherboard fans arrive in M5: this Penna controls NVIDIA fans and simulated motherboard \
+             fans only. For a simulated desk: pennad --mock render-burst",
             path.display()
         );
     }
     Ok(())
+}
+
+pub fn is_real_sysfs(path: &Path) -> bool {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()).starts_with("/sys")
 }
 
 /// Every backend this machine has, and what they found.
@@ -147,6 +155,13 @@ impl Machine {
     }
     pub fn handback(&mut self, key: &Key) -> Result<()> {
         self.owner(key)?.handback(key)
+    }
+    /// Puts a held control back, through the backend that owns it when there is one.
+    pub fn release(&mut self, entry: &HeldEntry) -> Result<String> {
+        match self.owners.get(entry.key()).copied() {
+            Some(i) => self.backends[i].release(entry),
+            None => held::restore(entry),
+        }
     }
 
     pub fn read(&mut self) -> Readings {

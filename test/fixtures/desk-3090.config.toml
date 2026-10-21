@@ -1,0 +1,50 @@
+# Penna's configuration for the development desk's RTX 3090 (DESIGN.md §0, §7.5): the first configuration that drives real
+# fans (M4). Below 30 % each fan is handed back to the driver's own curve, which stops it when the card is cool (§4.5).
+# Motherboard fans are not assigned: they arrive in M5.
+version = 1
+profile = "balanced"
+
+[[curve]]
+id = "gpu"
+label = "GPU"
+graph = { source = "nvml/GPU-168e2769-d673-f36a-ea7b-64df57f8d090/temp", points = [[45, 0], [55, 35], [68, 55], [78, 80], [85, 100]] }
+response = "2s"
+hysteresis = 2.0
+
+[[curve]]
+id = "gpu-quiet"
+label = "GPU quiet"
+graph = { source = "nvml/GPU-168e2769-d673-f36a-ea7b-64df57f8d090/temp", points = [[50, 0], [60, 32], [72, 50], [82, 80], [88, 100]] }
+response = "2s"
+hysteresis = 2.0
+
+[[curve]]
+id = "gpu-render"
+label = "GPU render"
+graph = { source = "nvml/GPU-168e2769-d673-f36a-ea7b-64df57f8d090/temp", points = [[40, 30], [55, 45], [68, 65], [78, 90], [83, 100]] }
+response = "2s"
+hysteresis = 2.0
+
+[[control]]
+key = "nvml/GPU-168e2769-d673-f36a-ea7b-64df57f8d090/fan0"
+label = "GPU fan 1"
+may_stop = true
+failsafe = 100
+
+[[control]]
+key = "nvml/GPU-168e2769-d673-f36a-ea7b-64df57f8d090/fan1"
+label = "GPU fan 2"
+may_stop = true
+failsafe = 100
+
+[profiles.balanced]
+"nvml/GPU-168e2769-d673-f36a-ea7b-64df57f8d090/fan0" = "gpu"
+"nvml/GPU-168e2769-d673-f36a-ea7b-64df57f8d090/fan1" = "gpu"
+
+[profiles.quiet]
+"nvml/GPU-168e2769-d673-f36a-ea7b-64df57f8d090/fan0" = "gpu-quiet"
+"nvml/GPU-168e2769-d673-f36a-ea7b-64df57f8d090/fan1" = "gpu-quiet"
+
+[profiles.render]
+"nvml/GPU-168e2769-d673-f36a-ea7b-64df57f8d090/fan0" = "gpu-render"
+"nvml/GPU-168e2769-d673-f36a-ea7b-64df57f8d090/fan1" = "gpu-render"

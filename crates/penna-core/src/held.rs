@@ -22,8 +22,21 @@ pub enum HeldEntry {
     Hwmon { key: Key, enable: PathBuf, original_enable: i64, pwm: PathBuf, original_pwm: u32 },
     /// The simulator's file-backed NVML (§9.1).
     MockNvml { key: Key, policy: PathBuf, original_policy: String },
-    /// A real NVIDIA fan: restored with `nvmlDeviceSetDefaultFanSpeed_v2` (M4).
-    Nvml { key: Key, uuid: String, fan: u32 },
+    /// A real NVIDIA fan (M4): the policy it was on, `driver` (restored with `nvmlDeviceSetDefaultFanSpeed_v2`) or `manual`
+    /// (restored with that policy and `original_speed`, the target speed it was holding).
+    Nvml {
+        key: Key,
+        uuid: String,
+        fan: u32,
+        #[serde(default = "driver_policy")]
+        original_policy: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        original_speed: Option<u32>,
+    },
+}
+
+fn driver_policy() -> String {
+    "driver".to_owned()
 }
 
 impl HeldEntry {
@@ -74,5 +87,26 @@ mod tests {
         };
         assert_eq!(HeldFile::parse(&f.to_json()).unwrap(), f);
         assert!(f.to_json().contains("\"kind\": \"hwmon\""));
+    }
+
+    #[test]
+    fn nvml_entries_round_trip_and_default_to_the_driver() {
+        let manual = HeldEntry::Nvml {
+            key: Key::parse("nvml/GPU-1/fan1").unwrap(),
+            uuid: "GPU-1".into(),
+            fan: 1,
+            original_policy: "manual".into(),
+            original_speed: Some(55),
+        };
+        let f = HeldFile { version: VERSION, pid: 7, controls: vec![manual] };
+        assert_eq!(HeldFile::parse(&f.to_json()).unwrap(), f);
+        let old = r#"{"version":1,"pid":1,"controls":[{"kind":"nvml","key":"nvml/GPU-1/fan0","uuid":"GPU-1","fan":0}]}"#;
+        match &HeldFile::parse(old).unwrap().controls[0] {
+            HeldEntry::Nvml { original_policy, original_speed, .. } => {
+                assert_eq!(original_policy, "driver");
+                assert_eq!(*original_speed, None);
+            }
+            other => panic!("{other:?}"),
+        }
     }
 }

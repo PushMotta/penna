@@ -596,6 +596,20 @@ impl Config {
     }
 
     /// Every physical sensor any curve reads, through virtual sensors.
+    /// Motherboard (hwmon) controls some profile gives a curve, as "label (profile)" words: what production refuses until M5.
+    pub fn assigned_motherboard(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        for (profile, assign) in &self.profiles {
+            for (key, curve) in assign {
+                if key.as_str().starts_with("hwmon/") && curve != FIRMWARE {
+                    let label = self.controls.iter().find(|c| &c.key == key).and_then(|c| c.label.clone());
+                    out.push(format!("{} in profile {profile:?}", label.unwrap_or_else(|| key.to_string())));
+                }
+            }
+        }
+        out
+    }
+
     pub fn physical_sources(&self) -> BTreeSet<Key> {
         let mut out = BTreeSet::new();
         let mut stack: Vec<Key> = self.curves.iter().filter_map(|c| c.kind.source().cloned()).collect();

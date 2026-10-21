@@ -1,6 +1,6 @@
 # Penna — design specification
 
-Draft 2 · 21 October 2026 · status: decisions approved (§11), UI quality bar added (§8.6), M0–M3 done, design review 01 approved (milestone D, §11.1). Next: M4, real control of the 3090 (needs root).
+Draft 2 · 21 October 2026 · status: decisions approved (§11), UI quality bar added (§8.6), M0–M4 done, design review 01 approved (milestone D, §11.1). Penna controls the real 3090 (§9.4).
 
 Companion: design review 01 — mockups in real theme tokens, live motion prototypes, and eight calls before QML — is published as an artifact (https://claude.ai/artifact/DmFftUzWVBd11NNBv4e8aK). Its source is `design/penna-design-review.html`.
 
@@ -192,6 +192,7 @@ Before a control leaves `firmware`, the daemon writes its key and **original mod
 | Panic | A panic hook restores from an immutable snapshot of `held.json` taken at adoption. No locks, no shared state. The hook runs under both `panic = "unwind"` and `"abort"`. |
 | `kill -9`, OOM, a crash inside NVML | Nothing in the process runs. The unit's `ExecStopPost=penna restore` reads `held.json` and restores. `RuntimeDirectoryPreserve=yes` keeps the file past the process. |
 | Hang | `Type=notify`, `WatchdogSec=5`. The **control loop itself** pings once per tick, not a helper thread, so a stuck loop stops pinging. systemd kills the daemon, runs `ExecStopPost`, and `Restart=on-failure` brings it back. |
+| `systemctl kill` of the whole unit | `systemctl kill` signals every process in the unit's cgroup by default, and that includes the `ExecStopPost` systemd starts at the same moment. On this desk the journal said "Control process exited, code=killed", and the fans stayed manual. `Restart=on-failure` brings `pennad` back, and its first act is to restore the `held.json` left behind: the fans were back on the driver's curve about 2 s after the kill (§9.4). |
 | Reboot | The firmware resets the chips. `/run` is tmpfs, so no stale state survives. |
 
 ### 6.3 Inside a tick
@@ -620,6 +621,26 @@ The **real hwmon backend runs against this tree unmodified**, so the code that w
 
 The NVML floor and hand-back (§4.5), "percent is not duty" (§3.1, §4.1), absent-but-kept devices and the vfio listing (§3.2), the sanity rules (§3.3), never addressing anything by `hwmonN` (§3.2), and resume after hibernate (§6.5).
 
+### 9.4 The M4 hardware test (21 Oct 2026)
+
+`tools/m4-hardware-test.sh`, run as root through `pkexec`, drives the real 3090 with `test/fixtures/desk-3090.config.toml`. `pennad` runs as a transient systemd service with `Type=notify`, `WatchdogSec=5` and `ExecStopPost=penna restore`. Each case holds both fans at 45 %, ends the daemon one way, then reads both fans' policy back through NVML. All six cases pass on the second run:
+
+| Case | The fans went back to the driver through |
+|---|---|
+| `systemctl stop` (SIGTERM) | `pennad`'s own shutdown path |
+| `kill -9` of `pennad` alone | `ExecStopPost`, in under a second ("restored … the driver's curve", for each fan) |
+| `kill -9` of the whole unit | the restarted `pennad` restoring the leftover `held.json`, about 2 s after the kill |
+| Panic | the panic hook |
+| Hang | systemd's watchdog after 5 s, then `ExecStopPost` |
+| Idle | the curve below 30 %: the driver keeps the fans and stops them; a 6 s hold took them and gave them back |
+
+The first run failed the `kill -9` case. It used `systemctl kill`, which killed `ExecStopPost` too, and that is what led to the whole-unit row in §6.2. The test now kills only the main process for that case and covers the whole-unit kill separately, with `Restart=on-failure`.
+
+Also seen on the card:
+- **NVML percent is not duty.** At a 45 % target the fans reported 46–64 %, at 703–1,464 RPM, and the two fans differed.
+- **The driver takes a few seconds to stop the fans after a hand-back.** It ran them at about 50 % for a few seconds after each one, then stopped them at idle.
+- **The first write takes over without a jump.** Taking does nothing on the card, so a fan stopped by the driver stays stopped until the first write.
+
 ## 10. Scope and milestones
 
 | v1 | v2 |
@@ -645,7 +666,11 @@ Milestones, each ending in something visible:
   - a studio with control cards, an editor for Graph, Trigger and Flat curves, a Mix view, and sensors over 5 minutes;
   - frame timing passing twice in a row (table in §8.6);
   - 114 Rust tests and 16 plugin logic tests.
-- **M4** — Real NVML control of the 3090 as root: hand-back, exit paths, `kill -9` on real hardware.
+- **M4** — Real NVML control of the 3090 as root: hand-back, exit paths, `kill -9` on real hardware. **Done 21 Oct 2026**:
+  - production `pennad` requires root and refuses motherboard fans until M5;
+  - real NVML take, write, hand-back and restore, with `penna restore` for real NVIDIA entries;
+  - the hardware test passes all six cases (§9.4);
+  - 124 Rust tests.
 - **M5** — Motherboard fans: bind `it87` (stock first, the fork if the IT8688E needs it), `doctor`, pairing, calibration, contested detection on the IT8792E.
 - **M6** — Packaging, README, first release.
 
@@ -690,7 +715,7 @@ These need root or a shell restart, and were not run for this draft.
 1. **Which chips.** `sudo modprobe it87 ignore_resource_conflict=1` with the stock driver, then read the kernel log. If only the IT8792E binds, the IT8688E needs the fork.
 2. **Which headers each chip drives**, through pairing, and whether IT8792E writes hold or come back `contested`.
 3. **BIOS Smart Fan settings** that manual control may need. The fork notes some Gigabyte boards need a BIOS curve workaround.
-4. **NVML on the 3090 as root.** Set both fans to 40 %, read back percent and RPM, then `SetDefaultFanSpeed_v2` and confirm zero RPM returns at idle.
+4. ~~**NVML on the 3090 as root.**~~ Verified in M4 (§9.4): manual speeds hold and read back as manual, `SetDefaultFanSpeed_v2` hands the fans back, and zero RPM returns at idle.
 5. **`pwm_enable` after suspend and after hibernate.**
 6. **Cost of a tick** (`strace -c` on the daemon). Goal: under 1 ms.
 7. ~~**The shell's render loop on this NVIDIA stack.**~~ Verified in M3: `threaded` (Quickshell 0.3.2, NVIDIA 615.78.08). A baseline run of the shipped popups, for comparison, is still to do.

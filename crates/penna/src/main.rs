@@ -373,6 +373,21 @@ fn restore(from: &std::path::Path) -> Result<()> {
         println!("Nothing to restore: {} does not exist, so Penna holds no fan.", from.display());
         return Ok(());
     }
+    // Real fans need root to put back; a simulated desk's files belong to whoever made them.
+    let held = penna_hw::held::load(from)?;
+    let real = held.controls.iter().any(|e| match e {
+        penna_core::held::HeldEntry::Nvml { .. } => true,
+        penna_core::held::HeldEntry::Hwmon { enable, .. } => penna_hw::is_real_sysfs(enable),
+        penna_core::held::HeldEntry::MockNvml { .. } => false,
+    });
+    // SAFETY: geteuid has no preconditions.
+    if real && unsafe { libc::geteuid() } != 0 {
+        bail!(
+            "{} holds this machine's real fans, and putting them back needs root: sudo penna restore --from {}",
+            from.display(),
+            from.display()
+        );
+    }
     let r = penna_hw::held::restore_file(from)?;
     for d in &r.done {
         println!("restored {d}");

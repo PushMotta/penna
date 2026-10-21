@@ -264,6 +264,7 @@ fn draft_base(live: &Live, conn: u64) -> Result<Config, String> {
 /// Runs `cfg` as connection `conn`'s draft, at once: a refused one changes nothing and says why. A draft that matches what is
 /// saved is no draft. A changed curve starts over from its new shape, so the preview is not held back by hysteresis.
 fn preview(live: &mut Live, inventory: &Inventory, out: &mut Trace, conn: u64, cfg: Config) -> Result<(), String> {
+    motherboard_guard(live, &cfg)?;
     let plan = Plan::new(cfg.clone(), inventory, &live.measured, live.cpu_model.as_deref()).map_err(|p| config::sentence(&p))?;
     restart_changed_curves(live, &cfg);
     let started = live.draft.is_none();
@@ -423,8 +424,15 @@ fn change_saved(live: &mut Live, inventory: &Inventory, change: impl Fn(&mut Con
     Ok(())
 }
 
+/// On this machine's real hardware, motherboard fans are read but not driven until M5 (DESIGN.md §10).
+fn motherboard_guard(live: &Live, cfg: &Config) -> Result<(), String> {
+    let assigned = if live.motherboard { Vec::new() } else { cfg.assigned_motherboard() };
+    if assigned.is_empty() { Ok(()) } else { Err(format!("Motherboard fans arrive in M5; that would assign {}.", assigned.join(", "))) }
+}
+
 /// A configuration as a plan for this machine, or why it can't be one.
 fn plan_for(live: &Live, inventory: &Inventory, cfg: Config) -> Result<Plan, String> {
+    motherboard_guard(live, &cfg)?;
     Plan::new(cfg, inventory, &live.measured, live.cpu_model.as_deref()).map_err(|problems| {
         let list: Vec<String> = problems.iter().map(|p| p.to_string()).collect();
         format!("That would make the configuration invalid: {}.", list.join("; "))

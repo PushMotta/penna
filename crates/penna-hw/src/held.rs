@@ -81,7 +81,8 @@ pub fn load(path: &Path) -> Result<HeldFile> {
     HeldFile::parse(&text).map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))
 }
 
-/// Puts one control back exactly as it was found. Writes nothing under the real `/sys` in M1.
+/// Puts one control back exactly as it was found. Writes nothing under the real `/sys` until M5; a real NVIDIA fan opens NVML
+/// for the purpose (M4).
 pub fn restore(entry: &HeldEntry) -> Result<String> {
     match entry {
         HeldEntry::Hwmon { key, enable, original_enable, pwm, original_pwm } => {
@@ -101,7 +102,7 @@ pub fn restore(entry: &HeldEntry) -> Result<String> {
             fs::write(policy, format!("{original_policy}\n")).with_context(|| format!("writing {}", policy.display()))?;
             Ok(format!("{key}: {original_policy} policy"))
         }
-        HeldEntry::Nvml { key, .. } => bail!("{key}: restoring a real NVIDIA fan arrives in M4"),
+        HeldEntry::Nvml { .. } => crate::nvml::restore_entry(entry),
     }
 }
 
@@ -184,6 +185,7 @@ mod tests {
             pwm: "/sys/class/hwmon/hwmon5/pwm1".into(),
             original_pwm: 0,
         };
-        assert!(restore(&e).unwrap_err().to_string().contains("real /sys"));
+        let err = restore(&e).unwrap_err().to_string();
+        assert!(err.contains("real /sys") && err.contains("M5"), "{err}");
     }
 }
