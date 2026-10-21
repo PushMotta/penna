@@ -421,7 +421,7 @@ impl Sim {
     }
 
     /// What pairing and calibration would have found: the tachs each PWM drives, their stop and start duties, and the duty → RPM
-    /// table (§5.2) from the simulator's own fan model, so the editor's RPM axis says what the fans here actually do.
+    /// table (§5.4) from the simulator's own fan model, so the editor's RPM axis says what the fans here actually do.
     pub fn measured(&self) -> Measured {
         let mut controls = Vec::new();
         for chip in &self.sc.chips {
@@ -448,7 +448,7 @@ impl Sim {
                 });
             }
         }
-        // NVML fans need no pairing; calibration only records percent → RPM over the settable range, for the axis (§5.2).
+        // NVML fans need no pairing; calibration only records percent → RPM over the settable range, for the axis (§5.4).
         for g in &self.sc.gpus {
             for i in 0..g.fans {
                 let calibration = calibration_steps(g.min as f64).into_iter().map(|d| [d, gpu_rpm(g, d).round()]).collect();
@@ -734,7 +734,7 @@ fn gpu_rpm(g: &GpuSpec, duty: f64) -> f64 {
     }
 }
 
-/// The duties calibration measures (§5.2): down from 100 % in 5 % steps to the lowest that still turns the fan, ascending.
+/// The duties calibration measures (§5.4): down from 100 % in 5 % steps to the lowest that still turns the fan, ascending.
 fn calibration_steps(stop: f64) -> Vec<f64> {
     let mut d: Vec<f64> = (0..=20).map(|i| 100.0 - 5.0 * i as f64).filter(|d| *d >= stop && *d > 0.0).collect();
     if stop > 0.0 && d.last() != Some(&stop) {

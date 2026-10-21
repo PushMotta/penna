@@ -379,7 +379,7 @@ pub struct MeasuredControl {
     pub start: Option<f64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tachs: Vec<Key>,
-    /// Duty → RPM, ascending (§5.2): what calibration measured, for the editor's RPM axis. NVML fans have one too, over their
+    /// Duty → RPM, ascending (§5.4): what calibration measured, for the editor's RPM axis. NVML fans have one too, over their
     /// settable range.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub calibration: Vec<[f64; 2]>,

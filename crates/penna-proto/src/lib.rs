@@ -456,7 +456,7 @@ pub struct StudioControl {
     pub failsafe: f64,
     /// An NVIDIA fan's settable range, else `null`.
     pub nvml: Option<NvmlRange>,
-    /// Measured duty → RPM, ascending (§5.2), or `null` before calibration.
+    /// Measured duty → RPM, ascending (§5.4), or `null` before calibration.
     pub calibration: Option<Vec<[f64; 2]>>,
 }
 

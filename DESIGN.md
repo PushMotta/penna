@@ -1,6 +1,6 @@
 # Penna — design specification
 
-Draft 2 · 21 October 2026 · status: decisions approved (§11), UI quality bar added (§8.6), M0–M4 and M6 done, design review 01 approved (milestone D, §11.1). Penna 0.6.0 runs as a service on this desk and controls the 3090; M5 (motherboard fans) waits on the it87 decision.
+Draft 3 · 21 October 2026 · status: decisions approved (§11), UI quality bar added (§8.6), M0–M4 and M6 done, design review 01 approved (milestone D, §11.1). Penna 0.6.0 runs as a service on this desk and controls the 3090. Draft 3 widens Penna from this desk to any workstation or laptop, with automatic setup, generated curves and a Defaults profile: design review 02 (§11.2) is proposed.
 
 Companion: design review 01 — mockups in real theme tokens, live motion prototypes, and eight calls before QML — is published as an artifact (https://claude.ai/artifact/DmFftUzWVBd11NNBv4e8aK). Its source is `design/penna-design-review.html`.
 
@@ -43,6 +43,8 @@ Linux can control fans, but it does not explain them. The kernel shows speed con
 
 The bar of quality is not "has the knobs". A user opens it and sees every fan named for what it cools, with its RPM next to what it was asked for. They drag a point on a curve, hear the change, and never edit a config file. When something goes wrong — the daemon dies, a sensor disappears, the BIOS takes a fan back — the fans go somewhere safe, and the UI says which fan and why.
 
+It has to do that on whatever Linux runs on: a workstation with two Super I/O chips, a ThinkPad whose fan has eight steps, a gaming laptop whose firmware runs its own curve. A new user should not need to know which. They press *Set up fans*, Penna measures every fan, proposes curves, and the machine is quieter a few minutes later. *Defaults* hands everything back to the BIOS and drivers at any time.
+
 ## 2. Principles
 
 1. **Safe by construction.** No fan ever runs slower than the firmware would have run it unattended, except by a choice the user made with the consequence in view. Every path out of the daemon, including `kill -9`, hands control back (§6).
@@ -53,6 +55,8 @@ The bar of quality is not "has the knobs". A user opens it and sees every fan na
 6. **Progressive disclosure.** The bar shows health. The popup has the daily controls. The studio has the curves. "Advanced" inside the studio has the last 10 %.
 7. **Testable without hardware.** Control logic is pure. Every backend has a mock. The real sysfs backend runs unmodified against a fake tree (§9).
 8. **Smooth, and measured.** Every surface keeps up with the display's refresh rate. Live values glide instead of stepping once a second, and nothing animates while nothing changes. The budgets in §8.6 are tested like the safety paths, not hoped for.
+9. **Any machine, honestly.** Penna drives every fan the kernel lets it drive, in whatever way that hardware allows (§3.5), and says plainly what a machine can't do. What Penna knows about particular machines is data with a source (§3.6), never a code path for one board.
+10. **Defaults are one step away.** Every surface can hand every fan back to its BIOS or driver, and that holds across restarts and reboots (§6.7).
 
 ## 3. Hardware model
 
@@ -66,7 +70,7 @@ As in Fan Control, these are separate objects, related only by explicit pairing:
 | **Control** | Something we can set | `pwmN` (0–255) and `pwmN_enable` | fan index *i*: `SetFanSpeed_v2`, `SetFanControlPolicy`, `SetDefaultFanSpeed_v2` |
 | **Tach** | An RPM reading | `fanN_input` | `GetFanSpeedRPM` for fan *i* |
 
-hwmon does not say which tach a control drives: `pwm2` may well spin the fan on `fan4`, and one control can drive several fans through a splitter, or a fan with no tach (§5.1). NVML pairs control *i* with tach *i*.
+hwmon does not say which tach a control drives: `pwm2` may well spin the fan on `fan4`, and one control can drive several fans through a splitter, or a fan with no tach (§5.2). NVML pairs control *i* with tach *i*.
 
 ### 3.2 Identity
 
@@ -92,7 +96,122 @@ The label the user sees is separate, editable, and stored with the key. Default 
 - **hwmon** — plain file reads and writes under a sysfs root that can be swapped (`/sys` in production, a temp directory in tests). Standard attributes are world-readable; writes need root.
 - **NVML** — through `nvml-wrapper`, loaded at runtime so the daemon starts on machines without NVIDIA. The wrapper loads the unversioned `libnvidia-ml.so` by default; Penna asks for `libnvidia-ml.so.1` first and falls back to the unversioned name. `nvml-wrapper` 0.13 does not wrap `GetTargetFanSpeed`; we do not need it (§0).
 - **Mock** — fake sysfs tree plus simulator (§9).
-- *v2:* amdgpu (`pwm1`, and `gpu_od/fan_ctrl/` on RDNA3 and later), USB coolers and hubs through `hidapi`. Neither exists on this desk.
+- **Platform profile** *(draft 3)* — the laptop-wide power profile, through power-profiles-daemon when it runs (§3.5).
+- amdgpu is an hwmon driver like any other (`pwm1`, and `gpu_od/fan_ctrl/` on RDNA3 and later), so it arrives with the laptop drivers in M9, not in v2. *v2:* USB coolers and hubs through `hidapi`. None of these exists on this desk.
+
+### 3.5 Kinds of control *(draft 3)*
+
+Not every fan takes a duty. What a control accepts decides what Penna can do with it, and every surface says which kind a fan is (§8.3).
+
+| Kind | The hardware takes | Curves | Penna writes |
+|---|---|---|---|
+| `duty` | Any duty, 0–100 % | Every curve type and every limit | When the value changes |
+| `nvml` | Duty above a floor; the driver's curve below it | All, with hand-back below the floor (§4.5) | When the value changes |
+| `speed` | A target RPM between the driver's minimum and maximum | All. % maps linearly onto that RPM range, and the card says what it means ("50 % = 3,000 RPM"). | When the value changes |
+| `levels` | A few fixed steps | All, with the output rounded to a step and 3 °C of hysteresis between steps, so it never hunts | When the step changes, and every tick where a watchdog needs it |
+| `firmware-curve` | N points the firmware runs by itself | One Graph curve per fan, on the firmware's own sensor, fitted to its points. No Mix and no virtual source. | Only when the curve changes. The firmware runs it, so it keeps running if Penna stops. |
+| `modes` | Automatic, full speed, or a vendor's named modes | None: Full speed, a mode per profile, and Defaults | On a switch |
+| `platform` | A machine-wide power profile | None: each Penna profile names one (§4.7) | On a profile switch |
+| read-only | RPM, or nothing | None | Nothing |
+
+**Drivers, as of Linux 7.3.** Checked against the kernel source and documentation on 21 Oct 2026, and against the READMEs of the out-of-tree drivers. Unless a row says otherwise, `pwmN_enable` is 0 = full speed, 1 = manual, 2 = automatic.
+
+| Driver (hwmon `name`) | Kind | What matters |
+|---|---|---|
+| `it87`, and the frankcrawford fork | `duty` | Writing `pwmN` in automatic returns `EBUSY`. On the fork's Gigabyte H2RAM channels, writing 1 snapshots the firmware's fan settings and writing 2 restores them. |
+| `nct6106` … `nct6799` (nct6775) | `duty` | `pwmN_enable` 2 = Thermal Cruise, 3 = Speed Cruise, 5 = Smart Fan IV. On the ASUS boards it lists (since 5.16), the chip is reached through ASUS's ACPI method, so there is no resource conflict. |
+| `nct6683`, `nct6686`, `nct6687` | read-only | `pwmN` is writable only on a Mitac EC. The out-of-tree `nct6687d` makes MSI boards `duty` (enable 1/2), with `nct6683` blacklisted. |
+| `f71808e` … (f71882fg) | `duty` | There is no enable 0. Writing `pwmN` outside manual returns `EROFS`. |
+| `w83627ehf` family | `duty` | Enable 1–4; 5 only if it was the boot value. |
+| `amdgpu` | `duty` up to RDNA3; `firmware-curve` with OverDrive | `gpu_od/fan_ctrl/fan_curve`: 5 points, speed in %, needs `amdgpu.ppfeaturemask` bit `0x4000`. Write `c` to commit and `r` to reset to the boot table. `pwm1` is not writable on RDNA4. |
+| `nouveau` | `duty` | `pwm1` is 0–100 %, not 0–255. |
+| `thinkpad` | `levels` (8) | Writes need `thinkpad_acpi fan_control=1`. `pwm1` maps to level `val >> 5` and reads back `level × 255 / 7`. Writes to `pwm1` are silently ignored unless enable is 1. `fan_watchdog` (0–120 s) returns the fan to automatic. A second fan can't be set separately. |
+| `dell_smm` | `levels` (usually 3) | `pwmN` takes 0, 128 or 255. Reading it in automatic returns `ENODATA`. Enable is per fan (since 6.18), or one global write-only `pwm1_enable` on whitelisted models. |
+| `asus` (asus-wmi) | `modes`; `duty` on its AGFN CPU fan | `pwm1_enable` reads the driver's cached state, not the hardware. GPU and middle fans take only 0 or 2. |
+| `asus_custom_fan_curve` | `firmware-curve` (8 points per fan) | Points in °C, with `_pwm` stored as a percent. Enable 1 applies the curve, 2 switches it off, 3 loads the factory curve. Any point write switches the curve off until 1 is written again, and a platform-profile change switches it off too. |
+| `hp` | `modes`; `duty` on Victus S and Omen (since 7.0) | 0 = full, 2 = automatic. In manual, reads come from the RPM, not from what was written. The driver renews manual mode every 90 s itself. |
+| `acer` | `duty` on three models (since 6.19) | 0 = full, 1 = manual, 2 = automatic; stored as a percent. |
+| `cros_ec` (Framework, Chromebooks) | `duty` when the EC supports it (since 6.18) | Enable 1 or 2 only. Writing `pwmN` in automatic returns `EOPNOTSUPP`. The EC goes automatic during suspend, and the driver restores it on resume. |
+| `gpdfan` | `duty` | Manual first sets 255. |
+| `lenovo_wmi_other` (since 7.0) | `speed` | `fanN_target` in RPM, rounded down to 100. 0 = automatic. |
+| `applesmc` | `speed` | Up to 7.2: `fanN_manual` and `fanN_output`. From 7.3: `pwmN_enable` and `fanN_target`. No `pwmN` either way. |
+| `alienware_wmi` | `modes` | `fanN_boost` (0–255) adds to the firmware's own speed. It is not a duty. |
+| `msi-ec` (out of tree) | `modes` | `fan_mode` and `cooler_boost` on the platform device, not hwmon. |
+| `legion_hwmon` (out of tree) | read-only, plus `platform` | Penna never writes its curve files. One written in the wrong unit hard-powered-off a Legion Pro 5, and some firmware keeps the table across reboots. |
+| `system76_acpi`, `surface_fan`, `i915`, `xe`, `msi_wmi_platform` | read-only | |
+| any `platform_profile` handler | `platform` | Below. |
+
+**What the backends handle.**
+- **Full speed reads back as "no control".** it87 and nct6775 report a manual channel at 255 as `pwm_enable` 0. After a 100 % write, read-back counts 0 as manual, not as `contested`.
+- **Enable values differ by driver.** f71882fg and w83627ehf have no 0, thinkpad refuses 3, and cros_ec refuses 0. Restore writes back exactly what it read, as before. *Full speed* is always manual at 100 %, never enable 0.
+- **Writing duty outside manual fails, or is ignored.** The failures are `EBUSY`, `EROFS`, `EINVAL` and `EOPNOTSUPP`; thinkpad ignores the write silently. Taking a control always sets manual first, and the write test (§5.1) catches the silent case.
+- **Read-back maps.** thinkpad (levels), hp (from RPM), asus and acer (percent) and older it87 chips (odd values) read back other than what was written. The write test records the map.
+- **Originals that can't be read.** dell_smm returns `ENODATA` in automatic, and its global enable is write-only; asus reports a cached state. For these, the driver table names the mode to restore (automatic), with its source. This is the one place Penna assumes a mode (§6.1).
+- **Watchdogs.** On a ThinkPad, Penna sets `fan_watchdog` to 5 s and rewrites the level every tick, so a stalled or dead Penna hands the fan back to the EC with nothing else running. The EC's own fallback is automatic, at level 4 or above.
+- **Firmware state that persists.** amdgpu's OverDrive table resets at boot, while ASUS curves and some Lenovo tables may not; nobody has verified it yet. `firmware.json` (§6.7) covers both cases.
+- **Platform profiles.** When power-profiles-daemon or tuned-ppd owns `org.freedesktop.UPower.PowerProfiles`, Penna sets `ActiveProfile` (`power-saver`, `balanced`, `performance`) over D-Bus. Both daemons treat a direct write to `/sys/firmware/acpi/platform_profile` as the user's own choice, and would fight it. Penna writes sysfs only when neither runs. It is a power setting as much as a fan setting, and the card says so.
+- **Module options the doctor names:**
+  - `thinkpad_acpi fan_control=1`;
+  - `amdgpu.ppfeaturemask` with `0x4000`;
+  - `nct6683 force=1`;
+  - the out-of-tree drivers;
+  - Secure Boot signing for any DKMS module (§3.6).
+
+**A driver Penna doesn't know** that has `pwmN` and `pwmN_enable` is treated as `duty` under the generic sysfs ABI. Its tier is at best Documented, and it is offered only after its write test passes.
+
+**Penna never writes** a Super I/O chip's own curve registers (`pwmN_auto_point*`, Smart Fan IV), the legion curve files, or anything outside this table.
+
+**In code.**
+- `ControlKind` grows from `Pwm` and `Nvml` to these kinds, each with its range: the duty scale (255 or 100), RPM bounds, level count, or point count and sensor.
+- The pure tick still computes a % per control. A per-kind stage after the limits turns it into an `Output`: `Duty`, `Level`, `Rpm`, `Curve`, `Mode` or `Profile`. Firmware curves are compiled when the configuration changes, not every tick.
+- `penna-hw/src/drivers.rs` holds a table keyed by hwmon `name`. Each entry gives the kind, the enable values, the restore mode where the original can't be read, the read-back rule, the module options writes need, the source the entry was written from, and its tier.
+
+### 3.6 Machines Penna has not seen *(draft 3)*
+
+Penna will run on machines nobody working on it has touched. Four things make that safe and understandable.
+
+**Discovery is the kernel's.** Penna sees whatever hwmon drivers are bound, plus NVML, and never touches a chip itself (§11.2, call 1). The set of hwmon devices is re-listed every tick, which costs one `readdir`. When it changes — a driver is loaded, a dock or eGPU arrives, a GPU goes to a VM — the inventory is rebuilt without a restart. Controls that disappear become `absent`; controls that appear are listed under `firmware`.
+
+**The doctor finds what is missing,** and names one action with its risk:
+- **Board identity** from the world-readable DMI fields (`/sys/class/dmi/id/board_vendor`, `board_name`, `bios_version`, `product_name`), looked up in the board database.
+- **Drivers:** which fan drivers are loaded, why one isn't (the kernel log's ACPI resource conflict, an unknown chip), and module parameters a driver needs for writes (`thinkpad_acpi fan_control=1`).
+- **Secure Boot and lockdown.** An unsigned DKMS module, such as the it87 fork, does not load under Secure Boot unless it is signed with an enrolled key. Lockdown blocks nothing Penna does day to day (sysfs and NVML); it does block `--probe` below.
+- **Other fan daemons,** as today.
+- **When the database doesn't know the board,** `penna doctor --probe` (root) reads the Super I/O chip ID the way `sensors-detect` does: the vendor's entry sequence at `0x2E`/`0x4E`, then the ID registers. It is the only time Penna touches a port, and only when asked.
+
+**The board database is data.** It lives in `/usr/share/penna/boards/*.toml`, one file per board, keyed by DMI vendor and board name. Each file holds:
+- the driver and options known to work;
+- each header's name per channel, with a role hint (CPU cooler, pump, chipset fan, case fan);
+- quirks;
+- where every fact came from.
+
+No entry is written from memory. Entries come from captures and setup runs on real machines, or name a public source. This desk's first entry names its headers from the it87 fork's sensors configuration for the GA-X570-AORUS-PRO, and setup (§5) confirms them:
+
+| Chip | fan1 | fan2 | fan3 | fan4 | fan5 |
+|---|---|---|---|---|---|
+| IT8688E | `CPU_FAN` | `SYS_FAN1` | `SYS_FAN2` | `PCH_FAN` (chipset) | `CPU_OPT` |
+| IT8792E | `SYS_FAN5_PUMP` | `SYS_FAN6_PUMP` | `SYS_FAN4` | | |
+
+The same file names `VRM MOS`, `PCH`, `PCIEX16` and `PCIEX8` temperatures. It also explains the cold `acpitz`: the firmware returns a fixed 290 K.
+
+**Support tiers,** shown by the doctor and on each fan card:
+
+| Tier | Means |
+|---|---|
+| **Verified** | The exit-path hardware test (§9.4) passed on real hardware with this driver. |
+| **Captured** | A real machine's capture with this driver runs in the simulator. |
+| **Documented** | Built from the driver's kernel documentation only. |
+
+A fan on a Documented driver works, and Penna says that nobody has verified it yet.
+
+**Captures** are how the tiers grow. `penna capture` needs no root. It records:
+- the DMI board fields;
+- the kernel version;
+- the hwmon tree;
+- the platform profile;
+- the fan modules and their parameters.
+
+It records no serial numbers. A capture, plus the results of a setup run, is what a new board entry is made from. Penna never uploads anything; sending a capture is the user's act.
 
 ## 4. Control model
 
@@ -144,8 +263,9 @@ Each control is in exactly one of these, and every surface renders the same set:
 
 | State | Meaning |
 |---|---|
-| `firmware` | Not adopted. BIOS or driver in control. The default for every control on first run. |
+| `firmware` | Not adopted. BIOS or driver in control. The default for every control on first run, and every control while the Defaults profile is active (§4.7). |
 | `curve` | Following its assigned curve. |
+| `measuring` | Setup is measuring it (§5). Emergencies and failed sources still win, as they do over `curve`. *(Draft 3.)* |
 | `handback` | NVML below its floor, temporarily on the driver policy (§4.5). |
 | `override` | A temporary fixed value (`penna set … --for`, or "Full speed" in the popup). |
 | `failsafe` | A source failed or went stale. Running at the control's failsafe value. |
@@ -158,23 +278,118 @@ Each control is in exactly one of these, and every surface renders the same set:
 
 A profile assigns a curve (or `firmware`) to every control. Curves are shared between profiles, and one profile is active. Penna ships three: **Quiet**, **Balanced**, **Render**. Names are editable. Up to five show as pills in the popup; more go into a dropdown. Switching is instant through the popup or the CLI; automatic switching is v2 (§10).
 
-## 5. Pairing and calibration
+**Defaults** *(draft 3)* is a fourth, built-in profile. It assigns `firmware` to every control, can't be edited, renamed or deleted, and always comes first. Choosing it hands every fan back to its BIOS or driver and keeps it there across restarts and reboots (§6.7). Penna goes on showing every temperature and RPM. A new install starts in Defaults, and setup (§5) is what fills the other three.
 
-### 5.1 Pairing (hwmon only)
+On a machine whose only fan lever is the platform profile (§3.5), each Penna profile also names a platform profile. Through power-profiles-daemon: Quiet → `power-saver`, Balanced → `balanced`, Render → `performance`. Written directly, Quiet takes the handler's `quiet` or `low-power`. Defaults → whatever was set before Penna changed it.
 
-All adopted controls are held at their current duty. One control at a time is raised to 100 % for 6 s, then dropped to 40 % for 6 s. Any tach that follows both moves by more than 25 % is paired with it. A control can end up with several tachs, or none: a header with no tach, or a dead fan. The result is shown for the user to confirm. The run aborts and hands everything back if any temperature passes its guard (CPU 85 °C, GPU 80 °C by default) or any read fails. About 12 s per control.
+## 5. Setup: measuring every fan *(draft 3)*
 
-### 5.2 Calibration
+Setup is one automatic run that takes a machine from Defaults to proposed curves. It starts with *Set up fans…* in the studio, or `penna setup`. Every step is shown live, and *Stop* hands every fan back at once. Draft 2 had *Pair…* and *Calibrate…* as two separate tools; they are now steps of setup, and each can still be rerun for one fan from its card.
 
-Per control, with its tach paired:
+| Step | What happens | Time on this desk |
+|---|---|---|
+| 1. Idle sample | Watch every source for 30 s before any fan is taken. | 30 s |
+| 2. Write test | Take each control, write two values, read back (§5.1). | 5 s per control, all at once |
+| 3. Pairing | Find which tachs each control turns (§5.2). | 12 s per control |
+| 4. Roles | Suggest what each fan does (§5.3). | — |
+| 5. Calibration | Measure each fan's duty → RPM (§5.4). | about 90 s, all fans at once |
+| 6. Load check | Optional: run the CPU flat out for 3 minutes on the proposed curve (§5.5). | 3 min |
+| 7. Review | The user confirms roles and reviews the generated curves, which arrive as a draft (§5.5). | — |
 
-1. Step down from 100 % in 5 % steps. At each step, wait until RPM is stable within 3 % over 2 s (timeout 10 s) and record it. The lowest duty that still turns is the **stop duty**.
-2. From 0, step up in 2 % steps. The first duty that spins a stopped fan is the **start duty**, usually above the stop duty because of stiction.
-3. Store the duty→RPM table and make it monotonic.
+Without the load check, a desk with eight controls takes about four minutes.
 
-Uses: the floor in §4.5, the RPM axis in the editor ("40 % ≈ 820 RPM"), dead-zone warnings, and later RPM-mode control. NVML fans skip steps 1–2: we record % → RPM over 30–100 % for the axis only.
+**Guards, for the whole run.** If a CPU source passes 85 °C, a GPU passes 80 °C, or any read fails, setup stops and every fan goes back to its original mode. The emergency rule (§6.3) is in force throughout. Setup wants an idle machine. If the 1-minute load is above a quarter of the CPU's threads, it says so and waits.
 
-Measurements live apart from configuration (§7.5): they are facts about the hardware, not choices.
+**A setup belongs to its connection,** like a draft (§7.4): if the studio closes, setup stops and hands everything back. `penna setup` holds its own connection, and Ctrl-C does the same.
+
+What setup measures goes to `/var/lib/penna/measured.toml` (§7.5): measurements are facts about the hardware, not choices. What it proposes is a draft, and nothing is saved until the user saves it.
+
+### 5.1 Write test
+
+The control is taken as in §6.1, with its way back on disk first. Penna writes 60 % and then 80 %, reads back after 1 s each time, and watches for 3 s more. The result is one of:
+
+| Result | Means | Then |
+|---|---|---|
+| `ok` | Reads back what was written, and stays manual. | Offered for curves. |
+| `maps` | Reads back a different value, but the same one every time (fan2go's `setPwmToGetPwmMap`). | Offered; read-back compares against the map. |
+| `steps` | Only some values stick: the hardware has levels. | Offered as `levels` (§3.5). |
+| `reverts` | Back to the old value or mode within 3 s: firmware is driving it. This is the IT8792E report on Gigabyte X570 boards (§6.4). | Not offered. The card says what wrote over it, and the doctor says what can be done. |
+| `refused` | The write fails. | Not offered, with the error. |
+
+### 5.2 Pairing (hwmon only)
+
+All taken controls are held at their current duty. One control at a time is raised to 100 % for 6 s, then dropped to 40 % for 6 s. Any tach that follows both moves by more than 25 % is paired with it. A control can end up with several tachs, or none: a header with no tach, or a dead fan. NVML and most laptop drivers pair control *i* with tach *i* and skip this step.
+
+### 5.3 Roles
+
+Each fan gets a role, which decides its generated curve and how it is calibrated:
+
+| Role | Suggested when | Calibration | Never |
+|---|---|---|---|
+| CPU cooler | The board database names the header `CPU_FAN` or `CPU_OPT`. | Full; stopped for at most 10 s at a time. | — |
+| GPU | NVML or amdgpu. | % → RPM only. | — |
+| Pump | The header is a pump header, **and** the fan turns above 2,000 RPM at 100 %. Never assumed from the header alone: a case fan on a pump header is common. | No stop test. | Stops; goes below 50 %. |
+| Chipset | The board database names it (`PCH_FAN`). | No stop test. | Stops. |
+| Laptop | The machine is a laptop and the fan is its system fan. | By level. | — |
+| Case | Everything else. | Full. | — |
+
+Until the user confirms the roles, a fan on a pump or chipset header is treated as one that must never stop. *Identify* on any fan card spins that fan to 100 % for 3 s and back, so it can be found by ear or by eye.
+
+### 5.4 Calibration
+
+Per control, with its tach paired. Fans are calibrated all at once, each against its own tach. Air from one fan barely moves another's RPM, and running them together halves the time.
+
+1. Step down from 100 % in 5 % steps. At each step, wait until RPM is stable within 3 % over 2 s (timeout 10 s) and record it. The lowest duty that still turns is the **stop duty**. Pumps and chipset fans stop the descent at 50 % and 30 %.
+2. From 0, step up in 2 % steps. The first duty that spins a stopped fan is the **start duty**, usually above the stop duty because of stiction. The time from that write to a steady RPM is the **spin-up time**.
+3. Store the duty→RPM table and make it monotonic, with the **maximum RPM**.
+
+NVML fans skip steps 1–2: Penna records % → RPM over 30–100 % for the axis only. `levels` controls record the RPM at each level.
+
+Uses:
+- the floor in §4.5;
+- the RPM axis in the editor ("40 % ≈ 820 RPM");
+- dead-zone warnings;
+- generated curves (§5.5);
+- drift (§5.6);
+- later, RPM-mode control.
+
+### 5.5 Generated curves
+
+Setup proposes a curve for each role in each profile. Fans that share a role share its curve, so the studio stays readable: "CPU · Quiet", "Case · Quiet", "GPU · Quiet". Each fan's floor and maximum come from its own calibration.
+
+**Anchors.** Each source has three temperatures:
+- **idle**: from step 1;
+- **target**: the temperature a profile tries to keep it under;
+- **limit**: TjMax from the CPU table, the NVML GPU maximum, or a plausible `temp_crit`.
+
+On this desk: Tctl idle about 45 °C and limit 90 °C. The 3090's target is NVML's acoustic threshold (83 °C) and its limit 93 °C.
+
+**Points.** Points are placed in *airflow*, as a share of the fan's range from its floor to its maximum RPM. They are then turned into duty through the role's calibration. A curve therefore means the same thing on a fan whose RPM barely moves below 40 % as on one that is linear. % still means duty (§11, decision 4): the generator only chooses which duty.
+
+| Source | | Quiet | Balanced | Render |
+|---|---|---|---|---|
+| CPU (τ 5 s, hysteresis 3 °C) | floor until | idle + 15 | idle + 10 | idle + 5 |
+| | 50 % airflow at | limit − 15 | limit − 20 | limit − 30 |
+| | 100 % at | limit − 3 | limit − 8 | limit − 15 |
+| GPU (NVIDIA: *may stop*, so below the floor is the driver's curve and its zero-RPM) | driver's curve below | target − 10 | target − 15 | target − 20 |
+| | 50 % at | target | target − 5 | target − 10 |
+| | 100 % at | limit − 3 | limit − 5 | target |
+
+On this desk, Balanced CPU comes out as: floor to 55 °C, 50 % airflow at 70 °C, 100 % at 82 °C.
+
+- **Case fans** follow a Mix (max) of a CPU curve and a GPU curve. They stay at their floor until either source is 15 °C above idle, and their top is capped at 50 % airflow in Quiet, 75 % in Balanced and 100 % in Render.
+- **Pumps** are Flat at 70 %, 85 % and 100 % duty.
+- **Chipset fans** follow the chipset temperature when the board has one: floor to 65 °C, 100 % at 80 °C. Without that sensor they stay with their firmware.
+- **A laptop's fan** follows the larger of its CPU and GPU curves, rounded to its levels.
+- **Firmware curves** are fitted to the firmware's own points, on its own sensor.
+
+**Load check (optional, CPU only).** Penna loads every CPU thread with a busy loop at `nice 19` for 3 minutes, with the draft's Balanced curve live on the fans. If the CPU source passes limit − 5, the 100 % point moves 5 °C earlier and the check runs once more. The review shows the plateau: "Under 3 minutes of full load the CPU levelled at 78 °C, with its fans at 64 %." It is on by default on a desktop and off on a laptop running on battery. A GPU check would need a GPU workload Penna does not ship; the driver's own limits and NVML's thresholds stand in.
+
+**Generated, then yours.** Once saved, generated curves are ordinary curves. Running setup again proposes a new draft. It never overwrites a saved edit unless the user saves the draft. The table above is the starting point to be tuned on real machines, not a promise; the load check is how it is held to account.
+
+### 5.6 Drift
+
+Once a fan is calibrated, Penna compares its RPM at the current duty with the table as it runs. A fan that turns more than 25 % slower than calibrated, steadily for 10 minutes, gets a `warn` event and a line on its card: "Front intake turns 30 % slower than when it was set up: dust, or a tired bearing." *Recalibrate* on the card measures it again.
 
 ## 6. Safety
 
@@ -182,7 +397,7 @@ The guarantees, in order of what they protect against.
 
 ### 6.1 Write-ahead hand-back
 
-Before a control leaves `firmware`, the daemon writes its key and **original mode** to `/run/penna/held.json` (temporary file, `fsync`, atomic rename). Original mode is the exact `pwmN_enable` value — "automatic" varies by chip, so it is never assumed to be 2 — and, for NVML, the policy. Only then does it switch the control to manual. Adoption is bumpless: read the duty the firmware was running and start the curve's ramp from there. Taking an NVML fan records its policy and changes nothing else: manual mode starts with the first write, so a fan the driver has stopped is not spun up for a tick. Restoring a control whose original `pwm_enable` was 1 (manual) also writes back its original duty. The order is the guarantee, as in Candela: **a control is never manual without its way back already on disk.**
+Before a control leaves `firmware`, the daemon writes its key and **original mode** to `/run/penna/held.json` (temporary file, `fsync`, atomic rename). Original mode is the exact `pwmN_enable` value — "automatic" varies by chip, so it is never assumed to be 2 — and, for NVML, the policy. *(Draft 3: the one exception is a driver that can't report its mode, such as `dell_smm`; its driver-table entry names the mode to restore, with a source, §3.5.)* Only then does it switch the control to manual. Adoption is bumpless: read the duty the firmware was running and start the curve's ramp from there. Taking an NVML fan records its policy and changes nothing else: manual mode starts with the first write, so a fan the driver has stopped is not spun up for a tick. Restoring a control whose original `pwm_enable` was 1 (manual) also writes back its original duty. The order is the guarantee, as in Candela: **a control is never manual without its way back already on disk.**
 
 ### 6.2 Every exit path restores
 
@@ -223,6 +438,28 @@ The daemon subscribes to logind `PrepareForSleep(false)`. On resume it re-reads 
 ### 6.6 What we do to the chip
 
 With `ignore_resource_conflict` the it87 README warns that "both ACPI and this driver may access the chip at the same time", which can cause "unexpected system reboots". Our part of that risk is the number of accesses: a 1 s tick for hwmon, no write when nothing changed, and one read pass per tick. Loading the driver that way stays the user's decision, explained by `penna doctor`.
+
+Windows has no equivalent of this check. LibreHardwareMonitor, and so Fan Control, reaches the chip through its own kernel driver whether ACPI uses it or not. On Gigabyte boards it also switches off Gigabyte's fan firmware on the second ITE chip before driving those fans: it writes 0 to a byte at offset `0x947` of that controller's memory, and restores the byte on exit. That firmware is why IT8792E writes revert on Linux (§6.4). Penna does not copy the trick into userspace (§11.2, call 1). If the it87 fork's own Gigabyte workarounds don't cover a board, the fix belongs in the driver.
+
+### 6.7 Back to defaults *(draft 3)*
+
+The Defaults profile (§4.7) is the one action. It is the popup's first pill, and it is also in the studio, `penna profile defaults` and `penna reset`. For each kind of control (§3.5), "default" means:
+
+| Kind | Back to defaults |
+|---|---|
+| `duty` | The exact original `pwmN_enable`, and the original duty if that was manual (§6.1). Penna never writes a chip's own curve registers, so the BIOS curve is exactly as the BIOS left it. |
+| `nvml` | The driver's policy (`SetDefaultFanSpeed_v2`). |
+| `speed` | Automatic: the original enable value, or a target of 0 where 0 means automatic (`lenovo_wmi_other`). |
+| `levels` | The embedded controller's automatic mode. |
+| `firmware-curve` | The curve Penna found, from a snapshot taken before its first write, or the driver's own factory reset where it has one. |
+| `modes` | Automatic. |
+| `platform` | The profile that was set before Penna changed it. |
+
+**State that outlives a reboot.** Some laptop firmware curves and the platform profile survive a reboot. Before Penna first changes one, it snapshots it to `/var/lib/penna/firmware.json`, written ahead like `held.json`. Desktop chips and NVML reset at power-on, so `held.json` in `/run` is enough for them.
+
+**Without the daemon.** `penna reset` (root) restores everything in `held.json` and `firmware.json`. It also sets the configuration's profile to Defaults, so a restarted `pennad` doesn't take the fans again.
+
+**Without Penna.** Removing the package runs `penna reset` before stopping the service. A reboot resets desktop chips and NVML regardless.
 
 ## 7. Architecture
 
@@ -354,7 +591,7 @@ A draft is validated like `penna check`; a refused change leaves the draft as it
 ```
 
 - **`nvml`** is `{"min":30,"max":100}` for an NVIDIA fan, else `null`.
-- **`calibration`** is the measured duty → RPM table (§5.2), or `null` before calibration. The editor draws no RPM axis without one.
+- **`calibration`** is the measured duty → RPM table (§5.4), or `null` before calibration. The editor draws no RPM axis without one.
 - **`draft.mine`** says whether this connection holds the draft; `dirty` whether it differs from the saved configuration.
 
 **Additions to `tick`.**
@@ -372,6 +609,20 @@ A draft is validated like `penna check`; a refused change leaves the draft as it
 - **`config` returns the running configuration,** so it includes a draft while one is previewing.
 - **Events, all `info`:** previewing started, saved, discarded, and "The studio closed without saving; back to the saved configuration (…)".
 - **Re-sent ticks.** Surfaces treat a tick that repeats the last `seq` as new state but not as a new second: no history, no sparkline step. Before this, the re-sent ticks during a drag (ten a second) cost 63 dropped frames in 10 s.
+
+**Operations proposed in draft 3** (settled as they are built, M5–M9):
+
+| op | Arguments | Result |
+|---|---|---|
+| `doctor` | — | The doctor's findings (§3.6) as JSON, so surfaces show them inline |
+| ✎ `profile.set` | `name` may be `defaults` | As before; Defaults is built in (§4.7) |
+| ✎ `identify` | `control` | 100 % for 3 s, then back |
+| ✎ `setup.start` | `controls` (omitted = all), `load_check` (bool) | `ok`; then `setup` events. Bound to this connection (§5) |
+| ✎ `setup.stop` | — | Every fan back to its original mode at once |
+| ✎ `setup.roles` | `roles` (control → role) | Confirms roles; the generated draft follows them |
+| ✎ `draft.generate` | `profiles` (omitted = all) | The studio body, with generated curves as this connection's draft (§5.5) |
+
+A `setup` event carries the step, the control being measured, live readings ("Raising PWM 3 to 100 % — fan 4 rose 610 → 1,790 RPM"), the guard temperatures and, at the end, the results. Ticks gain `controls[].kind` with the kinds of §3.5, `controls[].tier` (§3.6), and `controls[].drift`.
 
 **`tick` event.** UI-shaped: everything a surface draws, with no second request.
 
@@ -439,8 +690,10 @@ A draft is validated like `penna check`; a refused change leaves the draft as it
 | Path | Holds | Written by |
 |---|---|---|
 | `/etc/penna/config.toml` | Labels, virtual sensors, curves, control limits, profiles, active profile | Daemon only, atomically, on `draft.save` and `profile.set`. Hand edits while the daemon is stopped are fine; `penna check` validates them. |
-| `/var/lib/penna/measured.toml` | Pairings, calibration tables, keyed by control and tach | Daemon, after a confirmed pair or calibrate |
+| `/var/lib/penna/measured.toml` | Pairings, calibration tables, keyed by control and tach. *Draft 3:* write-test results, confirmed roles, idle temperatures, the load check's plateau | Daemon, after a confirmed pair or calibrate, or a finished setup |
 | `/run/penna/held.json` | Write-ahead hand-back list (§6.1) | Daemon; read by `penna restore` |
+| `/var/lib/penna/firmware.json` | Snapshots of firmware state that outlives a reboot: firmware curves, the platform profile (§6.7) *(draft 3)* | Daemon, ahead of the first change; read by `penna reset` |
+| `/usr/share/penna/boards/*.toml` | The board database (§3.6) *(draft 3)* | The package |
 
 ```toml
 version = 1
@@ -514,7 +767,7 @@ Wheel: none, because fans are not a volume.
 Same chrome as the audio and bluetooth popups, 380 logical px wide.
 
 - **Hero.** Active profile and one line: `Balanced · 4 fans · CPU 62 °C · GPU 41 °C`. When something is wrong, the line says what instead: `GPU fan 1 contested — the driver is controlling it`.
-- **Profile.** ButtonGroup `Quiet · Balanced · Render`.
+- **Profile.** ButtonGroup `Defaults · Quiet · Balanced · Render` *(draft 3: Defaults first, §4.7)*. In Defaults, the hero says so in words: `Defaults · the BIOS and drivers run every fan`. On a new install, which starts in Defaults, it adds `Set up fans…`.
 - **Temperatures.** One row per source a curve uses: value plus a 60 s sparkline from the service's ring buffer.
 - **Fans.** One row per adopted control: label, RPM, duty, curve name, and a state badge when not `curve`. Unadopted controls fold under `Firmware (n)`; absent and passed-through devices fold under `Not reachable (n)`, each with its reason.
 - **Actions.** `Full speed` (an override until pressed again), `Curves…` (opens the studio).
@@ -526,7 +779,17 @@ Summoned from the popup's `Curves…` and with `penna open`. A centred card abou
 - **Controls.** A card per control: label, live RPM and duty, state, assigned curve (dropdown), and Advanced (limits, may stop, failsafe, start %). `Adopt` and `Release` live here.
 - **Curve editor.** X is °C, Y is duty %, with the control's calibrated RPM as a secondary axis on the right. Draggable points, the hysteresis band shaded, the stop and min lines drawn, and a live marker where the smoothed source and the output are now. The hand gets Candela's drag rules: position = press position + pointer travel, a 4 px threshold, and snapping measured in screen pixels. Keys: `[` / `]` select point, h/l move by 1 °C, j/k by 1 %, Shift ×5, `a` add, `x` delete.
 - **Sensors.** Every sensor with a sparkline, and the virtual-sensor builder.
-- **Action bar.** Profile dropdown, `Pair…`, `Calibrate…`, `Discard`, `Save`. Hints at the far left in caption size. Pairing and calibration open a step-by-step view: what is happening ("Raising PWM 3 to 100 % — fan 4 rose 610 → 1790 RPM"), the live guard temperatures, and `Stop`, which hands everything back at once.
+- **Action bar.** Profile dropdown, `Set up fans…` *(draft 3; it replaces `Pair…` and `Calibrate…`)*, `Discard`, `Save`. Hints at the far left in caption size.
+- **Setup view** *(draft 3)*. It takes the editor's place while setup runs:
+  - one row per fan, with its live RPM and the step it is on;
+  - its duty → RPM table drawing itself point by point as calibration measures it;
+  - the guard temperatures, and what is happening in words ("Raising PWM 3 to 100 % — fan 4 rose 610 → 1,790 RPM");
+  - `Stop`, which hands everything back at once.
+
+  It ends on the review: role chips per fan, with `Identify`, then the generated curves in the editor, marked *Generated*, ready to save or discard.
+- **Each card shows its kind and tier** *(draft 3)*. "8-point firmware curve, on the CPU sensor", "3 steps", "Documented: nobody has verified this driver yet". A fan whose write test came back `reverts` says what writes over it.
+
+The setup view, the Defaults pill, and kind and tier on the cards are new UI. They go through a visual review in real theme tokens before any QML is written (milestone D2, §10), as milestone D did.
 
 ### 8.4 Plugin service (kind: service)
 
@@ -545,11 +808,15 @@ penna watch [--json]               # live table, or the event stream
 penna profile <name>
 penna set <control> <percent|auto> [--for 60s]
 penna adopt <control> | release <control>
-penna pair [<control>] | calibrate <control>
+penna setup [<control>…] [--no-load-check]   # draft 3: §5, live in the terminal; Ctrl-C hands back
+penna identify <control>           # 100 % for 3 s
+penna pair [<control>] | calibrate <control>   # single steps of setup, for one fan
+penna profile defaults             # every fan back to BIOS or driver, and kept there (§6.7)
 penna check [<file>]               # validate a config without applying it
 penna restore [--from <held.json>] # root; ExecStopPost
-penna doctor                       # driver bound? ACPI conflict? it87 chip and version? other fan daemons? vfio GPUs? contested controls?
-penna capture <dir>                # read-only snapshot of /sys/class/hwmon for test fixtures
+penna reset                        # root; Defaults without the daemon, firmware snapshots included (§6.7)
+penna doctor [--probe] [--json]    # driver bound? ACPI conflict? Secure Boot? board known? other fan daemons? vfio GPUs? contested controls?
+penna capture <dir>                # read-only snapshot for fixtures: hwmon, DMI board fields, kernel, fan modules (§3.6)
 penna waybar                       # one JSON line for a Waybar custom module (non-Omarchy desktops)
 ```
 
@@ -662,15 +929,23 @@ Also seen on the card:
 - **The driver takes a few seconds to stop the fans after a hand-back.** It ran them at about 50 % for a few seconds after each one, then stopped them at idle.
 - **The first write takes over without a jump.** Taking does nothing on the card, so a fan stopped by the driver stays stopped until the first write.
 
+### 9.5 Many machines *(draft 3)*
+
+There is one desk to test on, and Penna has to run on many machines. Coverage comes in the three tiers of §3.6:
+- **Documented.** For every driver Penna knows, a fixture tree is written from that driver's kernel documentation, with its quirks: levels, read-back maps, enable values, firmware curves and their sensor. The simulator models each kind of §3.5, so setup, generated curves and every exit path run against each driver's tree in `cargo test`.
+- **Captured.** Real captures go to `test/fixtures/machines/<board>/`, with the board entry they produced. Each one runs the same tests.
+- **Verified.** A driver is Verified when the §9.4 hardware test has passed on real hardware with it. This desk verifies `nvidia` (done) and `it87` (M5).
+
 ## 10. Scope and milestones
 
 | v1 | v2 |
 |---|---|
-| hwmon and NVML backends, mock and simulator | amdgpu; USB coolers and hubs via `hidapi` |
+| hwmon and NVML backends, mock and simulator; every kind of control in §3.5, amdgpu and the laptop drivers included *(draft 3)* | USB coolers and hubs via `hidapi` |
 | Flat, Graph, Mix, Trigger; virtual sensors; response and limits | Sync, Target (PID), RPM avoid zones, RPM-mode control |
-| Pairing, calibration, contested detection, every safety path in §6 | Automatic profile switching (a process running, e.g. a Blender render or Brush training → Render; AC power; time of day) |
-| Profiles switched by hand | Stress-test runner to check curves under load |
-| CLI, Omarchy plugin (bar, popup, studio), PKGBUILD | Standalone egui/wgpu app; shell notifications on `contested` / `failsafe` |
+| Setup: write test, pairing, roles, calibration, generated curves, CPU load check, drift *(draft 3)*; contested detection, every safety path in §6 | Automatic profile switching (a process running, e.g. a Blender render or Brush training → Render; AC power; time of day) |
+| Profiles switched by hand, and Defaults *(draft 3)* | GPU load check (needs a GPU workload) |
+| Doctor, board database, support tiers, captures *(draft 3)* | Standalone egui/wgpu app; shell notifications on `contested` / `failsafe` |
+| CLI, Omarchy plugin (bar, popup, studio), PKGBUILD | |
 
 Milestones, each ending in something visible:
 
@@ -692,8 +967,26 @@ Milestones, each ending in something visible:
   - real NVML take, write, hand-back and restore, with `penna restore` for real NVIDIA entries;
   - the hardware test passes all six cases (§9.4);
   - 124 Rust tests.
-- **M5** — Motherboard fans: bind `it87` (stock first, the fork if the IT8688E needs it), `doctor`, pairing, calibration, contested detection on the IT8792E.
-- **M6** — Packaging, README, first release. **Done 21 Oct 2026**, ahead of M5 (motherboard fans need the it87 decision, §13): 0.6.0 is packaged, installed and running as a service on this desk, with 136 Rust tests and 17 plugin logic tests (§7.6, as built). Still to do for a public release: publish the repository and the plugin as its own repo (§11, decision 9), and switch the PKGBUILD to a tagged tarball.
+- **M5** — *Redefined in draft 3:* **every fan on this desk, and the kinds of control.**
+  - The kinds of §3.5 in `penna-core`, the backends and the protocol.
+  - Real `duty` control of the motherboard fans through the it87 fork, with the §9.4 hardware test extended to them.
+  - The write test (§5.1) and contested detection on the IT8792E.
+  - Rediscovery when hwmon devices change (§3.6).
+  - The Defaults profile, `firmware.json` and `penna reset` (§6.7).
+  - The doctor with the board database (this desk's entry first) and support tiers.
+  - Draft 2's M5 named pairing and calibration as well; they move to M7 as steps of setup.
+- **M6** — Packaging, README, first release. **Done 21 Oct 2026**, ahead of M5 (motherboard fans need the it87 decision, §13): 0.6.0 is packaged, installed and running as a service on this desk, with 136 Rust tests and 17 plugin logic tests (§7.6, as built). Still to do for a public release: publish the repository and the plugin as its own repo (§11, decision 9), and switch the PKGBUILD to a tagged tarball (now M10).
+- **D2** *(draft 3)* — Visual review of the new UI: the setup view, the Defaults pill, and kind, tier and drift on fan cards. Mockups in real theme tokens across the four review themes, before their QML.
+- **M7** — **Setup** (§5.1–5.4, §5.6): write test, pairing, roles with *Identify*, calibration and drift, in the studio and `penna setup`. Run on this desk and on every simulated driver.
+- **M8** — **Generated curves** (§5.5): per role and profile from setup's measurements, the CPU load check, and the review step.
+- **M9** — **Laptops and other drivers:**
+  - `levels`, `firmware-curve`, `modes` and `platform` controls, amdgpu included;
+  - a Documented fixture per driver;
+  - captures from real machines, wherever they can be had;
+  - tiers shown in the UI.
+- **M10** — **Public release:**
+  - the repositories, the plugin as its own repo, and a tagged tarball for the PKGBUILD and the AUR;
+  - how to contribute a capture.
 
 ## 11. Decisions (approved 21 Oct 2026)
 
@@ -721,11 +1014,32 @@ The review (companion artifact, section G) asked for eight calls, and the user a
 7. **Three profiles ship: Quiet, Balanced, Render.** Names are editable. Up to five show as pills; more go into a dropdown.
 8. **Motion constants:** linear glide over one tick, a text dead band of 0.6 of a step, a 140 ms text ease, and `OutCubic` for everything else.
 
+### 11.2 Design review 02: any machine (proposed 21 Oct 2026)
+
+Asked for on 21 Oct 2026, in the user's words: "control all the systems fans with this app, same level of control as the GPU fans", "auto calibration, or auto curve profile creation", "always have the ability to reset to bios or driver defaults", and "this has to work on a myriad of workstations and laptops". Calls:
+
+1. **Kernel drivers only.** Penna drives fans through hwmon and NVML and never touches a chip from userspace: no port I/O, no copied Windows tricks (§6.6). Userspace chip access is blocked under Secure Boot lockdown, has no lock against ACPI, and would fight the kernel's own drivers. Gaps are fixed in the drivers and offered upstream. **Approved 21 Oct 2026** ("move ahead with this").
+2. **Seven kinds of control, plus read-only** (§3.5), each shown for what it is. Same-as-GPU control everywhere the hardware allows it, and a plain sentence where it doesn't. Penna never writes a chip's own curve registers, or a driver whose mistakes have powered machines off (`legion_hwmon`).
+3. **Defaults is a built-in profile,** first in every list (§4.7). A new install starts there, and choosing it is the reset (§6.7).
+4. **Firmware state is snapshotted before the first change.** `penna reset` restores everything without the daemon, and removing the package runs it (§6.7).
+5. **Setup is one automatic run** (§5). Pumps and chipset fans are never stopped; CPU fans stop for at most 10 s; the guards hand everything back.
+6. **Generated curves** per role and profile, anchored on measured idle and each sensor's limit, placed in airflow and written in duty, delivered as a draft (§5.5). The table is a starting point, checked under load on the CPU.
+7. **The board database is data with sources,** and every fan shows its support tier (§3.6). No entry is written from memory.
+8. **Platform profiles** are switched by Penna's profiles only where they are a machine's only fan lever, and through power-profiles-daemon when it runs (§3.5).
+9. **Rediscovery without a restart** when hwmon devices come and go (§3.6).
+10. **Order:** M5 (this desk, the kinds) → D2 (visual review) → M7 (setup) → M8 (generated curves) → M9 (laptops and other drivers) → M10 (public release).
+
 ## 12. Prior art, read but not copied
 
 - **Fan Control** (Rem0o, Windows). Cards for controls, speeds and curves. Mix with Max, Min and Average. Response time, hysteresis and hysteresis direction, step up and step down, RPM avoid zones, start/stop logic for 0 RPM, calibration. Built on LibreHardwareMonitor, with .NET plugin DLLs. Taken: the card model and the curve vocabulary. Not taken: in-process plugins, because a root daemon must not load third-party code.
 - **CoolerControl.** A headless daemon that serves its own web UI, REST and gRPC APIs, Prometheus metrics and the `cctv` CLI. Profiles (fixed, graph, mix, overlay), functions (hysteresis, thresholds, response time), modes, calibration, tags, stress tests and an auto-create wizard. Credited: overlay profiles (our offset), stress tests (v2). Different here: no HTTP server in a root process, only a local socket, and the UI belongs to the shell.
 - **fan2go** (Go). One loop per fan. Adaptive measurement of start, max and interior points, kept in a database. Curves `linear`, `staircase`, `pid` and `function` (min, max, average, delta, sum, difference). The `pwmValueChangedByThirdParty` and `fanModeChangedByThirdParty` sanity checks; `controlMode.onExit: restore`; `setPwmToGetPwmMap` for fans that read back a different value than was written. Its documentation warns that the hwmon index "is not stable" and that NVIDIA RPM needs driver 565 or newer. Taken: third-party change detection (our `contested`) and the read-back map idea. Different: GUI first, and calibration shown in the editor.
+- **LibreHardwareMonitor** (the library under Fan Control; MPL-2.0) *(draft 3)*.
+  - **On Windows** it reaches hardware through its own kernel driver, WinRing0 and since 2025 PawnIO, and does the chip work itself. It probes `0x2E`/`0x4E` with each vendor's entry sequence, reads the chip ID at `0x20` and the base address at `0x60`, and reads registers with its own code per chip family.
+  - **Board names** come from SMBIOS and a per-board table in code.
+  - **On Gigabyte boards** it switches off the fan firmware on the second ITE chip (§6.6).
+  - **On Linux** it only reads `/sys/class/hwmon` and controls nothing.
+  - Taken: a board database, as data rather than code (§3.6). Not taken: userspace chip access (§11.2, call 1), and none of its code or tables, which are MPL-2.0.
 - **lm_sensors `fancontrol` / `pwmconfig`.** The baseline. Its configuration names `hwmonN` paths, which break when the indices move.
 - **frankcrawford/it87.** Supports IT8688E and IT8792E. MMIO is on by default and "necessary for fan control with newer Gigabyte motherboards". Full manual mode with workarounds for IT8688, IT8689, IT8790, IT8792/IT8795 and IT87952 since August 2026. Calls `ignore_resource_conflict` "inherently risky".
 
@@ -733,8 +1047,8 @@ The review (companion artifact, section G) asked for eight calls, and the user a
 
 These need root or a shell restart, and were not run for this draft.
 
-1. **Which chips.** `sudo modprobe it87 ignore_resource_conflict=1` with the stock driver, then read the kernel log. If only the IT8792E binds, the IT8688E needs the fork.
-2. **Which headers each chip drives**, through pairing, and whether IT8792E writes hold or come back `contested`.
+1. **Which chips.** *Draft 3:* the stock 7.2 driver lacks the IT8688E, so this goes straight to the fork. `it87-dkms-git` 358.bd7a566 (driver source of 2 Oct 2026) is built. Secure Boot is off and lockdown is `none` here, so the unsigned module loads. Next: install it, `modprobe it87 ignore_resource_conflict=1` once (not persisted, so a reboot undoes it), and read the kernel log.
+2. **Which headers each chip drives**, through pairing, against the fork's labels (§3.6), and whether IT8792E writes hold or come back `reverts` (§5.1).
 3. **BIOS Smart Fan settings** that manual control may need. The fork notes some Gigabyte boards need a BIOS curve workaround.
 4. ~~**NVML on the 3090 as root.**~~ Verified in M4 (§9.4): manual speeds hold and read back as manual, `SetDefaultFanSpeed_v2` hands the fans back, and zero RPM returns at idle.
 5. **`pwm_enable` after suspend and after hibernate.**
