@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MIT"
 rust-version = "1.85"
@@ -23,3 +23,4 @@ proptest = "1"
 sd-notify = "0.5"
 signal-hook = "0.3"
 toml = "0.8"
+tokio = { version = "1", features = ["rt", "net", "io-util", "sync", "time", "macros"] }

@@ -9,6 +9,8 @@ use std::fmt;
 pub const VERSION: u32 = 1;
 /// The curve name a profile uses to leave a control with its firmware.
 pub const FIRMWARE: &str = "firmware";
+/// The longest label a person can give a sensor, tach or control.
+pub const LABEL_MAX: usize = 48;
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -25,6 +27,9 @@ pub struct Config {
     /// Profile name → control key → curve id, or [`FIRMWARE`].
     #[serde(default)]
     pub profiles: BTreeMap<String, BTreeMap<Key, String>>,
+    /// Names a person gave physical sensors and tachs (§3.2). Controls keep theirs in `[[control]]`, virtual sensors in `[[sensor]]`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub labels: BTreeMap<Key, String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -116,6 +121,8 @@ impl VirtualKind {
 #[serde(try_from = "CurveRaw", into = "CurveRaw")]
 pub struct Curve {
     pub id: String,
+    /// What a person calls it. Default: from the id, see [`Curve::label`].
+    pub label: Option<String>,
     pub kind: CurveKind,
     /// Exponential smoothing of the source, in seconds (§4.4). Default: 5 s for CPU sources, none otherwise.
     pub response: Option<f64>,
@@ -128,6 +135,8 @@ pub struct Curve {
 #[serde(deny_unknown_fields)]
 struct CurveRaw {
     id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     flat: Option<FlatRaw>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -195,7 +204,14 @@ impl TryFrom<CurveRaw> for Curve {
             0 => return Err(format!("curve {:?} needs one of flat, graph, mix or trigger", r.id)),
             _ => return Err(format!("curve {:?} has more than one of flat, graph, mix and trigger", r.id)),
         };
-        Ok(Curve { id: r.id, kind, response: r.response, hysteresis: r.hysteresis, hysteresis_direction: r.hysteresis_direction })
+        Ok(Curve {
+            id: r.id,
+            label: r.label,
+            kind,
+            response: r.response,
+            hysteresis: r.hysteresis,
+            hysteresis_direction: r.hysteresis_direction,
+        })
     }
 }
 
@@ -203,6 +219,7 @@ impl From<Curve> for CurveRaw {
     fn from(c: Curve) -> CurveRaw {
         let mut r = CurveRaw {
             id: c.id,
+            label: c.label,
             flat: None,
             graph: None,
             mix: None,
@@ -241,6 +258,34 @@ pub enum CurveKind {
     Graph { source: Key, points: Vec<[f64; 2]> },
     Mix { op: MixOp, curves: Vec<String> },
     Trigger { source: Key, idle: f64, load: f64, on: f64, off: f64 },
+}
+
+impl Curve {
+    /// Its label, or one made from the id: `cpu-quiet` is "CPU quiet".
+    pub fn label(&self) -> String {
+        self.label.clone().unwrap_or_else(|| words(&self.id))
+    }
+}
+
+/// An id as words for a person: separators become spaces, the first letter is a capital, and acronyms are upper case.
+pub fn words(id: &str) -> String {
+    const ACRONYMS: &[&str] = &["cpu", "gpu", "nvme", "ssd", "hdd", "vrm", "aio", "pch"];
+    let parts: Vec<String> = id
+        .split(['-', '_', ' '])
+        .filter(|w| !w.is_empty())
+        .enumerate()
+        .map(|(i, w)| {
+            if ACRONYMS.contains(&w.to_ascii_lowercase().as_str()) {
+                w.to_ascii_uppercase()
+            } else if i == 0 {
+                let mut c = w.chars();
+                c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
+            } else {
+                w.to_owned()
+            }
+        })
+        .collect();
+    if parts.is_empty() { id.to_owned() } else { parts.join(" ") }
 }
 
 impl CurveKind {
@@ -514,6 +559,12 @@ impl Config {
             }
             if c.failsafe < c.min {
                 out.push(problem(&at, format!("failsafe ({} %) is below min ({} %)", c.failsafe, c.min)));
+            }
+        }
+
+        for (key, label) in &self.labels {
+            if label.trim().is_empty() || label.chars().count() > LABEL_MAX {
+                out.push(problem(format!("labels, {key}"), format!("a label is 1 to {LABEL_MAX} characters")));
             }
         }
 
@@ -797,6 +848,23 @@ failsafe = 100
         assert!(Config::parse(&EXAMPLE.replace("may_stop = true", "may_stopp = true")).is_err());
         let both = EXAMPLE.replace("id = \"case\"\nmix", "id = \"case\"\nflat = { percent = 40 }\nmix");
         assert!(Config::parse(&both).is_err());
+    }
+
+    #[test]
+    fn words_from_ids() {
+        assert_eq!(words("cpu-quiet"), "CPU quiet");
+        assert_eq!(words("gpu"), "GPU");
+        assert_eq!(words("case"), "Case");
+        assert_eq!(words("rear_exhaust"), "Rear exhaust");
+        assert_eq!(example().curve("gpu-balanced").unwrap().label(), "GPU balanced");
+    }
+
+    #[test]
+    fn labels_round_trip() {
+        let text = format!("{EXAMPLE}\n[labels]\n\"hwmon/k10temp/0000:00:18.3/temp1\" = \"CPU\"\n");
+        let c = Config::parse(&text).unwrap();
+        assert_eq!(c.labels.len(), 1);
+        assert_eq!(Config::parse(&c.to_toml()).unwrap(), c);
     }
 
     #[test]

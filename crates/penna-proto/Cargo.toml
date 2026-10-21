@@ -4,11 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Penna's wire types: the snapshot the CLI prints as JSON and the daemon will stream"
+description = "Penna's wire format, version 2: hello, requests and replies, ticks, history and events"
 
 [dependencies]
 penna-core.workspace = true
 serde.workspace = true
-
-[dev-dependencies]
 serde_json.workspace = true

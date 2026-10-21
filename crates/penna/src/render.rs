@@ -1,7 +1,10 @@
-//! The `penna watch` table. Numbers sit in fixed-width, right-aligned columns so a value never shifts sideways as it changes
-//! (DESIGN.md §8.6); styling is applied after padding so escape codes never count as width.
+//! The `penna watch` tables: [`tick_frame`] for what the daemon says, [`frame`] for the hardware alone. Numbers sit in
+//! fixed-width, right-aligned columns so a value never shifts sideways as it changes (DESIGN.md §8.6); styling is applied after
+//! padding so escape codes never count as width.
+use penna_core::control::{State, Trend};
 use penna_core::{ControlKind, ControlMode, Limit, LimitKind, Source};
-use penna_proto::{ControlSnapshot, DeviceSnapshot, FanSnapshot, SensorSnapshot, Snapshot, Status};
+use penna_proto::hardware::{ControlSnapshot, DeviceSnapshot, FanSnapshot, SensorSnapshot, Snapshot, Status};
+use penna_proto::{ControlTick, Tick};
 use std::fmt::Write;
 
 const WIDTH: usize = 80;
@@ -25,6 +28,129 @@ impl Style {
     fn urgent(self, s: &str) -> String {
         self.wrap("31", s)
     }
+}
+
+/// One frame of what the daemon says: emergencies first, then temperatures, the fans it drives, what firmware still runs, and
+/// what it cannot reach. `via` names where the daemon is.
+pub fn tick_frame(t: &Tick, style: Style, via: &str, mock: bool) -> String {
+    let mut out = String::new();
+    let profile = t.profiles.iter().find(|p| p.id == t.profile).map_or(t.profile.as_str(), |p| p.label.as_str());
+    let fans: u32 = t.controls.iter().map(|c| c.fans.max(1)).sum();
+    let summary = format!(
+        " · {profile}{} · {}{}",
+        if t.full_speed { " · full speed" } else { "" },
+        count(fans as usize, "fan"),
+        if mock { " · mock" } else { "" }
+    );
+    let left = format!("{}{}", style.bold("Penna"), style.dim(&summary));
+    line_with_right(&mut out, &left, 5 + summary.chars().count(), &format!("via {via}"), style);
+
+    for e in &t.emergency {
+        let at = e.celsius.map_or("—".to_owned(), |c| format!("{c:.1} °C"));
+        let text = format!(
+            "Emergency: {} at {at}, limit {} °C. Every fan at 100 % until {} °C.",
+            e.label,
+            trim_number(e.limit, 1),
+            trim_number(e.release, 1)
+        );
+        let _ = writeln!(out, "{}", style.urgent(&text));
+    }
+
+    out.push('\n');
+    let _ = writeln!(out, "{}", style.bold("Temperatures"));
+    let width = t.sensors.iter().map(|s| penna_proto::build::display(s).chars().count() + 2).max().unwrap_or(0).clamp(LABEL, 48);
+    for s in &t.sensors {
+        let name = penna_proto::build::display(s);
+        let value = match s.celsius {
+            Some(c) => format!("{c:>6.1} °C"),
+            None => format!("{:>6} °C", "—"),
+        };
+        let note = match (&s.error, s.below_ambient) {
+            (Some(e), _) => format!("   {}", style.urgent(&format!("read failed: {e}"))),
+            (None, true) => format!("   {}", style.dim("below room temperature")),
+            _ => String::new(),
+        };
+        let _ = writeln!(out, "  {}{value}{note}", pad(&name, width));
+    }
+
+    if !t.controls.is_empty() {
+        out.push('\n');
+        let _ = writeln!(out, "{}", style.bold("Fans"));
+        for c in &t.controls {
+            fan_row(&mut out, c, style, t.t);
+        }
+    }
+    if !t.firmware.is_empty() {
+        out.push('\n');
+        let names: Vec<&str> = t.firmware.iter().map(|f| f.label.as_str()).collect();
+        let _ = writeln!(out, "{} {}", style.bold("Firmware runs"), style.dim(&names.join(" · ")));
+    }
+    if !t.unreachable.is_empty() {
+        out.push('\n');
+        let _ = writeln!(out, "{}", style.bold("Not reachable"));
+        for u in &t.unreachable {
+            let _ = writeln!(out, "  {}  {}", pad(&u.label, LABEL + 16), style.dim(&u.reason));
+        }
+    }
+    if !t.notes.is_empty() {
+        out.push('\n');
+        for n in &t.notes {
+            let _ = writeln!(out, "{}", style.dim(n));
+        }
+    }
+    out
+}
+
+/// `CPU cooler ×3     1,140 RPM    51 % ↑ 52 %   CPU quiet`, with what is wrong in words when something is.
+fn fan_row(out: &mut String, c: &ControlTick, style: Style, now: f64) {
+    let name = if c.fans > 1 { format!("{} ×{}", c.label, c.fans) } else { c.label.clone() };
+    let rpm = match c.rpm {
+        Some(r) => format!("{:>6} RPM", thousands(r)),
+        None => format!("{:>6} RPM", "—"),
+    };
+    let held_by_driver = c.state == State::Handback;
+    let duty = if held_by_driver || matches!(c.state, State::Firmware | State::Absent) {
+        format!("{:>6}", "")
+    } else {
+        format!("{:>4.0} %", c.duty)
+    };
+    let trend = match c.trend {
+        Trend::Rising => format!("↑ {:>3.0} %", c.target),
+        Trend::Falling => format!("↓ {:>3.0} %", c.target),
+        Trend::Steady => " ".repeat(7),
+    };
+    let curve = c.curve_label.as_deref().unwrap_or("");
+    let what = match c.state {
+        State::Curve => style.dim(curve),
+        State::Handback => style.dim(&format!("{curve} · below 30 %: the driver's curve runs it")),
+        State::Override => match c.override_ {
+            Some(o) => {
+                let left = o.until.map(|u| (u - now).max(0.0));
+                let how_long = left.map_or(" until cleared".to_owned(), |l| format!(" · {l:.0} s left"));
+                style.dim(&format!("held at {:.0} %{how_long}", o.duty))
+            }
+            None => style.dim("full speed"),
+        },
+        State::Firmware => style.dim("firmware"),
+        State::Absent => style.dim("not on this machine"),
+        State::Failsafe | State::Emergency | State::Contested | State::Fault => {
+            let why = c.reason.as_deref().map(|r| format!(": {r}")).unwrap_or_default();
+            style.urgent(&format!("{}{why}", c.state.name().to_uppercase()))
+        }
+    };
+    let _ = writeln!(out, "  {}{rpm}  {duty} {trend}  {what}", pad(&name, LABEL));
+}
+
+fn thousands(n: u32) -> String {
+    let s = n.to_string();
+    let mut out = String::new();
+    for (i, ch) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
 }
 
 /// One frame. `interval` is shown in the header when the frame is one of a live series.
@@ -310,7 +436,26 @@ mod tests {
     }
 
     #[test]
+    fn a_tick_reads_like_a_person_would_say_it() {
+        let t: Tick = match serde_json::from_str(include_str!("../../penna-proto/tests/fixtures/tick.json")).unwrap() {
+            penna_proto::Event::Tick(t) => t,
+            _ => unreachable!(),
+        };
+        let f = tick_frame(&t, Style { color: false }, "/run/penna/penna.sock", false);
+        assert!(f.starts_with("Penna · Balanced · 6 fans"), "{f}");
+        assert!(f.contains("Emergency: AMD CPU · Tctl at 94.5 °C, limit 90 °C. Every fan at 100 % until 85 °C."), "{f}");
+        assert!(f.contains("  CPU cooler             1,140 RPM   100 %          EMERGENCY: "), "{f}");
+        assert!(f.contains("  Front intake ×3        1,057 RPM    35 % ↑  51 %  CONTESTED: wrote 35 %"), "{f}");
+        assert!(f.contains("GPU fan 1                  0 RPM                  GPU · below 30 %: the driver's curve runs it"), "{f}");
+        assert!(f.contains("NVMe · Composite"), "{f}");
+        assert!(f.contains("Firmware runs pwm4"), "{f}");
+    }
+
+    #[test]
     fn numbers() {
+        assert_eq!(thousands(1140), "1,140");
+        assert_eq!(thousands(980), "980");
+        assert_eq!(thousands(1234567), "1,234,567");
         assert_eq!(trim_number(93.0, 2), "93");
         assert_eq!(trim_number(81.85, 2), "81.85");
         assert_eq!(trim_number(1.0, 1), "1");

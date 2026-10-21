@@ -1,6 +1,6 @@
 # Penna — design specification
 
-Draft 2 · 21 October 2026 · status: decisions approved (§11), UI quality bar added (§8.6), M0 and M1 done, design review 01 approved (milestone D, §11.1). Next: M2.
+Draft 2 · 21 October 2026 · status: decisions approved (§11), UI quality bar added (§8.6), M0, M1 and M2 done, design review 01 approved (milestone D, §11.1). Next: M3, the studio.
 
 Companion: design review 01 — mockups in real theme tokens, live motion prototypes, and eight calls before QML — is published as an artifact (https://claude.ai/artifact/DmFftUzWVBd11NNBv4e8aK). Its source is `design/penna-design-review.html`.
 
@@ -276,24 +276,110 @@ Dependencies: `tokio`, `serde`, `serde_json`, `toml`, `nvml-wrapper`, `sd-notify
 
 Goals, to be measured at M4: under 5 MB RSS and under 0.1 % of one core at a 1 s tick.
 
-### 7.3 Protocol
+### 7.3 Protocol (version 2, fixed for M2)
 
-Newline-delimited JSON on `/run/penna/penna.sock`. Requests carry an `id`; events do not.
+**Transport.** Newline-delimited JSON over a Unix socket: one UTF-8 object per line, at most 1 MiB per line. Clients look for the socket in this order:
+1. `$PENNA_SOCKET`
+2. `/run/penna/penna.sock` (production)
+3. `$XDG_RUNTIME_DIR/penna/penna.sock` (where `pennad --mock` listens by default)
+
+`pennad --socket <path>` overrides where the daemon listens.
+
+**Hello.** The daemon speaks first, once per connection:
 
 ```
-→ {"id":1,"op":"subscribe"}
-← {"id":1,"ok":true}
-← {"ev":"tick","seq":8812,"sensors":{"hwmon/k10temp/0000:00:18.3/temp1":78.5},
-   "controls":{"nvml/GPU-168e…/fan0":{"state":"curve","duty":42,"rpm":980}}}
-→ {"id":2,"op":"draft.put_curve","curve":{…}}
-→ {"id":3,"op":"draft.save"}
+← {"ev":"hello","v":2,"daemon":"0.2.0","mock":true,"tick":1.0,"can_write":true}
 ```
 
-Operations: `state`, `subscribe`, `profile.set`, `override`, `adopt`, `release`, `pair`, `calibrate` (both of which stream progress events), `draft.*` (put/delete curve, assign, limits, save, discard), `label`.
+`can_write` is the peer-credential decision from §7.4. Surfaces disable the controls that change fans when it is false and say why.
+
+**Requests and replies.** A request carries a client-chosen `id`; the reply echoes it. Events carry no `id`.
+
+```
+→ {"id":7,"op":"profile.set","name":"render"}
+← {"id":7,"ok":true}
+← {"id":8,"ok":false,"error":"There is no profile \"turbo\". Profiles: quiet, balanced, render."}
+```
+
+Errors are sentences a person can act on, in the voice of §8.
+
+**Operations in M2.** A ✎ marks writes, which need `can_write`:
+
+| op | Arguments | Result |
+|---|---|---|
+| `state` | — | One `tick` body (below), without the `ev` field |
+| `subscribe` | — | `ok`, then one `history` event, then a `tick` every tick and an `event` for every transition |
+| `unsubscribe` | — | `ok` |
+| `config` | — | The active configuration as JSON, keys as in §7.5 |
+| ✎ `profile.set` | `name` | Persisted to the configuration |
+| ✎ `full_speed` | `on` (bool) | Runtime only |
+| ✎ `override` | `control` (key, omitted = every control), `duty` (number, or `null` to clear), `seconds` (omitted = until cleared) | Runtime only |
+| ✎ `retry` | `control` | A contested or faulted control tries again (§6.4) |
+| ✎ `adopt` | `control`, `curve` | Assigns the curve to the control in the active profile; persisted |
+| ✎ `release` | `control` | Unassigns it in the active profile, handing it back to firmware; persisted |
+| ✎ `label` | `key`, `label` | Renames a sensor or control; persisted |
+
+`draft.*`, `pair` and `calibrate` arrive with the studio (M3) and pairing (M5).
+
+**`tick` event.** UI-shaped: everything a surface draws, with no second request.
+
+```
+← {"ev":"tick","v":2,"seq":812,"t":1792595449.2,
+   "profile":"balanced",
+   "profiles":[{"id":"quiet","label":"Quiet"},{"id":"balanced","label":"Balanced"},{"id":"render","label":"Render"}],
+   "full_speed":false,
+   "emergency":[{"sensor":"hwmon/k10temp/0000:00:18.3/temp1","label":"CPU · Tctl","celsius":94.5,"limit":90,"release":85}],
+   "sensors":[{"key":"hwmon/k10temp/0000:00:18.3/temp1","label":"Tctl","device":"CPU","celsius":62.1,
+               "scale":[20,95],"limits":[…],"virtual":false,"below_ambient":false,"error":null}],
+   "controls":[{"key":"hwmon/it87/it87.2608/pwm1","label":"CPU cooler","kind":"pwm","fans":1,"rpm":1140,"rpms":[1140],
+                "state":"curve","reason":null,"duty":51.0,"target":52.0,"trend":"rising",
+                "curve":"cpu-quiet","curve_label":"CPU quiet","floor":30.0,"may_stop":false,"override":null}],
+   "curves":[{"id":"cpu-quiet","label":"CPU quiet","kind":"graph","source":"hwmon/k10temp/0000:00:18.3/temp1",
+              "smoothed":63.4,"out":47.0,"held":false,"error":null}],
+   "unreachable":[{"id":"pci/0000:0a:00.0","label":"NVIDIA TU106 [GeForce RTX 2060 SUPER]","reason":"passed through to a VM (vfio-pci)"}],
+   "notes":["Motherboard fans: none visible. No Super I/O driver (it87, nct6775, …) is bound."]}
+```
+
+- **`controls`** lists only controls the configuration knows. Every other control is listed under `firmware`, as `[{"key","label"}]`, so the popup can fold it.
+- **`scale`** is the sensor's fixed sparkline range (§11.1, call 5): 20 °C up to its emergency limit, or its plausible limit, plus 5 °C, rounded to 5. Without either, 20–100 °C.
+- **`rpm`** is the mean of the control's paired tachs, or `null` when it has none.
+- **`state`** is one of §4.6. **`override`** is `{"duty":…, "until":…}`, or `null`.
+
+**`history` event.** Sent once after `subscribe`, so a shell that has just restarted draws full sparklines on its first frame (§8.6, no blanks). It holds the last 300 ticks, oldest first, with `null` for a failed read:
+
+```
+← {"ev":"history","seq":812,"tick":1.0,
+   "sensors":{"<key>":[61.2,61.4,…]},"controls":{"<key>":{"duty":[…],"rpm":[…]}}}
+```
+
+**`event` event.** The transitions the mock trace prints (§9), for notifications (v2) and the CLI:
+
+```
+← {"ev":"event","seq":107,"t":…,"level":"alert","control":"<key>","text":"Front intake: contested → emergency: …"}
+```
+
+`level` is `info`, `warn` or `alert`.
+
+**As built in M2.** The shape above holds; these details were settled while building it.
+- **Extra fields.** `hello` adds `why`, a sentence, when `can_write` is false. Write replies carry `result: {"text": …}`, the daemon's own sentence, which the CLI prints.
+- **A repeated `seq`.** After a write, the daemon republishes the current `tick` with the same `seq`, so `state` shows the change at once. The hardware follows on the next tick.
+- **An early `history` can be empty.** The socket opens before the first tick, so a bind failure changes nothing on the machine.
+- **Labels.**
+  - `sensors[].device` is the full device label ("AMD CPU", "NVIDIA GeForce RTX 3090"; "Virtual" for virtual sensors), and `emergency[].label` is "AMD CPU · Tctl". Surfaces shorten it.
+  - Sensors arrive ordered CPU, GPU, motherboard, storage, other, virtual, with below-room-temperature last.
+- **Controls.**
+  - `fans` counts paired tachs: an unpaired control has `fans` 0 and `rpm` `null`.
+  - `kind` is `null` for a configured control that is not present.
+  - A control a profile assigns to `"firmware"` is listed under `controls` with state `firmware`, not under `firmware`.
+- **Profiles and curves.** Profile labels come from the id in words. Profiles are ordered by known names (silent, quiet, balanced, normal, performance, render, full), then alphabetically. `[[curve]]` takes an optional `label`, defaulting to the id in words ("cpu-quiet" becomes "CPU quiet"). Physical sensor and tach names live in a `[labels]` table in the config (§7.5), which `label` writes to.
+- **Persistence.** Writes re-serialise the TOML: comments are lost and a generated header is written. Under `--mock`, the scenario's config is copied fresh on every start.
+- **Overrides.** `until` is Unix time and `seconds` is wall-clock time, even on a sped-up mock desk. `override` with neither `control` nor `duty` also clears the per-fan overrides.
+- **Naming things.** Controls are matched by key, exact label (any case), or a unique label prefix; profiles and curves by id or label.
+- **Without a daemon.** `penna watch --json` with no daemon emits M0's hardware snapshot, tagged `"ev":"hardware"`.
 
 ### 7.4 Authorisation and drafts
 
-- The socket is world-connectable. Each request is checked against the peer's credentials: reads are open to any local user; writes need uid 0 or membership of the `penna` group, which is created by `sysusers.d`. polkit (the shell already ships an agent) is the v2 route if group membership proves awkward.
+- The socket is world-connectable. Each request is checked against the peer's credentials: reads are open to any local user; writes need uid 0 or membership of the `penna` group, which is created by `sysusers.d`. polkit (the shell already ships an agent) is the v2 route if group membership proves awkward. Under `--mock`, the daemon's own uid may also write, so the whole stack runs unprivileged.
 - **A draft belongs to its connection.** The studio's edits apply live to the fans for preview, and `draft.save` persists them. If the connection closes with a draft open — Esc, a closed overlay, a shell crash — the daemon reverts to the saved configuration. This is Candela's "the revert runs outside the shell", without a countdown: a bad fan curve is audible and caught by §6, not invisible like a dark display.
 
 ### 7.5 Persistence
@@ -372,6 +458,11 @@ Summoned from the popup's `Curves…` and with `penna open`. A centred card abou
 ### 8.4 Plugin service (kind: service)
 
 One `Socket` connection with a `SplitParser` per shell, shared by the widget, popup and studio. It holds the latest snapshot and a 5-minute ring buffer, and reconnects with backoff. The studio opens its own connection, so its draft is bound to it (§7.4).
+
+**Found building M2** (shell from Omarchy 4.0.5, Quickshell 0.3.2):
+- **No built-ins at a plugin script's top level.** In the shell, built-ins such as `String` are not reachable while a plugin script initialises. `String.fromCodePoint` at the top of `Model.js` left every constant after it undefined, so every function using one threw — about 110 warnings a second. Glyphs are therefore surrogate-pair literals, and nothing at a script's top level calls anything. The same call works in plain Qt 6.12, so this is the shell's script context, not Qt.
+- **Script changes need a shell restart.** The shell reloads a plugin when its entry under `~/.config/omarchy/plugins` changes, and it doesn't see edits inside a symlinked checkout. It also keeps a plugin's scripts in memory across that reload, even after `Qt.clearComponentCache()`. After editing a script, run `omarchy-restart-shell`.
+- **Cost.** With the popup open against the mock desk, the whole shell process used about 2 % of one core; closed, 1–2 %, the same as before Penna. Frame timing proper is M3's test.
 
 ### 8.5 CLI
 
@@ -478,7 +569,11 @@ Milestones, each ending in something visible:
 - **M0** — `penna watch` and `penna capture` on this desk, read-only, no root: k10temp, NVMe, and the 3090's temperature, two fans, percent and RPM. **Done 21 Oct 2026**: 28 tests, clippy clean, fixture in `test/fixtures/desk-2026-10-21`.
 - **M1** — `penna-core`, mock, simulator and property tests. `pennad --mock` runs unprivileged. **Done 21 Oct 2026**: 86 tests, including 4 property tests at 400 cases each and exit-path tests for `kill -9`, SIGTERM, panic and a leftover `held.json`. The simulator has `render-burst` and `faults` scenarios. Mock mode runs on virtual time (`--speed`). `pennad` and `penna restore` refuse the real `/sys` until M4/M5.
 - **D** — Visual design review: mockups in real theme tokens and motion prototypes (§8.6), sourced in `design/`. No QML is written before it is approved. **Approved 21 Oct 2026** (§11.1).
-- **M2** — Protocol and CLI against the mock. The plugin's service, bar widget and popup against the mock daemon.
+- **M2** — Protocol and CLI against the mock. The plugin's service, bar widget and popup against the mock daemon. **Done 21 Oct 2026**:
+  - protocol v2 over the daemon's socket, with peer-credential authorisation and slow clients dropped;
+  - the daemon-backed CLI and `penna waybar`;
+  - 107 Rust tests and 8 plugin logic tests;
+  - the popup running live in this shell against `pennad --mock`.
 - **M3** — Studio and curve editor against the mock, with the §8.6 frame-timing test passing.
 - **M4** — Real NVML control of the 3090 as root: hand-back, exit paths, `kill -9` on real hardware.
 - **M5** — Motherboard fans: bind `it87` (stock first, the fork if the IT8688E needs it), `doctor`, pairing, calibration, contested detection on the IT8792E.

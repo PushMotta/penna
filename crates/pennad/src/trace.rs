@@ -1,11 +1,13 @@
 //! What the daemon says while it runs. Mock mode is meant to be read by a person: one line a tick, and a line for everything
-//! that changes.
+//! that changes. Every line that says something changed is also kept for [`Trace::take_events`], which the socket sends to
+//! subscribers as `event`s (DESIGN.md §7.3).
 use penna_core::config::{Measured, VirtualKind};
 use penna_core::control::{Command, LoopState, Outcome, State, Trend};
 use penna_core::plan::Plan;
 use penna_core::{Key, Readings, Sample};
 use penna_hw::Machine;
 use penna_hw::sim::Sim;
+use penna_proto::Level;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -21,6 +23,7 @@ pub struct Trace {
     emergency: bool,
     stalls: BTreeMap<Key, u32>,
     stalled: BTreeSet<Key>,
+    events: Vec<(Level, Option<Key>, String)>,
 }
 
 fn t(now: f64) -> String {
@@ -47,6 +50,7 @@ impl Trace {
             emergency: false,
             stalls: BTreeMap::new(),
             stalled: BTreeSet::new(),
+            events: Vec::new(),
         }
     }
 
@@ -55,7 +59,17 @@ impl Trace {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn banner(&mut self, plan: &Plan, machine: &Machine, sim: Option<&Sim>, held: &Path, tick: f64, speed: f64, seconds: Option<f64>) {
+    pub fn banner(
+        &mut self,
+        plan: &Plan,
+        machine: &Machine,
+        sim: Option<&Sim>,
+        paths: (&Path, &Path),
+        tick: f64,
+        speed: f64,
+        seconds: Option<f64>,
+    ) {
+        let (held, socket) = paths;
         for d in &machine.inventory.devices {
             for s in &d.sensors {
                 let short = if d.source == penna_core::Source::Nvml { "GPU".to_owned() } else { s.label.clone() };
@@ -68,12 +82,13 @@ impl Trace {
         match sim {
             Some(sim) => {
                 let sc = sim.scenario();
-                eprintln!("pennad (M1, mock): {} · {}", sc.name, sc.cpu_model);
+                eprintln!("pennad (M2, mock): {} · {}", sc.name, sc.cpu_model);
                 eprintln!("  tree       {}", sim.root().display());
             }
-            None => eprintln!("pennad (M1): {}", machine.inventory.devices.first().map_or("no devices", |d| d.id.as_str())),
+            None => eprintln!("pennad (M2): {}", machine.inventory.devices.first().map_or("no devices", |d| d.id.as_str())),
         }
         eprintln!("  held.json  {}", held.display());
+        eprintln!("  socket     {}", socket.display());
         let length = seconds.map_or("until stopped".to_owned(), |s| format!("{s:.0} s"));
         let pace = if sim.is_some() && speed != 1.0 { format!(", {speed}× real time") } else { String::new() };
         eprintln!("  tick       {tick} s{pace}, {length}");
@@ -112,8 +127,19 @@ impl Trace {
         }
     }
 
-    pub fn command(&self, now: f64, plan: &Plan, st: &LoopState, cmd: &Command, outcome: &Outcome) {
-        let label = self.label(plan, cmd.key());
+    /// What changed since the last call, for subscribers.
+    pub fn take_events(&mut self) -> Vec<(Level, Option<Key>, String)> {
+        std::mem::take(&mut self.events)
+    }
+
+    /// Something a person asked for, said like everything else.
+    pub fn note(&mut self, now: f64, level: Level, control: Option<Key>, text: String) {
+        eprintln!("{}  {text}", t(now));
+        self.events.push((level, control, text));
+    }
+
+    pub fn command(&mut self, now: f64, plan: &Plan, st: &LoopState, cmd: &Command, outcome: &Outcome) {
+        let label = self.label(plan, cmd.key()).to_owned();
         let line = match (cmd, outcome) {
             (Command::Take { key }, Outcome::Taken { duty }) if plan.controls.get(key).is_some_and(|c| c.is_nvml()) => {
                 format!("{label}: taken; the way back is in held.json. It stays on the driver's curve until the first write")
@@ -135,7 +161,13 @@ impl Trace {
             (cmd, Outcome::Failed(e)) => format!("{label}: {} failed: {e}", verb(cmd)),
             (cmd, o) => format!("{label}: {} → {o:?}", verb(cmd)),
         };
+        let level = match (cmd, outcome) {
+            (_, Outcome::Failed(_)) => Level::Alert,
+            (Command::Reassert { .. }, _) => Level::Warn,
+            _ => Level::Info,
+        };
         eprintln!("{}  {line}", t(now));
+        self.events.push((level, Some(cmd.key().clone()), line));
     }
 
     pub fn tick(&mut self, now: f64, plan: &Plan, st: &LoopState, readings: &Readings) {
@@ -144,14 +176,16 @@ impl Trace {
             if self.emergency {
                 let (k, l) = st.emergency.iter().next().expect("not empty");
                 let v = st.sources.get(k).and_then(|r| r.as_ref().ok()).copied().unwrap_or(f64::NAN);
-                eprintln!(
-                    "{}  EMERGENCY  {} at {v:.1} °C, limit {l} °C: every fan to 100 % until {:.0} °C",
-                    t(now),
+                let text = format!(
+                    "EMERGENCY  {} at {v:.1} °C, limit {l} °C: every fan to 100 % until {:.0} °C",
                     self.labels.get(k).map_or(k.as_str(), String::as_str),
                     l - 5.0
                 );
+                eprintln!("{}  {text}", t(now));
+                self.events.push((Level::Alert, None, text.replacen("EMERGENCY  ", "Emergency: ", 1)));
             } else {
                 eprintln!("{}  emergency over", t(now));
+                self.events.push((Level::Info, None, "Emergency over".to_owned()));
             }
         }
         for (k, cs) in &st.controls {
@@ -167,7 +201,9 @@ impl Trace {
                 let mark =
                     if matches!(cs.state, State::Failsafe | State::Emergency | State::Contested | State::Fault) { "⚠ " } else { "" };
                 if from != cs.state || !why.is_empty() {
-                    eprintln!("{}  {mark}{}: {} → {}{why}", t(now), self.label(plan, k), from.name(), cs.state.name());
+                    let text = format!("{}: {} → {}{why}", self.label(plan, k), from.name(), cs.state.name());
+                    eprintln!("{}  {mark}{text}", t(now));
+                    self.events.push((if mark.is_empty() { Level::Info } else { Level::Alert }, Some(k.clone()), text));
                 }
             }
             self.last.insert(k.clone(), now_is);
@@ -227,9 +263,13 @@ impl Trace {
         let n = self.stalls.entry(key.clone()).or_default();
         *n = if zero && should_spin { *n + 1 } else { 0 };
         if *n >= STALL_TICKS && self.stalled.insert(key.clone()) {
-            eprintln!("{}  ⚠ {}: its tach reads 0 RPM at {duty:.0} % for {STALL_TICKS} s: a stalled fan or a broken tach", t(now), c.label);
+            let text = format!("{}: its tach reads 0 RPM at {duty:.0} % for {STALL_TICKS} s: a stalled fan or a broken tach", c.label);
+            eprintln!("{}  ⚠ {text}", t(now));
+            self.events.push((Level::Warn, Some(key.clone()), text));
         } else if !zero && self.stalled.remove(key) {
-            eprintln!("{}  {}: its tach reads again ({} RPM)", t(now), c.label, self.rpm(key, readings).unwrap_or(0));
+            let text = format!("{}: its tach reads again ({} RPM)", c.label, self.rpm(key, readings).unwrap_or(0));
+            eprintln!("{}  {text}", t(now));
+            self.events.push((Level::Info, Some(key.clone()), text));
         }
     }
 

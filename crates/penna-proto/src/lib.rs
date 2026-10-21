@@ -1,254 +1,412 @@
-//! Penna's wire types (DESIGN.md §7.3): newline-delimited JSON, events tagged by `ev`. In M0 the CLI prints [`Event::Tick`]
-//! for `penna watch --json`; the daemon streams the same events from M1.
-use penna_core::{ControlKind, ControlMode, Inventory, Key, Limit, Readings, Sample, Source, Unreachable};
-use serde::{Deserialize, Serialize};
+//! Penna's wire format, version 2 (DESIGN.md §7.3): newline-delimited JSON over a Unix socket. The daemon speaks first with
+//! [`Hello`]; a client sends [`Request`]s and gets a [`Reply`] for each; a subscriber also gets [`History`] once, then a
+//! [`Tick`] every tick and a [`Transition`] for everything that changes. Events are tagged by `ev`, requests by `op`.
+//!
+//! [`build::tick`] makes the UI-shaped [`Tick`] from the control loop's state: everything a surface draws, with no second
+//! request. [`hardware`] is the machine alone, for `penna watch` when no daemon answers.
+pub mod build;
+pub mod hardware;
 
-pub const VERSION: u32 = 1;
+use penna_core::control::{State, Trend};
+use penna_core::{Key, Limit, Unreachable};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::BTreeMap;
+
+pub const VERSION: u32 = 2;
+/// The longest line either side sends.
+pub const MAX_LINE: usize = 1 << 20;
+/// Ticks of history a subscriber gets first (§8.6: full sparklines on the first frame).
+pub const HISTORY: usize = 300;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "ev", rename_all = "lowercase")]
 pub enum Event {
-    Tick(Snapshot),
+    Hello(Hello),
+    Tick(Tick),
+    History(History),
+    Event(Transition),
+    /// `penna watch --json` without the daemon: the hardware alone.
+    Hardware(hardware::Snapshot),
 }
 
-/// Everything known about the machine at one tick.
+impl Event {
+    pub fn line(&self) -> String {
+        serde_json::to_string(self).expect("events always serialize")
+    }
+}
+
+/// The daemon's first line on every connection.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Snapshot {
+pub struct Hello {
     pub v: u32,
-    pub seq: u64,
-    /// Unix time in seconds.
-    pub t: f64,
-    pub devices: Vec<DeviceSnapshot>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub unreachable: Vec<Unreachable>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub notes: Vec<String>,
+    pub daemon: String,
+    pub mock: bool,
+    /// Seconds between ticks.
+    pub tick: f64,
+    /// The peer-credential decision (§7.4): surfaces disable what changes fans when it is false.
+    pub can_write: bool,
+    /// When `can_write` is false: why, and what to do about it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
+}
+
+/// One line from a client. `id` is the client's own and comes back on the reply, whatever JSON it is.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Request {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<Value>,
+    #[serde(flatten)]
+    pub op: Op,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct DeviceSnapshot {
-    pub id: String,
-    pub source: Source,
-    pub driver: String,
-    pub label: String,
-    pub location: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    pub sensors: Vec<SensorSnapshot>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub fans: Vec<FanSnapshot>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub controls: Vec<ControlSnapshot>,
+#[serde(tag = "op")]
+pub enum Op {
+    #[serde(rename = "state")]
+    State,
+    #[serde(rename = "subscribe")]
+    Subscribe,
+    #[serde(rename = "unsubscribe")]
+    Unsubscribe,
+    #[serde(rename = "config")]
+    Config,
+    #[serde(rename = "profile.set")]
+    ProfileSet { name: String },
+    #[serde(rename = "full_speed")]
+    FullSpeed { on: bool },
+    /// `control` omitted: every control. `duty` null or omitted: clear. `seconds` omitted: until cleared.
+    #[serde(rename = "override")]
+    Override {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        control: Option<String>,
+        #[serde(default)]
+        duty: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        seconds: Option<f64>,
+    },
+    #[serde(rename = "retry")]
+    Retry { control: String },
+    #[serde(rename = "adopt")]
+    Adopt { control: String, curve: String },
+    #[serde(rename = "release")]
+    Release { control: String },
+    #[serde(rename = "label")]
+    Label { key: String, label: String },
 }
 
-/// One value or why there is none. Exactly one field is set.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct Status {
-    /// A number the hardware reported that cannot be what it claims (a temperature of 4000 °C).
+impl Op {
+    /// Every operation this version knows, in the order the protocol lists them.
+    pub const NAMES: &[&str] =
+        &["state", "subscribe", "unsubscribe", "config", "profile.set", "full_speed", "override", "retry", "adopt", "release", "label"];
+
+    /// Changes fans or the configuration, so it needs `can_write`.
+    pub fn writes(&self) -> bool {
+        !matches!(self, Op::State | Op::Subscribe | Op::Unsubscribe | Op::Config)
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Op::State => "state",
+            Op::Subscribe => "subscribe",
+            Op::Unsubscribe => "unsubscribe",
+            Op::Config => "config",
+            Op::ProfileSet { .. } => "profile.set",
+            Op::FullSpeed { .. } => "full_speed",
+            Op::Override { .. } => "override",
+            Op::Retry { .. } => "retry",
+            Op::Adopt { .. } => "adopt",
+            Op::Release { .. } => "release",
+            Op::Label { .. } => "label",
+        }
+    }
+}
+
+impl Request {
+    /// A client's line, or the reply that explains what is wrong with it. The id is recovered whenever the line is JSON.
+    #[allow(clippy::result_large_err)]
+    pub fn parse(line: &str) -> Result<Request, Reply> {
+        let value: Value = serde_json::from_str(line).map_err(|e| Reply::error(None, format!("That line isn't JSON: {e}.")))?;
+        let id = value.get("id").cloned();
+        let Some(obj) = value.as_object() else {
+            return Err(Reply::error(id, "A request is a JSON object with an \"op\", like {\"id\":1,\"op\":\"state\"}."));
+        };
+        let op = match obj.get("op") {
+            Some(Value::String(op)) => op.clone(),
+            _ => return Err(Reply::error(id, "A request needs an \"op\", like {\"id\":1,\"op\":\"state\"}.")),
+        };
+        if !Op::NAMES.contains(&op.as_str()) {
+            return Err(Reply::error(id, format!("Penna doesn't know the operation {op:?}. It knows: {}.", Op::NAMES.join(", "))));
+        }
+        serde_json::from_value::<Request>(value).map_err(|e| Reply::error(id, explain(&op, &e.to_string())))
+    }
+}
+
+/// serde's words for a bad argument, as a sentence about this operation.
+fn explain(op: &str, e: &str) -> String {
+    let e = e.split(" at line").next().unwrap_or(e);
+    if let Some(field) = e.strip_prefix("missing field `").and_then(|r| r.strip_suffix('`')) {
+        return format!("{op} needs \"{field}\".");
+    }
+    if let Some(rest) = e.strip_prefix("invalid type: ") {
+        return format!("{op} got the wrong kind of value: {rest}.");
+    }
+    format!("{op}: {e}.")
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Reply {
+    pub id: Option<Value>,
+    pub ok: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub implausible: Option<f64>,
+    pub result: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 
+impl Reply {
+    pub fn ok(id: Option<Value>, result: Option<Value>) -> Reply {
+        Reply { id, ok: true, result, error: None }
+    }
+    pub fn error(id: Option<Value>, error: impl Into<String>) -> Reply {
+        Reply { id, ok: false, result: None, error: Some(error.into()) }
+    }
+    pub fn line(&self) -> String {
+        serde_json::to_string(self).expect("replies always serialize")
+    }
+}
+
+/// Everything a surface draws, once a tick (§7.3). Every field is always present; a value that is not known is `null`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SensorSnapshot {
-    pub key: Key,
+pub struct Tick {
+    pub v: u32,
+    pub seq: u64,
+    /// Unix time in seconds.
+    pub t: f64,
+    pub profile: String,
+    pub profiles: Vec<ProfileTick>,
+    pub full_speed: bool,
+    pub emergency: Vec<EmergencyTick>,
+    pub sensors: Vec<SensorTick>,
+    /// The controls the configuration knows.
+    pub controls: Vec<ControlTick>,
+    /// Every other control on the machine: its firmware runs it.
+    pub firmware: Vec<FirmwareTick>,
+    pub curves: Vec<CurveTick>,
+    pub unreachable: Vec<Unreachable>,
+    pub notes: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProfileTick {
+    pub id: String,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct EmergencyTick {
+    pub sensor: Key,
     pub label: String,
     pub celsius: Option<f64>,
-    #[serde(flatten)]
-    pub status: Status,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub limit: f64,
+    /// The emergency ends below this.
+    pub release: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SensorTick {
+    pub key: Key,
+    pub label: String,
+    /// The device it belongs to, as a person calls it ("AMD CPU", "NVIDIA GeForce RTX 3090"); "Virtual" for a virtual sensor.
+    pub device: String,
+    pub celsius: Option<f64>,
+    /// The sparkline's fixed range, lowest and highest °C (§11.1, call 5).
+    pub scale: [f64; 2],
     pub limits: Vec<Limit>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub ignored_limits: Vec<Limit>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[serde(rename = "virtual")]
+    pub is_virtual: bool,
     pub below_ambient: bool,
+    /// Why there is no value.
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ControlKindName {
+    Pwm,
+    Nvml,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct FanSnapshot {
+pub struct ControlTick {
     pub key: Key,
     pub label: String,
+    /// `None`: named by the configuration but not on this machine.
+    pub kind: Option<ControlKindName>,
+    /// Paired tachs: the fans this control drives that Penna can hear.
+    pub fans: u32,
+    /// The mean of the paired tachs that read, or `null`.
     pub rpm: Option<u32>,
-    #[serde(flatten)]
-    pub status: Status,
+    pub rpms: Vec<Option<u32>>,
+    pub state: State,
+    pub reason: Option<String>,
+    /// PWM duty for hwmon, NVML percent for NVML.
+    pub duty: f64,
+    pub target: f64,
+    pub trend: Trend,
+    /// The curve the active profile gives it, or `null` for firmware.
+    pub curve: Option<String>,
+    pub curve_label: Option<String>,
+    pub floor: f64,
+    pub may_stop: bool,
+    #[serde(rename = "override")]
+    pub override_: Option<OverrideTick>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct OverrideTick {
+    pub duty: f64,
+    /// Unix time it ends, or `null`: until cleared.
+    pub until: Option<f64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FirmwareTick {
+    pub key: Key,
+    pub label: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CurveKindName {
+    Flat,
+    Graph,
+    Mix,
+    Trigger,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ControlSnapshot {
-    pub key: Key,
+pub struct CurveTick {
+    pub id: String,
     pub label: String,
-    pub kind: ControlKind,
-    /// PWM duty for hwmon, NVML percent for NVML.
-    pub percent: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub raw: Option<u32>,
-    pub mode: Option<ControlMode>,
-    #[serde(flatten)]
-    pub status: Status,
+    pub kind: CurveKindName,
+    pub source: Option<Key>,
+    /// The source after response time (§4.4).
+    pub smoothed: Option<f64>,
+    pub out: Option<f64>,
+    /// Hysteresis is holding the output.
+    pub held: bool,
+    pub error: Option<String>,
 }
 
-impl Snapshot {
-    pub fn new(seq: u64, t: f64, inventory: &Inventory, readings: &Readings) -> Snapshot {
-        let devices = inventory
-            .devices
-            .iter()
-            .map(|d| DeviceSnapshot {
-                id: d.id.clone(),
-                source: d.source,
-                driver: d.driver.clone(),
-                label: d.label.clone(),
-                location: d.location.clone(),
-                model: d.model.clone(),
-                sensors: d
-                    .sensors
-                    .iter()
-                    .map(|s| {
-                        let (celsius, status) = split(readings.temps.get(&s.key));
-                        SensorSnapshot {
-                            key: s.key.clone(),
-                            label: s.label.clone(),
-                            celsius,
-                            status,
-                            limits: s.limits.clone(),
-                            ignored_limits: s.ignored_limits.clone(),
-                            below_ambient: s.below_ambient,
-                        }
-                    })
-                    .collect(),
-                fans: d
-                    .tachs
-                    .iter()
-                    .map(|f| {
-                        let (rpm, status) = split(readings.rpms.get(&f.key));
-                        FanSnapshot { key: f.key.clone(), label: f.label.clone(), rpm, status }
-                    })
-                    .collect(),
-                controls: d
-                    .controls
-                    .iter()
-                    .map(|c| {
-                        let (reading, status) = split(readings.controls.get(&c.key));
-                        ControlSnapshot {
-                            key: c.key.clone(),
-                            label: c.label.clone(),
-                            kind: c.kind,
-                            percent: reading.map(|r| r.percent),
-                            raw: reading.and_then(|r| r.raw),
-                            mode: reading.map(|r| r.mode),
-                            status,
-                        }
-                    })
-                    .collect(),
-            })
-            .collect();
-        Snapshot { v: VERSION, seq, t, devices, unreachable: inventory.unreachable.clone(), notes: inventory.notes.clone() }
-    }
+/// The last ticks, oldest first, sent once after `subscribe`. `null` is a failed read.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct History {
+    pub seq: u64,
+    pub tick: f64,
+    pub sensors: BTreeMap<Key, Vec<Option<f64>>>,
+    pub controls: BTreeMap<Key, ControlHistory>,
 }
 
-fn split<T: Copy>(sample: Option<&Sample<T>>) -> (Option<T>, Status) {
-    match sample {
-        Some(Sample::Value(v)) => (Some(*v), Status::default()),
-        Some(Sample::Implausible(v)) => (None, Status { implausible: Some(*v), error: None }),
-        Some(Sample::Error(e)) => (None, Status { implausible: None, error: Some(e.clone()) }),
-        None => (None, Status { implausible: None, error: Some("not read".to_owned()) }),
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ControlHistory {
+    pub duty: Vec<Option<f64>>,
+    pub rpm: Vec<Option<u32>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Level {
+    Info,
+    Warn,
+    Alert,
+}
+
+/// Something that changed: what the mock trace prints, for the CLI and notifications.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Transition {
+    pub seq: u64,
+    pub t: f64,
+    pub level: Level,
+    pub control: Option<Key>,
+    pub text: String,
+}
+
+/// Where a client finds the daemon (§7.3): `$PENNA_SOCKET`, then production, then where `pennad --mock` listens.
+pub fn socket_candidates() -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    if let Some(p) = std::env::var_os("PENNA_SOCKET").filter(|p| !p.is_empty()) {
+        out.push(p.into());
     }
+    out.push(PRODUCTION_SOCKET.into());
+    if let Some(mock) = mock_socket() {
+        out.push(mock);
+    }
+    out
+}
+
+pub const PRODUCTION_SOCKET: &str = "/run/penna/penna.sock";
+
+/// `$XDG_RUNTIME_DIR/penna/penna.sock`, where `pennad --mock` listens unless told otherwise.
+pub fn mock_socket() -> Option<std::path::PathBuf> {
+    std::env::var_os("XDG_RUNTIME_DIR").filter(|p| !p.is_empty()).map(|d| std::path::PathBuf::from(d).join("penna/penna.sock"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use penna_core::{ControlInfo, ControlReading, Device, LimitKind, SensorInfo, TachInfo};
 
-    fn desk() -> (Inventory, Readings) {
-        let uuid = "GPU-168e2769-d673-f36a-ea7b-64df57f8d090";
-        let cpu = Key::hwmon("k10temp", "0000:00:18.3", "temp1");
-        let nvme = Key::hwmon("nvme", "0000:04:00.0", "temp2");
-        let fan = Key::nvml_fan(uuid, 0);
-        let inventory = Inventory {
-            devices: vec![
-                Device {
-                    id: "hwmon/k10temp/0000:00:18.3".into(),
-                    source: Source::Hwmon,
-                    driver: "k10temp".into(),
-                    label: "AMD CPU".into(),
-                    location: "0000:00:18.3".into(),
-                    model: None,
-                    sensors: vec![SensorInfo {
-                        key: cpu.clone(),
-                        label: "Tctl".into(),
-                        limits: vec![],
-                        ignored_limits: vec![],
-                        below_ambient: false,
-                    }],
-                    tachs: vec![],
-                    controls: vec![],
-                },
-                Device {
-                    id: "hwmon/nvme/0000:04:00.0".into(),
-                    source: Source::Hwmon,
-                    driver: "nvme".into(),
-                    label: "NVMe".into(),
-                    location: "0000:04:00.0".into(),
-                    model: Some("Samsung SSD 980 PRO 1TB".into()),
-                    sensors: vec![SensorInfo {
-                        key: nvme.clone(),
-                        label: "Sensor 1".into(),
-                        limits: vec![],
-                        ignored_limits: vec![Limit { kind: LimitKind::Max, celsius: 65261.85 }],
-                        below_ambient: false,
-                    }],
-                    tachs: vec![],
-                    controls: vec![],
-                },
-                Device {
-                    id: format!("nvml/{uuid}"),
-                    source: Source::Nvml,
-                    driver: "nvml".into(),
-                    label: "NVIDIA GeForce RTX 3090".into(),
-                    location: "0000:09:00.0".into(),
-                    model: None,
-                    sensors: vec![],
-                    tachs: vec![TachInfo { key: fan.clone(), label: "Fan 1".into() }],
-                    controls: vec![ControlInfo { key: fan.clone(), label: "Fan 1".into(), kind: ControlKind::Nvml { min: 30, max: 100 } }],
-                },
-            ],
-            unreachable: vec![Unreachable {
-                id: "pci/0000:0a:00.0".into(),
-                label: "NVIDIA TU106 [GeForce RTX 2060 SUPER]".into(),
-                reason: "passed through to a VM (vfio-pci)".into(),
-            }],
-            notes: vec![],
-        };
-        let mut readings = Readings::default();
-        readings.temps.insert(cpu, Sample::Value(78.5));
-        readings.temps.insert(nvme, Sample::Error("Input/output error".into()));
-        readings.rpms.insert(fan.clone(), Sample::Value(998));
-        readings.controls.insert(fan, Sample::Value(ControlReading { percent: 53.0, raw: None, mode: ControlMode::Driver }));
-        (inventory, readings)
+    #[test]
+    fn requests_parse_with_their_arguments() {
+        let r = Request::parse(r#"{"id":7,"op":"profile.set","name":"render"}"#).unwrap();
+        assert_eq!(r.id, Some(Value::from(7)));
+        assert_eq!(r.op, Op::ProfileSet { name: "render".into() });
+        let r = Request::parse(r#"{"id":"a","op":"override","duty":null}"#).unwrap();
+        assert_eq!(r.op, Op::Override { control: None, duty: None, seconds: None });
+        assert!(Request::parse(r#"{"op":"state"}"#).unwrap().id.is_none());
+        assert!(r.op.writes() && !Op::State.writes());
     }
 
     #[test]
-    fn snapshot_carries_values_and_reasons() {
-        let (inventory, readings) = desk();
-        let s = Snapshot::new(7, 1_760_000_000.5, &inventory, &readings);
-        assert_eq!(s.devices[0].sensors[0].celsius, Some(78.5));
-        assert_eq!(s.devices[1].sensors[0].status.error.as_deref(), Some("Input/output error"));
-        assert_eq!(s.devices[2].fans[0].rpm, Some(998));
-        assert_eq!(s.devices[2].controls[0].mode, Some(ControlMode::Driver));
+    fn bad_lines_get_sentences_and_keep_their_id() {
+        let e = Request::parse(r#"{"id":3,"op":"turbo"}"#).unwrap_err();
+        assert_eq!(e.id, Some(Value::from(3)));
+        assert!(e.error.as_deref().unwrap().starts_with("Penna doesn't know the operation \"turbo\""), "{e:?}");
+        let e = Request::parse(r#"{"id":4,"op":"profile.set"}"#).unwrap_err();
+        assert_eq!(e.error.as_deref(), Some("profile.set needs \"name\"."));
+        let e = Request::parse("nope").unwrap_err();
+        assert!(e.id.is_none() && e.error.as_deref().unwrap().starts_with("That line isn't JSON"));
+        let e = Request::parse(r#"{"id":5,"op":"full_speed","on":"yes"}"#).unwrap_err();
+        assert!(e.error.as_deref().unwrap().starts_with("full_speed got the wrong kind of value"), "{e:?}");
     }
 
     #[test]
-    fn tick_is_one_json_object_and_round_trips() {
-        let (inventory, readings) = desk();
-        let ev = Event::Tick(Snapshot::new(1, 0.0, &inventory, &readings));
-        let line = serde_json::to_string(&ev).unwrap();
-        assert!(line.starts_with(r#"{"ev":"tick","v":1,"seq":1"#), "{line}");
-        assert!(!line.contains('\n'));
-        assert!(line.contains(r#""ignored_limits":[{"kind":"max","celsius":65261.85}]"#), "{line}");
-        assert!(line.contains(r#""kind":{"type":"nvml","min":30,"max":100}"#), "{line}");
-        assert!(line.contains(r#""mode":"driver""#), "{line}");
-        assert_eq!(serde_json::from_str::<Event>(&line).unwrap(), ev);
+    fn replies_are_one_line_and_echo_the_id() {
+        assert_eq!(Reply::ok(Some(Value::from(7)), None).line(), r#"{"id":7,"ok":true}"#);
+        assert_eq!(Reply::error(None, "No.").line(), r#"{"id":null,"ok":false,"error":"No."}"#);
+    }
+
+    #[test]
+    fn hello_matches_the_protocol() {
+        let h = Event::Hello(Hello { v: 2, daemon: "0.2.0".into(), mock: true, tick: 1.0, can_write: true, why: None });
+        assert_eq!(h.line(), r#"{"ev":"hello","v":2,"daemon":"0.2.0","mock":true,"tick":1.0,"can_write":true}"#);
+    }
+
+    /// The tick's shape is the contract with the shell plugin: a golden fixture pins it, field for field.
+    #[test]
+    fn the_golden_tick_round_trips() {
+        let text = include_str!("../tests/fixtures/tick.json");
+        let golden: Value = serde_json::from_str(text).unwrap();
+        let ev: Event = serde_json::from_value(golden.clone()).expect("the golden tick parses");
+        assert!(matches!(ev, Event::Tick(_)));
+        assert_eq!(serde_json::to_value(&ev).unwrap(), golden, "serializing changed the shape");
+    }
+
+    #[test]
+    fn history_and_events_are_tagged() {
+        let e = Event::Event(Transition { seq: 1, t: 2.0, level: Level::Alert, control: None, text: "EMERGENCY".into() });
+        assert_eq!(e.line(), r#"{"ev":"event","seq":1,"t":2.0,"level":"alert","control":null,"text":"EMERGENCY"}"#);
+        let h = Event::History(History::default());
+        assert!(h.line().starts_with(r#"{"ev":"history","seq":0,"tick":0.0,"sensors":{}"#), "{}", h.line());
     }
 }

@@ -40,6 +40,8 @@ fn start(dir: &Path, extra: &[&str]) -> Child {
         .arg(dir.join("tree"))
         .arg("--runtime-dir")
         .arg(dir.join("run"))
+        .arg("--socket")
+        .arg(dir.join("penna.sock"))
         .args(extra)
         .stdout(Stdio::null())
         .stderr(log)
@@ -165,6 +167,8 @@ fn a_held_json_left_by_a_dead_daemon_is_restored_first() {
         .arg(dir.join("tree2"))
         .arg("--runtime-dir")
         .arg(dir.join("run"))
+        .arg("--socket")
+        .arg(dir.join("penna2.sock"))
         .stderr(log)
         .status()
         .unwrap();

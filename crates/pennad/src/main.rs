@@ -1,9 +1,13 @@
-//! Penna's daemon (DESIGN.md §6, §7.1). In M1 it drives simulated hardware only: `--mock <scenario>` builds a mock desk and runs
-//! the simulator in lockstep with the control loop, and `--sysfs-root <dir>` drives a tree kept by someone else. The socket
-//! surfaces talk to arrives in M2.
+//! Penna's daemon (DESIGN.md §6, §7.1). It drives simulated hardware only until M4: `--mock <scenario>` builds a mock desk and
+//! runs the simulator in lockstep with the control loop, and `--sysfs-root <dir>` drives a tree kept by someone else. Surfaces
+//! talk to it over the socket in [`ipc`] (§7.3); the loop never waits for them.
 //!
 //! Every way out hands the fans back: a clean stop restores each held control; a panic restores from `held.json` in the panic
 //! hook; anything that kills the process outright leaves `held.json` for `penna restore` (the unit's `ExecStopPost`).
+mod auth;
+mod history;
+mod ipc;
+mod requests;
 mod trace;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -11,32 +15,40 @@ use clap::Parser;
 use penna_core::config::{Config, Measured};
 use penna_core::control::{Command, LoopState, Outcome, tick};
 use penna_core::plan::Plan;
+use penna_core::{Inventory, Readings};
 use penna_hw::held::{self, Held};
 use penna_hw::sim::{self, Sim};
 use penna_hw::{Machine, Options};
+use penna_proto::{Event, Hello, Transition};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::sync::{broadcast, watch};
 
 const DEFAULT_RUNTIME_DIR: &str = "/run/penna";
+/// How often the loop looks for requests between ticks.
+const REQUEST_POLL: Duration = Duration::from_millis(20);
 
 #[derive(Parser)]
-#[command(name = "pennad", version, about = "Penna's daemon. M1 controls simulated hardware only.")]
+#[command(name = "pennad", version, about = "Penna's daemon. Until M4 it controls simulated hardware only.")]
 struct Args {
     /// Build a mock desk from a scenario (render-burst, faults, or a scenario file) and run the simulator in lockstep.
     #[arg(long, value_name = "SCENARIO", conflicts_with = "sysfs_root")]
     mock: Option<String>,
-    /// Drive the hwmon tree under DIR, which is never the real /sys in M1. Needs --config.
+    /// Drive the hwmon tree under DIR, which is never the real /sys until M4. Needs --config.
     #[arg(long, value_name = "DIR")]
     sysfs_root: Option<PathBuf>,
-    /// The configuration. Default for --mock: the one the scenario names.
+    /// The configuration. Default for --mock: the one the scenario names, copied into the mock tree, where changes are saved.
     #[arg(long, value_name = "FILE")]
     config: Option<PathBuf>,
     /// Pairing and calibration. Default for --mock: what the simulator knows.
     #[arg(long, value_name = "FILE")]
     measured: Option<PathBuf>,
+    /// Where surfaces connect. Default: /run/penna/penna.sock, or $XDG_RUNTIME_DIR/penna/penna.sock with --mock.
+    #[arg(long, value_name = "PATH")]
+    socket: Option<PathBuf>,
     /// Seconds between ticks, 0.25 to 5.
     #[arg(long, default_value_t = 1.0, value_parser = parse_tick)]
     tick: f64,
@@ -87,9 +99,12 @@ struct Setup {
     sim: Option<Sim>,
     sysfs_root: PathBuf,
     config: String,
+    /// Where changes from surfaces are saved.
+    config_path: Option<PathBuf>,
     measured: Measured,
     cpu_model: Option<String>,
     runtime_dir: PathBuf,
+    socket: PathBuf,
     /// A temporary tree to remove after a clean exit.
     scratch: Option<PathBuf>,
     seconds: Option<f64>,
@@ -98,8 +113,8 @@ struct Setup {
 fn setup(args: &Args) -> Result<Setup> {
     match (&args.mock, &args.sysfs_root) {
         (None, None) => bail!(
-            "M1 controls simulated hardware only; real control arrives in M4 (NVIDIA) and M5 (motherboard).\n\
-             Try: pennad --mock render-burst, or pennad --mock faults --speed 10"
+            "until M4 Penna controls simulated hardware only; real control arrives in M4 (NVIDIA) and M5 (motherboard).\n\
+             Try: pennad --mock render-burst --forever, or pennad --mock faults --speed 10"
         ),
         (Some(name), _) => {
             let (scenario, config) = sim::load(name)?;
@@ -111,11 +126,19 @@ fn setup(args: &Args) -> Result<Setup> {
                 }
             };
             let seconds = if args.forever { None } else { args.seconds.or(Some(scenario.seconds)) };
+            let socket = match &args.socket {
+                Some(s) => s.clone(),
+                None => penna_proto::mock_socket()
+                    .ok_or_else(|| anyhow!("XDG_RUNTIME_DIR is not set, so there is no default socket; pass --socket"))?,
+            };
             let sim = Sim::create(scenario, &tree.join("sys")).with_context(|| format!("building the mock desk in {}", tree.display()))?;
             let config = match &args.config {
                 Some(p) => std::fs::read_to_string(p).with_context(|| format!("reading {}", p.display()))?,
                 None => config,
             };
+            let config_path = tree.join("etc/penna/config.toml");
+            held::write_atomically(&config_path, config.as_bytes())
+                .with_context(|| format!("copying the configuration to {}", config_path.display()))?;
             let measured = match &args.measured {
                 Some(p) => read_measured(p)?,
                 None => sim.measured(),
@@ -126,7 +149,9 @@ fn setup(args: &Args) -> Result<Setup> {
                 runtime_dir: args.runtime_dir.clone().unwrap_or_else(|| tree.join("run")),
                 sim: Some(sim),
                 config,
+                config_path: Some(config_path),
                 measured,
+                socket,
                 scratch,
                 seconds,
             })
@@ -138,12 +163,14 @@ fn setup(args: &Args) -> Result<Setup> {
                 sim: None,
                 sysfs_root: root.clone(),
                 config: std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?,
+                config_path: Some(path.clone()),
                 measured: match &args.measured {
                     Some(p) => read_measured(p)?,
                     None => Measured::default(),
                 },
                 cpu_model: cpu_model(),
                 runtime_dir: args.runtime_dir.clone().unwrap_or_else(|| PathBuf::from(DEFAULT_RUNTIME_DIR)),
+                socket: args.socket.clone().unwrap_or_else(|| PathBuf::from(penna_proto::PRODUCTION_SOCKET)),
                 scratch: None,
                 seconds: args.seconds,
             })
@@ -161,8 +188,43 @@ fn cpu_model() -> Option<String> {
     info.lines().find_map(|l| l.strip_prefix("model name")).and_then(|l| l.split_once(':')).map(|(_, m)| m.trim().to_owned())
 }
 
+fn unix_now() -> f64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64())
+}
+
+/// The loop's state between ticks, which requests change.
+pub struct Live {
+    pub plan: Plan,
+    pub state: LoopState,
+    pub config_path: Option<PathBuf>,
+    pub measured: Measured,
+    pub cpu_model: Option<String>,
+    pub readings: Readings,
+    /// The loop's clock at the last tick.
+    pub now: f64,
+    /// Loop seconds per wall-clock second.
+    pub rate: f64,
+}
+
+impl Live {
+    fn tick_body(&self, inventory: &Inventory) -> penna_proto::Tick {
+        penna_proto::build::tick(&penna_proto::build::Context {
+            plan: &self.plan,
+            state: &self.state,
+            readings: &self.readings,
+            inventory,
+            measured: &self.measured,
+            seq: self.state.seq,
+            t: unix_now(),
+            now: self.now,
+            rate: self.rate,
+        })
+    }
+}
+
 fn run(args: Args) -> Result<()> {
-    let Setup { mut sim, sysfs_root, config, measured, cpu_model, runtime_dir, scratch, seconds } = setup(&args)?;
+    let Setup { mut sim, sysfs_root, config, config_path, measured, cpu_model, runtime_dir, socket, scratch, seconds } = setup(&args)?;
+    let mock = sim.is_some();
     let config = Config::parse(&config).map_err(|e| anyhow!("configuration: {e}"))?;
     let opts = Options { sysfs_root, nvml: false, mock_nvml: sim.as_ref().map(Sim::mock_nvml_root), control: true };
     let mut machine = Machine::open(&opts)?;
@@ -183,28 +245,55 @@ fn run(args: Args) -> Result<()> {
             bail!("could not restore {}: {}", held_path.display(), r.failed.join("; "));
         }
     }
+
+    let rate = if mock { args.speed } else { 1.0 };
+    let mut live = Live { state: LoopState::new(&plan), plan, config_path, measured, cpu_model, readings: machine.read(), now: 0.0, rate };
+    let mut ring = history::Ring::default();
+
+    // The socket comes up before any fan is taken: if it cannot, nothing has changed.
+    let first = ipc::Published::new(&live.tick_body(&machine.inventory), ring.snapshot(0, args.tick), &live.plan.config);
+    let (publish, published) = watch::channel(Arc::new(first));
+    let (events, _) = broadcast::channel::<Arc<str>>(ipc::EVENT_BACKLOG);
+    let (jobs_tx, jobs) = std::sync::mpsc::sync_channel::<ipc::Job>(ipc::QUEUE);
+    let server = ipc::start(
+        &socket,
+        ipc::Setup {
+            hello: Hello {
+                v: penna_proto::VERSION,
+                daemon: env!("CARGO_PKG_VERSION").to_owned(),
+                mock,
+                tick: args.tick,
+                can_write: false,
+                why: None,
+            },
+            policy: auth::Policy { daemon_uid: unsafe { libc::geteuid() }, mock, penna_gid: auth::penna_gid() },
+            published,
+            events: events.clone(),
+            jobs: jobs_tx,
+        },
+    )?;
+
     install_panic_hook(held_path.clone());
     let stop = Arc::new(AtomicBool::new(false));
     for sig in [signal_hook::consts::SIGTERM, signal_hook::consts::SIGINT] {
         signal_hook::flag::register(sig, stop.clone()).context("installing signal handlers")?;
     }
 
-    let mut out = trace::Trace::new(&plan, &measured, args.quiet);
-    out.banner(&plan, &machine, sim.as_ref(), &held_path, args.tick, args.speed, seconds);
+    let mut out = trace::Trace::new(&live.plan, &live.measured, args.quiet);
+    out.banner(&live.plan, &machine, sim.as_ref(), (&held_path, &socket), args.tick, args.speed, seconds);
     let mut held = Held::new(&held_path);
-    let mut state = LoopState::new(&plan);
     let _ = sd_notify::notify(&[sd_notify::NotifyState::Ready]);
 
     let start = Instant::now();
-    let pace = Duration::from_secs_f64(args.tick / if sim.is_some() { args.speed } else { 1.0 });
-    let mut seq: u64 = 0;
+    let pace = Duration::from_secs_f64(args.tick / rate);
+    let mut ticks: u64 = 0;
     let result = loop {
         if stop.load(Ordering::SeqCst) {
             break Ok(());
         }
-        let now = if sim.is_some() { seq as f64 * args.tick } else { start.elapsed().as_secs_f64() };
+        let now = if mock { ticks as f64 * args.tick } else { start.elapsed().as_secs_f64() };
         if let Some(sim) = sim.as_mut()
-            && seq > 0
+            && ticks > 0
         {
             match sim.advance(args.tick) {
                 Ok(events) => out.sim_events(now, &events),
@@ -212,32 +301,54 @@ fn run(args: Args) -> Result<()> {
             }
         }
         let readings = machine.read();
-        let (next, cmds) = tick(&plan, &state, &readings, now);
-        state = next;
+        let (next, cmds) = tick(&live.plan, &live.state, &readings, now);
+        live.state = next;
         let mut queue: std::collections::VecDeque<Command> = cmds.into();
         while let Some(cmd) = queue.pop_front() {
             let outcome = carry_out(&mut machine, &mut held, &cmd);
-            out.command(now, &plan, &state, &cmd, &outcome);
-            if let Some(follow) = state.record(&plan, &cmd, &outcome) {
+            out.command(now, &live.plan, &live.state, &cmd, &outcome);
+            if let Some(follow) = live.state.record(&live.plan, &cmd, &outcome) {
                 queue.push_back(follow);
             }
         }
         let _ = sd_notify::notify(&[sd_notify::NotifyState::Watchdog]);
-        out.tick(now, &plan, &state, &readings);
-        seq += 1;
-        if args.test_panic_after == Some(seq) {
-            panic!("test panic after {seq} ticks");
+        out.tick(now, &live.plan, &live.state, &readings);
+        live.readings = readings;
+        live.now = now;
+
+        let body = live.tick_body(&machine.inventory);
+        ring.push(&body);
+        send_events(&events, &mut out, live.state.seq, body.t);
+        publish.send_replace(Arc::new(ipc::Published::new(&body, ring.snapshot(body.seq, args.tick), &live.plan.config)));
+
+        ticks += 1;
+        if args.test_panic_after == Some(ticks) {
+            panic!("test panic after {ticks} ticks");
         }
         if seconds.is_some_and(|s| now >= s) {
             break Ok(());
         }
-        let due = start + pace * seq as u32;
+        let due = start + pace * ticks as u32;
         while Instant::now() < due && !stop.load(Ordering::SeqCst) {
-            std::thread::sleep((due - Instant::now()).min(Duration::from_millis(50)));
+            let mut changed = false;
+            while let Ok(job) = jobs.try_recv() {
+                let result = requests::handle(&mut live, &machine.inventory, &mut out, job.op, job.uid);
+                changed |= result.is_ok();
+                let _ = job.reply.send(result);
+            }
+            if changed {
+                // `state` right after a change shows it, without waiting for the next tick.
+                let body = live.tick_body(&machine.inventory);
+                send_events(&events, &mut out, live.state.seq, body.t);
+                publish.send_replace(Arc::new(ipc::Published::new(&body, ring.snapshot(body.seq, args.tick), &live.plan.config)));
+            }
+            std::thread::sleep((due - Instant::now()).min(REQUEST_POLL));
         }
     };
 
     let _ = sd_notify::notify(&[sd_notify::NotifyState::Stopping]);
+    drop(publish);
+    server.stop();
     let handed_back = hand_back(&mut held);
     out.shutdown(&handed_back);
     if let Some(dir) = scratch
@@ -251,6 +362,13 @@ fn run(args: Args) -> Result<()> {
         bail!("could not hand every fan back: {e}");
     }
     Ok(())
+}
+
+fn send_events(events: &broadcast::Sender<Arc<str>>, out: &mut trace::Trace, seq: u64, t: f64) {
+    for (level, control, text) in out.take_events() {
+        // No subscriber is not an error: the event is simply not wanted yet.
+        let _ = events.send(Event::Event(Transition { seq, t, level, control, text }).line().into());
+    }
 }
 
 /// One command against the hardware. A take writes the way back to held.json first, and undoes itself if it fails half way.

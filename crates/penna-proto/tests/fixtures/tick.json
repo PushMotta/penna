@@ -1,0 +1,164 @@
+{
+  "ev": "tick",
+  "v": 2,
+  "seq": 812,
+  "t": 1792595449.2,
+  "profile": "balanced",
+  "profiles": [
+    { "id": "quiet", "label": "Quiet" },
+    { "id": "balanced", "label": "Balanced" },
+    { "id": "render", "label": "Render" }
+  ],
+  "full_speed": false,
+  "emergency": [
+    { "sensor": "hwmon/k10temp/0000:00:18.3/temp1", "label": "AMD CPU · Tctl", "celsius": 94.5, "limit": 90.0, "release": 85.0 }
+  ],
+  "sensors": [
+    {
+      "key": "hwmon/k10temp/0000:00:18.3/temp1",
+      "label": "Tctl",
+      "device": "AMD CPU",
+      "celsius": 94.5,
+      "scale": [20.0, 95.0],
+      "limits": [],
+      "virtual": false,
+      "below_ambient": false,
+      "error": null
+    },
+    {
+      "key": "hwmon/nvme/0000:04:00.0/temp1",
+      "label": "Composite",
+      "device": "NVMe",
+      "celsius": null,
+      "scale": [20.0, 90.0],
+      "limits": [{ "kind": "max", "celsius": 81.85 }, { "kind": "crit", "celsius": 84.85 }],
+      "virtual": false,
+      "below_ambient": false,
+      "error": "Input/output error"
+    },
+    {
+      "key": "hwmon/acpitz/thermal_zone0/temp1",
+      "label": "temp1",
+      "device": "ACPI thermal zone",
+      "celsius": 16.8,
+      "scale": [20.0, 100.0],
+      "limits": [],
+      "virtual": false,
+      "below_ambient": true,
+      "error": null
+    },
+    {
+      "key": "virt/case",
+      "label": "Case",
+      "device": "Virtual",
+      "celsius": 99.7,
+      "scale": [20.0, 95.0],
+      "limits": [],
+      "virtual": true,
+      "below_ambient": false,
+      "error": null
+    }
+  ],
+  "controls": [
+    {
+      "key": "hwmon/it87/it87.2608/pwm1",
+      "label": "CPU cooler",
+      "kind": "pwm",
+      "fans": 1,
+      "rpm": 1140,
+      "rpms": [1140],
+      "state": "emergency",
+      "reason": "hwmon/k10temp/0000:00:18.3/temp1 at or above 90 °C",
+      "duty": 100.0,
+      "target": 100.0,
+      "trend": "steady",
+      "curve": "cpu-quiet",
+      "curve_label": "CPU quiet",
+      "floor": 30.0,
+      "may_stop": false,
+      "override": null
+    },
+    {
+      "key": "hwmon/it87/it87.2608/pwm2",
+      "label": "Front intake",
+      "kind": "pwm",
+      "fans": 3,
+      "rpm": 1057,
+      "rpms": [1050, 1060, null],
+      "state": "contested",
+      "reason": "wrote 35 %, read back 47 % in mode Automatic(2), 3 times in 30 s; stopped writing",
+      "duty": 35.0,
+      "target": 51.2,
+      "trend": "rising",
+      "curve": "case",
+      "curve_label": "Case",
+      "floor": 30.0,
+      "may_stop": false,
+      "override": { "duty": 60.0, "until": 1792595509.2 }
+    },
+    {
+      "key": "nvml/GPU-5a1d3090-0000-4000-8000-00000000mock/fan0",
+      "label": "GPU fan 1",
+      "kind": "nvml",
+      "fans": 1,
+      "rpm": 0,
+      "rpms": [0],
+      "state": "handback",
+      "reason": null,
+      "duty": 0.0,
+      "target": 17.5,
+      "trend": "steady",
+      "curve": "gpu",
+      "curve_label": "GPU",
+      "floor": 30.0,
+      "may_stop": true,
+      "override": null
+    },
+    {
+      "key": "hwmon/it87/it87.2608/pwm5",
+      "label": "pwm5",
+      "kind": null,
+      "fans": 0,
+      "rpm": null,
+      "rpms": [],
+      "state": "absent",
+      "reason": null,
+      "duty": 0.0,
+      "target": 0.0,
+      "trend": "steady",
+      "curve": null,
+      "curve_label": null,
+      "floor": 30.0,
+      "may_stop": false,
+      "override": null
+    }
+  ],
+  "firmware": [{ "key": "hwmon/it87/it87.2608/pwm4", "label": "pwm4" }],
+  "curves": [
+    {
+      "id": "cpu-quiet",
+      "label": "CPU quiet",
+      "kind": "graph",
+      "source": "hwmon/k10temp/0000:00:18.3/temp1",
+      "smoothed": 93.12,
+      "out": 100.0,
+      "held": false,
+      "error": null
+    },
+    { "id": "case", "label": "Case", "kind": "mix", "source": null, "smoothed": null, "out": 100.0, "held": false, "error": null },
+    {
+      "id": "exhaust",
+      "label": "Exhaust",
+      "kind": "trigger",
+      "source": "virt/case",
+      "smoothed": null,
+      "out": null,
+      "held": false,
+      "error": "virt/case: hwmon/nvme/0000:04:00.0/temp1: Input/output error"
+    }
+  ],
+  "unreachable": [
+    { "id": "pci/0000:0a:00.0", "label": "NVIDIA TU106 [GeForce RTX 2060 SUPER]", "reason": "passed through to a VM (vfio-pci)" }
+  ],
+  "notes": ["Motherboard fans: none visible. No Super I/O driver (it87, nct6775, …) is bound."]
+}
