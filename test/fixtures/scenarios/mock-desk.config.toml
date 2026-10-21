@@ -1,0 +1,67 @@
+# Penna's configuration for the mock desk the render-burst and faults scenarios build (DESIGN.md §7.5).
+version = 1
+profile = "balanced"
+
+[[sensor]]
+key = "virt/case"
+label = "Case"
+max = ["hwmon/k10temp/0000:00:18.3/temp3", "hwmon/nvme/0000:04:00.0/temp1"]
+
+[[curve]]
+id = "cpu-quiet"
+graph = { source = "hwmon/k10temp/0000:00:18.3/temp1", points = [[45, 30], [65, 40], [78, 65], [88, 100]] }
+response = "5s"
+hysteresis = 3.0
+
+[[curve]]
+id = "gpu"
+graph = { source = "nvml/GPU-5a1d3090-0000-4000-8000-00000000mock/temp", points = [[45, 0], [55, 35], [70, 60], [83, 100]] }
+response = "2s"
+hysteresis = 2.0
+
+[[curve]]
+id = "case"
+mix = { op = "max", curves = ["cpu-quiet", "gpu"] }
+
+[[curve]]
+id = "exhaust"
+trigger = { source = "virt/case", idle = 35, load = 70, on = 70, off = 60 }
+
+[[control]]
+key = "hwmon/it87/it87.2608/pwm1"
+label = "CPU cooler"
+min = 25
+
+[[control]]
+key = "hwmon/it87/it87.2608/pwm2"
+label = "Front intake"
+min = 30
+
+[[control]]
+key = "hwmon/it87/it87.2608/pwm3"
+label = "Rear exhaust"
+min = 30
+
+[[control]]
+key = "nvml/GPU-5a1d3090-0000-4000-8000-00000000mock/fan0"
+label = "GPU fan 1"
+may_stop = true
+
+[[control]]
+key = "nvml/GPU-5a1d3090-0000-4000-8000-00000000mock/fan1"
+label = "GPU fan 2"
+may_stop = true
+
+[profiles.balanced]
+"hwmon/it87/it87.2608/pwm1" = "cpu-quiet"
+"hwmon/it87/it87.2608/pwm2" = "case"
+"hwmon/it87/it87.2608/pwm3" = "exhaust"
+"nvml/GPU-5a1d3090-0000-4000-8000-00000000mock/fan0" = "gpu"
+"nvml/GPU-5a1d3090-0000-4000-8000-00000000mock/fan1" = "gpu"
+
+[profiles.quiet]
+"hwmon/it87/it87.2608/pwm1" = "cpu-quiet"
+"hwmon/it87/it87.2608/pwm2" = "firmware"
+"hwmon/it87/it87.2608/pwm3" = "firmware"
+"nvml/GPU-5a1d3090-0000-4000-8000-00000000mock/fan0" = "gpu"
+"nvml/GPU-5a1d3090-0000-4000-8000-00000000mock/fan1" = "gpu"

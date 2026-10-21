@@ -1,0 +1,166 @@
+# A render on the mock desk: idle, a burst of CPU and GPU load, idle again, every 80 s.
+# The hardware mirrors the development desk (DESIGN.md §0) plus the motherboard fans it cannot see yet.
+name = "render-burst"
+cpu_model = "AMD Ryzen 9 5950X 16-Core Processor"
+ambient = 24.0
+seed = 21
+config = "mock-desk.config.toml"
+seconds = 80
+
+[load]
+repeat = 80
+points = [
+  { at = 0, cpu = 0.05, gpu = 0.0 },
+  { at = 15, cpu = 0.05, gpu = 0.0 },
+  { at = 20, cpu = 1.0, gpu = 0.9 },
+  { at = 45, cpu = 1.0, gpu = 0.9 },
+  { at = 50, cpu = 0.05, gpu = 0.0 },
+  { at = 80, cpu = 0.05, gpu = 0.0 },
+]
+
+[[body]]
+id = "cpu"
+load = "cpu"
+capacity = 40.0
+idle_watts = 25.0
+load_watts = 150.0
+passive = 0.6
+airflow = 2.6
+fan = [{ id = "cpu-fan", weight = 3.0 }, { id = "front-1", weight = 0.25 }, { id = "front-2", weight = 0.25 }, { id = "front-3", weight = 0.25 }, { id = "rear", weight = 0.25 }]
+
+[[body]]
+id = "gpu"
+load = "gpu"
+capacity = 60.0
+idle_watts = 22.0
+load_watts = 300.0
+passive = 1.5
+airflow = 6.0
+fan = [{ id = "gpu-fan0", weight = 1.0 }, { id = "gpu-fan1", weight = 1.0 }]
+
+[[body]]
+id = "nvme"
+load = "cpu"
+capacity = 30.0
+idle_watts = 3.0
+load_watts = 7.0
+passive = 0.25
+airflow = 0.15
+fan = [{ id = "front-1", weight = 1.0 }]
+
+[[chip]]
+driver = "acpitz"
+path = "devices/virtual/thermal/thermal_zone0"
+hwmon = 0
+temp = [{ channel = 1, fixed = 16.8 }, { channel = 2, fixed = 16.8 }]
+
+[[chip]]
+driver = "nvme"
+path = "devices/pci0000:00/0000:00:01.2/0000:02:00.0/0000:03:01.0/0000:04:00.0/nvme/nvme1"
+hwmon = 2
+model = "Samsung SSD 980 PRO 1TB"
+temp = [
+  { channel = 1, label = "Composite", body = "nvme", noise = 0.1, max = 81.85, crit = 84.85 },
+  { channel = 2, label = "Sensor 1", body = "nvme", noise = 0.1, max = 65261.85 },
+]
+
+[[chip]]
+driver = "k10temp"
+path = "devices/pci0000:00/0000:00:18.3"
+hwmon = 3
+temp = [
+  { channel = 1, label = "Tctl", body = "cpu", noise = 0.4, spikes = 6.0 },
+  { channel = 3, label = "Tccd1", body = "cpu", offset = 1.5, noise = 0.4, spikes = 6.0 },
+  { channel = 4, label = "Tccd2", body = "cpu", offset = -22.0, noise = 0.3 },
+]
+
+[[chip]]
+driver = "it87"
+path = "devices/platform/it87.2608"
+hwmon = 5
+temp = [{ channel = 1, body = "cpu", offset = -10.0, noise = 0.2 }, { channel = 3, fixed = 127.0 }]
+
+[[chip.pwm]]
+channel = 1
+enable = 2
+firmware = { body = "cpu", points = [[40, 30], [80, 100]] }
+
+[[chip.pwm]]
+channel = 2
+enable = 2
+firmware = { body = "cpu", points = [[40, 35], [80, 80]] }
+
+[[chip.pwm]]
+channel = 3
+enable = 5
+firmware = { body = "cpu", points = [[40, 30], [85, 90]] }
+
+[[chip.pwm]]
+channel = 4
+enable = 2
+firmware = { body = "cpu", points = [[40, 40], [80, 60]] }
+
+[[chip.fan]]
+channel = 1
+id = "cpu-fan"
+pwm = 1
+max_rpm = 1800
+stop = 20
+start = 30
+
+[[chip.fan]]
+channel = 2
+id = "front-1"
+pwm = 2
+max_rpm = 1500
+stop = 22
+start = 32
+
+[[chip.fan]]
+channel = 3
+id = "front-2"
+pwm = 2
+max_rpm = 1500
+stop = 22
+start = 32
+
+[[chip.fan]]
+channel = 4
+id = "front-3"
+pwm = 2
+max_rpm = 1500
+stop = 22
+start = 32
+
+[[chip.fan]]
+channel = 5
+id = "rear"
+pwm = 3
+max_rpm = 1400
+stop = 20
+start = 30
+
+[[chip.fan]]
+channel = 6
+id = "system-2"
+pwm = 4
+max_rpm = 1200
+stop = 25
+start = 35
+
+[[gpu]]
+id = "gpu"
+uuid = "GPU-5a1d3090-0000-4000-8000-00000000mock"
+name = "NVIDIA GeForce RTX 3090 (mock)"
+body = "gpu"
+fans = 2
+min = 30
+max = 100
+max_rpm = 1820
+noise_rpm = 1700
+driver_on = 42.0
+driver_off = 37.0
+driver_percent = 53.0
+gpu_max = 93
+slowdown = 95
+shutdown = 98

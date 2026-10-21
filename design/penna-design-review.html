@@ -1,0 +1,1347 @@
+<title>Penna</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@600;700;800&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+  /* Layout: one 1240px reading column. Mock frames take the full column; callouts sit beside a frame on wide screens and stack under it on narrow ones. */
+  :root {
+    --ground: #ECEEF0;
+    --ground-2: #E1E5E9;
+    --ink: #1A1F25;
+    --ink-2: #5F6873;
+    --rule: #CDD3D9;
+    --page-accent: #2B5873;
+    --note: #C35F26;
+    --note-ink: #FFFFFF;
+    --frame: #D8DDE2;
+    --display: "Schibsted Grotesk", "IBM Plex Sans", system-ui, sans-serif;
+    --sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    --mono: "JetBrains Mono", "JetBrainsMono Nerd Font", ui-monospace, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #121518; --ground-2: #1A1E22; --ink: #E3E7EA; --ink-2: #97A0A9; --rule: #283038;
+      --page-accent: #8FBCD6; --note: #E27B3E; --note-ink: #121518; --frame: #1E2328; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #121518; --ground-2: #1A1E22; --ink: #E3E7EA; --ink-2: #97A0A9; --rule: #283038;
+    --page-accent: #8FBCD6; --note: #E27B3E; --note-ink: #121518; --frame: #1E2328; color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  body { background: var(--ground); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.5; }
+  .wrap { max-width: 1240px; margin: 0 auto; padding-block: 40px 88px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  h1, h2, h3 { font-family: var(--display); letter-spacing: -0.02em; text-wrap: balance; margin: 0; }
+  h1 { font-size: clamp(40px, 7vw, 64px); font-weight: 800; line-height: 1; }
+  h2 { font-size: 26px; font-weight: 700; }
+  h3 { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
+  p { margin: 0; max-width: 68ch; }
+  .eyebrow { font-weight: 600; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-2); }
+  .dek { font-size: 19px; line-height: 1.45; max-width: 60ch; margin-top: 16px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 6px 22px; margin-top: 20px; font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .meta b { color: var(--ink); font-weight: 600; }
+  section { margin-top: 60px; padding-top: 28px; border-top: 1px solid var(--rule); }
+  section > .eyebrow { margin-bottom: 6px; }
+  .lede { margin-top: 10px; color: var(--ink-2); font-size: 15px; }
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 28px; margin-top: 18px; }
+  .cols h3 { margin-bottom: 6px; }
+  a { color: var(--page-accent); }
+  code { font-family: var(--mono); font-size: 0.88em; background: var(--ground-2); padding: 1px 5px; border-radius: 3px; }
+  .small { font-size: 13px; color: var(--ink-2); }
+
+  table { border-collapse: collapse; width: 100%; font-size: 14px; margin-top: 16px; }
+  th, td { text-align: left; padding: 9px 14px 9px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { font-weight: 600; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-2); }
+  td code { font-size: 12.5px; }
+  .tabnum { font-variant-numeric: tabular-nums; }
+  .tablewrap { overflow-x: auto; }
+  .bad { color: var(--note); font-weight: 600; }
+
+  /* switcher */
+  .switcher { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px; margin-top: 18px; padding: 10px 14px; background: var(--ground-2); border: 1px solid var(--rule); }
+  .switcher .lbl { font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); }
+  .switcher .grp { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .seg { display: flex; flex-wrap: wrap; border: 1px solid var(--rule); }
+  .seg button { font: 500 13px var(--sans); background: transparent; color: var(--ink); border: 0; border-right: 1px solid var(--rule); padding: 6px 12px; cursor: pointer; }
+  .seg button:last-child { border-right: 0; }
+  .seg button[aria-pressed="true"] { background: var(--page-accent); color: var(--ground); }
+  .seg button:focus-visible, button:focus-visible, svg:focus-visible { outline: 2px solid var(--note); outline-offset: 2px; }
+  .swatch { display: inline-block; width: 10px; height: 10px; margin-right: 6px; vertical-align: -1px; border: 1px solid rgba(0,0,0,.25); }
+  body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 30; background: var(--ground); }
+
+  /* boards and callouts */
+  .board { margin-top: 22px; display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 28px; align-items: start; }
+  @media (max-width: 960px) { .board { grid-template-columns: minmax(0, 1fr); } }
+  .frame { position: relative; background: var(--frame); border: 1px solid var(--rule); padding: 26px; overflow-x: auto; }
+  .frame.flush { padding: 0; }
+  .frame-cap { margin-top: 10px; font-size: 13px; color: var(--ink-2); max-width: 90ch; }
+  .callouts { font-size: 14px; min-width: 0; }
+  .callouts h3 { margin-bottom: 10px; }
+  .callouts ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 11px; }
+  .callouts li { display: grid; grid-template-columns: 22px 1fr; gap: 10px; align-items: start; }
+  .callouts.wide ol { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px 28px; }
+  .callouts .n { width: 22px; height: 22px; border-radius: 50%; background: var(--note); color: var(--note-ink); font: 700 12px/22px var(--sans); text-align: center; }
+  .try { margin-top: 14px; padding: 10px 12px; border-left: 3px solid var(--note); background: var(--ground-2); font-size: 14px; }
+
+  /* =============================================================== mock: shell tokens */
+  .mock {
+    --m-bg: #222222; --m-fg: #c2c2b0; --m-accent: #78824b; --m-urgent: #685742; --m-muted: #666666;
+    --m-dim: color-mix(in srgb, var(--m-fg) 71%, black);
+    --m-fill-n: color-mix(in srgb, var(--m-fg) 4%, transparent);
+    --m-fill-h: color-mix(in srgb, var(--m-fg) 8%, transparent);
+    --m-fill-s: color-mix(in srgb, var(--m-fg) 18%, transparent);
+    --m-border-n: color-mix(in srgb, var(--m-fg) 40%, transparent);
+    --m-border-h: color-mix(in srgb, var(--m-fg) 25%, transparent);
+    --m-sep: color-mix(in srgb, var(--m-fg) 12%, transparent);
+    font-family: var(--mono); font-size: 12px; line-height: 1.25; color: var(--m-fg);
+  }
+  .mock[data-mtheme="tokyo-night"] { --m-bg: #1a1b26; --m-fg: #a9b1d6; --m-accent: #7aa2f7; --m-urgent: #f7768e; --m-muted: #414868; }
+  .mock[data-mtheme="catppuccin-latte"] { --m-bg: #eff1f5; --m-fg: #4c4f69; --m-accent: #1e66f5; --m-urgent: #d20f39; --m-muted: #acb0be; }
+  .mock[data-mtheme="vantablack"] { --m-bg: #000000; --m-fg: #ffffff; --m-accent: #8d8d8d; --m-urgent: #a4a4a4; --m-muted: #7a7a7a; }
+  .mock * { box-sizing: border-box; }
+  .mock .dim { color: var(--m-dim); }
+  .mock .num { font-variant-numeric: tabular-nums; }
+  .mock .sec { font-size: 10px; font-weight: 700; color: var(--m-dim); text-transform: uppercase; padding-top: 2px; }
+  .mock .sepl { height: 1px; background: var(--m-sep); }
+  .mock .caption { font-size: 10px; color: var(--m-dim); line-height: 1.45; }
+  .mock .badge { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 700; padding: 1px 5px; border: 1px solid var(--m-border-n); color: var(--m-dim); white-space: nowrap; }
+  .mock .badge.accent { border-color: var(--m-accent); color: var(--m-accent); }
+  .mock .badge.urgent { border-color: var(--m-urgent); color: var(--m-urgent); }
+  .mock .badge svg { width: 11px; height: 11px; }
+  .mock .btn { font: inherit; font-size: 12px; padding: 6px 12px; border: 1px solid var(--m-border-n); background: transparent; color: var(--m-fg); cursor: pointer; }
+  .mock .btn:hover { background: var(--m-fill-h); border-color: var(--m-border-h); }
+  .mock .btn.primary { background: var(--m-fill-s); border-color: transparent; font-weight: 700; }
+  .mock .btn.on { background: var(--m-fill-s); border-color: var(--m-accent); }
+  .mock .btn[disabled] { opacity: .5; cursor: default; }
+  .glyph { width: 14px; height: 14px; color: var(--m-fg); flex: none; }
+  .glyph.accent { color: var(--m-accent); }
+  .glyph.urgent { color: var(--m-urgent); }
+  .glyph.dimg { color: var(--m-dim); }
+
+  /* callout pins on the mocks */
+  .pinned { position: relative; }
+  .pinned::before { content: attr(data-pin); position: absolute; left: var(--pl, -34px); top: var(--pt, 0px); z-index: 6; width: 22px; height: 22px; border-radius: 50%; background: var(--note); color: var(--note-ink); font: 700 12px/22px var(--sans); text-align: center; box-shadow: 0 0 0 2px var(--frame); pointer-events: none; }
+
+  /* desk + bar */
+  .desk { background: linear-gradient(160deg, color-mix(in srgb, var(--m-bg) 90%, var(--m-accent)) 0%, color-mix(in srgb, var(--m-bg) 78%, black) 100%); position: relative; min-width: 520px; }
+  .bar { height: 26px; background: var(--m-bg); display: flex; align-items: center; justify-content: space-between; padding: 0 10px; font-size: 12px; gap: 12px; }
+  .bar .grp { display: flex; align-items: center; gap: 14px; }
+  .bar .ws { display: flex; gap: 8px; align-items: center; }
+  .bar .ws i { width: 9px; height: 9px; border: 1px solid var(--m-fg); display: inline-block; }
+  .bar .ws i.on { background: var(--m-fg); }
+  .bar .ico { display: inline-flex; align-items: center; gap: 5px; padding: 2px 5px; }
+  .bar .ico.active { background: var(--m-fill-s); }
+  .bar .ico svg.line { width: 14px; height: 14px; fill: none; stroke: var(--m-fg); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+
+  .strips { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 22px 22px; }
+  .strip .bar { justify-content: flex-end; }
+  .strip .lab { margin-top: 8px; font: 600 13px var(--sans); color: var(--ink); }
+  .strip .lab span { display: block; font-weight: 400; color: var(--ink-2); font-size: 12.5px; }
+
+  /* popup */
+  .popup { position: relative; margin: 5px 34px 30px auto; width: 408px; background: var(--m-bg); border: 2px solid var(--m-accent); padding: 14px; display: grid; gap: 13px; }
+  .hero { display: grid; grid-template-columns: 30px 1fr auto; gap: 12px; align-items: center; }
+  .hero .glyph { width: 26px; height: 26px; }
+  .hero .title { font-size: 14px; font-weight: 700; }
+  .hero .meta2 { font-size: 10px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; color: var(--m-dim); margin-top: 3px; }
+  .hero .meta2.urgent { color: var(--m-urgent); }
+  .group { display: flex; gap: 6px; }
+  .group .pill { flex: 1; font: inherit; font-size: 12px; text-align: center; padding: 6px 10px; border: 1px solid var(--m-border-n); background: transparent; color: var(--m-fg); cursor: pointer; }
+  .group .pill:hover { background: var(--m-fill-h); border-color: var(--m-border-h); }
+  .group .pill[aria-pressed="true"] { background: var(--m-fill-s); border-color: transparent; }
+  .trow { display: grid; grid-template-columns: 1fr 150px 56px; gap: 10px; align-items: center; padding: 3px 0; }
+  .trow svg { width: 150px; height: 20px; display: block; overflow: hidden; }
+  .trow .v { text-align: right; font-variant-numeric: tabular-nums; }
+  .frow { display: grid; grid-template-columns: minmax(0, 1fr) auto 76px 40px; gap: 10px; align-items: center; padding: 5px 0 6px; position: relative; }
+  .frow .nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .frow .nm small { color: var(--m-dim); font-size: 10px; margin-left: 4px; }
+  .frow .cv { font-size: 10px; color: var(--m-dim); display: flex; gap: 6px; align-items: center; justify-content: flex-end; }
+  .frow .rpm { text-align: right; font-variant-numeric: tabular-nums; }
+  .frow .dt { text-align: right; font-variant-numeric: tabular-nums; color: var(--m-dim); }
+  .frow .track { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--m-fill-n); }
+  .frow .track i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--m-fg); opacity: .55; width: 0; }
+  .fold { display: flex; align-items: center; gap: 8px; padding: 5px 0; color: var(--m-dim); font-size: 12px; }
+  .fold .chev { width: 10px; display: inline-block; }
+  .fold-body { padding: 0 0 4px 18px; display: grid; gap: 3px; font-size: 11px; color: var(--m-dim); }
+  .acts { display: flex; justify-content: space-between; gap: 8px; }
+
+  /* studio */
+  .studio-scrim { background: color-mix(in srgb, var(--m-bg) 55%, transparent); padding: 30px; min-width: 1160px; }
+  .studio { width: 1100px; margin: 0 auto; background: var(--m-bg); border: 2px solid var(--m-accent); padding: 16px 18px; display: grid; grid-template-rows: auto 1fr auto; gap: 14px; }
+  .studio .head { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+  .studio .head .t { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 700; }
+  .studio .head .t .glyph { width: 18px; height: 18px; }
+  .dd { display: inline-flex; align-items: center; gap: 8px; height: 26px; padding: 0 10px; border: 1px solid var(--m-border-n); background: var(--m-fill-n); font-size: 12px; font-weight: 400; }
+  .dd::after { content: ""; width: 6px; height: 6px; border-right: 1.5px solid var(--m-fg); border-bottom: 1.5px solid var(--m-fg); transform: rotate(45deg) translateY(-2px); }
+  .unsaved { font-size: 11px; color: var(--m-accent); display: flex; align-items: center; gap: 6px; }
+  .unsaved i { width: 7px; height: 7px; border-radius: 50%; background: var(--m-accent); display: inline-block; }
+  .sbody { display: grid; grid-template-columns: 250px minmax(0, 1fr) 250px; gap: 18px; min-height: 0; }
+  .col { display: grid; gap: 8px; align-content: start; min-width: 0; }
+  .card { display: grid; gap: 5px; padding: 9px 10px 10px; border: 1px solid var(--m-border-n); background: var(--m-fill-n); text-align: left; font: inherit; color: var(--m-fg); cursor: pointer; position: relative; }
+  .card:hover { background: var(--m-fill-h); border-color: var(--m-border-h); }
+  .card[aria-pressed="true"] { border: 2px solid var(--m-accent); padding: 8px 9px 9px; background: var(--m-fill-h); }
+  .card .r1 { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-weight: 700; }
+  .card .r2 { display: flex; justify-content: space-between; font-size: 11px; font-variant-numeric: tabular-nums; }
+  .card .r3 { font-size: 10px; color: var(--m-dim); display: flex; justify-content: space-between; }
+  .card .track { height: 2px; background: var(--m-fill-s); position: relative; }
+  .card .track i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--m-fg); width: 0; }
+  .ed-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; }
+  .ed-head .nm { font-size: 14px; font-weight: 700; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip { font-size: 10px; padding: 3px 7px; border: 1px solid var(--m-border-n); background: var(--m-fill-n); }
+  .editor { width: 100%; height: auto; display: block; touch-action: none; }
+  .editor .gridl { stroke: var(--m-sep); stroke-width: 1; }
+  .editor .axis { fill: var(--m-dim); font-size: 10px; font-family: var(--mono); }
+  .editor .curve { fill: none; stroke: var(--m-fg); stroke-width: 2; stroke-linejoin: round; }
+  .editor .band { fill: var(--m-fill-h); }
+  .editor .lim { stroke: var(--m-border-n); stroke-dasharray: 4 4; stroke-width: 1; }
+  .editor .limt { fill: var(--m-dim); font-size: 9.5px; font-family: var(--mono); }
+  .editor .floor { fill: var(--m-fill-n); }
+  .editor .pt { fill: var(--m-bg); stroke: var(--m-fg); stroke-width: 2; }
+  .editor .pt.sel { stroke: var(--m-accent); stroke-width: 2.5; }
+  .editor .hit { fill: transparent; cursor: grab; }
+  .editor .hit:active { cursor: grabbing; }
+  .editor .mk { fill: var(--m-accent); stroke: var(--m-bg); stroke-width: 2; }
+  .editor .mkring { fill: none; stroke: var(--m-accent); stroke-width: 1; opacity: .5; }
+  .editor .trail { fill: var(--m-accent); }
+  .editor .cross { stroke: var(--m-accent); stroke-width: 1; stroke-dasharray: 2 3; opacity: .55; }
+  .editor .ro rect { fill: var(--m-bg); stroke: var(--m-border-n); }
+  .editor .ro text { fill: var(--m-fg); font-size: 11px; font-family: var(--mono); }
+  .insp { font-size: 11px; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-variant-numeric: tabular-nums; min-height: 15px; }
+  .insp .what { color: var(--m-dim); }
+  .mix { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--m-sep); min-height: 460px; align-content: start; }
+  .mixrow { display: grid; grid-template-columns: 120px 1fr 48px; gap: 10px; align-items: center; padding: 6px 8px; }
+  .mixrow.win { background: var(--m-fill-s); }
+  .mixrow .track { height: 6px; background: var(--m-fill-n); position: relative; }
+  .mixrow .track i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--m-fg); width: 0; }
+  .mixrow .v { text-align: right; font-variant-numeric: tabular-nums; }
+  .srow { display: grid; gap: 4px; padding: 7px 0; border-bottom: 1px solid var(--m-sep); }
+  .srow .h { display: flex; justify-content: space-between; }
+  .srow svg { width: 100%; height: 28px; display: block; }
+  .sacts { display: flex; justify-content: space-between; align-items: center; gap: 12px; border-top: 1px solid var(--m-sep); padding-top: 12px; }
+  .sacts .hint { font-size: 10px; color: var(--m-dim); }
+  .sacts .btns { display: flex; gap: 8px; }
+  .spark .line { fill: none; stroke: var(--m-fg); stroke-width: 1.25; stroke-linejoin: round; opacity: .85; }
+  .spark .area { fill: var(--m-fill-h); }
+  .spark .dot { fill: var(--m-fg); }
+
+  /* states */
+  .states { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 22px; margin-top: 22px; }
+  .states .frame { padding: 22px; }
+  .card2 { background: var(--m-bg); border: 2px solid var(--m-accent); padding: 14px; display: grid; gap: 11px; }
+  .state-t { margin-top: 10px; font: 600 14px var(--sans); color: var(--ink); }
+  .state-t span { display: block; font-weight: 400; color: var(--ink-2); font-size: 13px; margin-top: 2px; max-width: 60ch; }
+  .prog { height: 3px; background: var(--m-fill-s); position: relative; }
+  .prog i { position: absolute; left: 0; top: 0; bottom: 0; width: 42%; background: var(--m-accent); }
+  .kv { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; font-variant-numeric: tabular-nums; }
+  .ok { color: var(--m-accent); }
+
+  /* motion */
+  .mrow { margin-top: 26px; }
+  .mrow h3 { margin-bottom: 4px; }
+  .mpanes { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-top: 12px; }
+  .mpane { background: var(--m-bg); border: 1px solid var(--m-sep); padding: 14px; display: grid; gap: 10px; min-width: 0; }
+  .mpane .ttl { display: flex; justify-content: space-between; font-size: 10px; font-weight: 700; text-transform: uppercase; color: var(--m-dim); }
+  .mpane .ttl b { color: var(--m-accent); }
+  .mval { display: grid; grid-template-columns: 1fr auto auto; gap: 14px; align-items: baseline; font-variant-numeric: tabular-nums; }
+  .mval .big { font-size: 20px; font-weight: 700; }
+  .mbar { height: 6px; background: var(--m-fill-n); position: relative; }
+  .mbar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--m-fg); width: 0; }
+  .mspark { width: 100%; height: 56px; display: block; }
+  .mmini { width: 100%; height: auto; display: block; }
+  .mmini .axis { font-size: 7.5px; }
+  .mframe { background: var(--frame); border: 1px solid var(--rule); padding: 18px; }
+
+  .decisions ol { margin: 16px 0 0; padding-left: 22px; display: grid; gap: 12px; max-width: 78ch; }
+  .decisions li strong { font-weight: 600; }
+  .rec { color: var(--ink-2); }
+  footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid var(--rule); font-size: 13px; color: var(--ink-2); display: grid; gap: 4px; }
+  @media (prefers-reduced-motion: no-preference) { .seg button, .group .pill, .card, .mock .btn { transition: background-color .14s cubic-bezier(.33,1,.68,1), border-color .14s cubic-bezier(.33,1,.68,1); } }
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="blades" viewBox="0 0 24 24">
+      <g fill="currentColor">
+        <path d="M12 12C10.4 9.6 10.9 4.9 14 4.6c2.5-.2 3.2 2.8 1.2 4.6C14.2 10.1 13.1 10.9 12 12Z"/>
+        <path d="M12 12C10.4 9.6 10.9 4.9 14 4.6c2.5-.2 3.2 2.8 1.2 4.6C14.2 10.1 13.1 10.9 12 12Z" transform="rotate(120 12 12)"/>
+        <path d="M12 12C10.4 9.6 10.9 4.9 14 4.6c2.5-.2 3.2 2.8 1.2 4.6C14.2 10.1 13.1 10.9 12 12Z" transform="rotate(240 12 12)"/>
+        <circle cx="12" cy="12" r="2.1"/>
+      </g>
+    </symbol>
+    <symbol id="g-fan" viewBox="0 0 24 24"><use href="#blades"/></symbol>
+    <symbol id="g-fan-alert" viewBox="0 0 24 24"><use href="#blades" x="-2.2" y="1.6" width="20" height="20"/><g fill="currentColor"><rect x="19.4" y="4.5" width="2.4" height="10" rx="1"/><circle cx="20.6" cy="18.4" r="1.45"/></g></symbol>
+    <symbol id="g-fan-off" viewBox="0 0 24 24"><use href="#blades"/><path d="M3.5 3.5 20.5 20.5" stroke="var(--m-bg)" stroke-width="4.2" stroke-linecap="round"/><path d="M3.5 3.5 20.5 20.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="g-fan-up" viewBox="0 0 24 24"><use href="#blades" x="-2.2" y="3" width="19" height="19"/><path d="M16.2 8.6 19.6 5.2 23 8.6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="g-fan-auto" viewBox="0 0 24 24"><use href="#blades" x="-2.6" y="-2" width="19" height="19"/><path d="M15.6 22.4 18.9 13.6 22.2 22.4M16.8 19.4H21" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="g-fan-clock" viewBox="0 0 24 24"><use href="#blades" x="-2.6" y="-2" width="19" height="19"/><circle cx="18.6" cy="18.2" r="4.6" fill="var(--m-bg)" stroke="currentColor" stroke-width="1.7"/><path d="M18.6 15.9V18.4L20.2 19.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  </defs>
+</svg>
+
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">Design review 01 · 21 October 2026 · against DESIGN.md draft 2</div>
+  <h1 style="margin-top:12px">Penna</h1>
+  <p class="dek">Fan control that belongs to the shell. Every fan is named for what it cools and shows its RPM beside what it was asked for. Curves you drag and hear. When something goes wrong, the surface says which fan and why.</p>
+  <div class="meta">
+    <span><b>Omarchy</b> 4.0.5 · Quickshell 0.3.2 · Qt 6.12.0</span>
+    <span><b>Displays</b> 2 × 2560×1440 at 74.92 Hz (13.3 ms a frame)</span>
+    <span><b>Desk</b> Ryzen 9 5950X · RTX 3090, 2 fans, 30–100 %</span>
+    <span><b>Data</b> simulated, shaped on this desk's readings</span>
+  </div>
+</header>
+
+<section>
+  <div class="cols">
+    <div><h3>What exists</h3><p>The shell has no temperature or fan surface. CoolerControl serves a web UI from its root daemon. fan2go and fancontrol are config files. On this desk only the CPU, the NVMe drive and the 3090 are visible today; no motherboard fan driver is bound.</p></div>
+    <div><h3>What we build</h3><p>A root daemon that owns the fans, and three surfaces in the shell: a bar glyph that reports health, a popup for the daily controls, and a studio for curves. The daemon decides once a second. The surfaces never look like it.</p></div>
+    <div><h3>The bar to clear</h3><p>Hold 75 Hz with half of every frame to spare. Values glide, nothing jumps, nothing moves at rest. State is carried by shape and words, never by colour alone. Every surface works in the four themes below without an override.</p></div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">A–D · Surfaces</div>
+  <h2>Rendered in the shell's own tokens</h2>
+  <p class="lede">Colours come from each theme's <code>colors.toml</code> as the shell reads them; urgent is the theme's red. Type is JetBrains Mono at the shell's scale. The popup and the studio are live: a simulated desk runs at the daemon's 1 s tick, and the surfaces glide between ticks.</p>
+
+  <div class="switcher" role="group" aria-label="Preview settings">
+    <div class="grp"><span class="lbl">Theme</span>
+      <div class="seg" id="themeSeg">
+        <button type="button" data-mt="miasma" aria-pressed="true"><span class="swatch" style="background:#78824b"></span>miasma</button>
+        <button type="button" data-mt="tokyo-night" aria-pressed="false"><span class="swatch" style="background:#7aa2f7"></span>tokyo-night</button>
+        <button type="button" data-mt="catppuccin-latte" aria-pressed="false"><span class="swatch" style="background:#1e66f5"></span>catppuccin-latte</button>
+        <button type="button" data-mt="vantablack" aria-pressed="false"><span class="swatch" style="background:#8d8d8d"></span>vantablack</button>
+      </div>
+    </div>
+    <div class="grp"><span class="lbl">Animations</span>
+      <div class="seg" id="animSeg">
+        <button type="button" data-anim="on" aria-pressed="true">On</button>
+        <button type="button" data-anim="off" aria-pressed="false">Off</button>
+      </div>
+      <span class="small">Off previews Hyprland's <code>animations:enabled = false</code>.</span>
+    </div>
+  </div>
+
+  <!-- A · Bar -->
+  <h3 style="margin-top:34px">A · Bar widget</h3>
+  <div class="board">
+    <div>
+      <div class="frame">
+        <div class="strips">
+          <div class="strip"><div class="mock"><div class="bar"><span class="ico"><svg class="line" viewBox="0 0 24 24"><path d="M3 9a13 13 0 0 1 18 0M6 12.5a8.5 8.5 0 0 1 12 0M9.2 16a4 4 0 0 1 5.6 0"/><circle cx="12" cy="19" r=".6"/></svg></span><span class="ico"><svg class="line" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg></span><span class="ico pinned" data-pin="1" style="--pl:-2px;--pt:-26px"><svg class="glyph"><use href="#g-fan"/></svg></span><span>15:42</span></div></div><div class="lab">Normal<span>Glyph only, by default.</span></div></div>
+          <div class="strip"><div class="mock"><div class="bar"><span class="ico"><svg class="line" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg></span><span class="ico pinned" data-pin="2" style="--pl:-2px;--pt:-26px"><svg class="glyph"><use href="#g-fan"/></svg><span class="num" id="barTempA">62°</span></span><span>15:42</span></div></div><div class="lab">With a temperature<span>A widget setting picks the sensor.</span></div></div>
+          <div class="strip"><div class="mock"><div class="bar"><span class="ico"><svg class="line" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg></span><span class="ico"><svg class="glyph accent"><use href="#g-fan-up"/></svg></span><span>15:42</span></div></div><div class="lab">Full speed<span><code>fan-chevron-up</code>, accent, until turned off.</span></div></div>
+          <div class="strip"><div class="mock"><div class="bar"><span class="ico"><svg class="line" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg></span><span class="ico pinned" data-pin="3" style="--pl:-2px;--pt:-26px"><svg class="glyph urgent"><use href="#g-fan-alert"/></svg></span><span>15:42</span></div></div><div class="lab">Needs attention<span>Failsafe, emergency, contested or fault: <code>fan-alert</code>.</span></div></div>
+          <div class="strip"><div class="mock"><div class="bar"><span class="ico"><svg class="line" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg></span><span class="ico"><svg class="glyph dimg"><use href="#g-fan-off"/></svg></span><span>15:42</span></div></div><div class="lab">Penna isn't running<span><code>fan-off</code>. Fans are back on firmware.</span></div></div>
+          <div class="strip"><div class="mock"><div class="bar"><span class="ico"><svg class="line" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg></span><span class="ico"><svg class="glyph"><use href="#g-fan-auto"/></svg></span><span>15:42</span></div></div><div class="lab">Nothing adopted yet<span><code>fan-auto</code>: firmware runs every fan.</span></div></div>
+        </div>
+      </div>
+      <p class="frame-cap">Glyphs here approximate the Material Design icons the shell draws from JetBrainsMono Nerd Font: <code>fan</code> U+F0210, <code>fan-chevron-up</code> U+F146E, <code>fan-alert</code> U+F146C, <code>fan-off</code> U+F081D, <code>fan-auto</code> U+F171D, and <code>fan-clock</code> U+F1A3A for a timed override. All six are present in the installed font.</p>
+    </div>
+    <div class="callouts">
+      <h3>Callouts</h3>
+      <ol>
+        <li><span class="n">1</span><p>The glyph changes shape for every state that matters. Colour only reinforces it: no theme separates urgent from accent by lightness (F).</p></li>
+        <li><span class="n">2</span><p>A temperature, when shown, changes at most once a tick and only when the whole degree changes. The bar never animates continuously.</p></li>
+        <li><span class="n">3</span><p>One alert glyph for four states. The popup's hero line says which one, and which fan.</p></li>
+      </ol>
+    </div>
+  </div>
+
+  <!-- B · Popup -->
+  <h3 style="margin-top:46px">B · Popup</h3>
+  <div class="board">
+    <div>
+      <div class="frame flush">
+        <div class="mock desk" id="popupView">
+          <div class="bar">
+            <div class="grp"><div class="ws"><i class="on"></i><i></i><i></i><i></i><i></i></div></div>
+            <div class="grp"><span>15:42</span></div>
+            <div class="grp">
+              <span class="ico"><svg class="line" viewBox="0 0 24 24"><path d="M3 9a13 13 0 0 1 18 0M6 12.5a8.5 8.5 0 0 1 12 0M9.2 16a4 4 0 0 1 5.6 0"/><circle cx="12" cy="19" r=".6"/></svg></span>
+              <span class="ico"><svg class="line" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg></span>
+              <span class="ico active"><svg class="glyph" id="pBarGlyph"><use href="#g-fan"/></svg></span>
+            </div>
+          </div>
+          <div class="popup">
+            <div class="hero pinned" data-pin="1">
+              <svg class="glyph" id="pHeroGlyph"><use href="#g-fan"/></svg>
+              <div><div class="title" id="pTitle">Balanced</div><div class="meta2" id="pMeta">7 fans · CPU 62 °C · GPU 41 °C</div></div>
+              <span></span>
+            </div>
+            <div class="group pinned" data-pin="2" id="pProfiles">
+              <button type="button" class="pill" data-prof="Quiet" aria-pressed="false">Quiet</button>
+              <button type="button" class="pill" data-prof="Balanced" aria-pressed="true">Balanced</button>
+              <button type="button" class="pill" data-prof="Render" aria-pressed="false">Render</button>
+            </div>
+            <div class="sepl"></div>
+            <div class="sec">Temperatures</div>
+            <div class="pinned" data-pin="3" style="display:grid;gap:2px">
+              <div class="trow"><span>CPU <span class="dim">· Tctl</span></span><svg class="spark" data-spark="cpu" data-n="60" viewBox="0 0 150 20" preserveAspectRatio="none"></svg><span class="v" data-temp="cpu">62 °C</span></div>
+              <div class="trow"><span>GPU <span class="dim">· RTX 3090</span></span><svg class="spark" data-spark="gpu" data-n="60" viewBox="0 0 150 20" preserveAspectRatio="none"></svg><span class="v" data-temp="gpu">41 °C</span></div>
+              <div class="trow"><span>NVMe <span class="dim">· Composite</span></span><svg class="spark" data-spark="nvme" data-n="60" viewBox="0 0 150 20" preserveAspectRatio="none"></svg><span class="v" data-temp="nvme">38 °C</span></div>
+            </div>
+            <div class="sepl"></div>
+            <div class="sec">Fans</div>
+            <div id="pFans" class="pinned" data-pin="4"></div>
+            <div class="pinned" data-pin="6">
+              <div class="fold"><span class="chev">▸</span>Firmware <span class="num">(1)</span></div>
+              <div class="fold"><span class="chev">▾</span>Not reachable <span class="num">(1)</span></div>
+              <div class="fold-body"><span>RTX 2060 SUPER · passed through to a VM (vfio-pci)</span></div>
+            </div>
+            <div class="acts pinned" data-pin="7">
+              <button type="button" class="btn" id="pFull" aria-pressed="false">Full speed</button>
+              <button type="button" class="btn">Curves…</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="frame-cap">Motherboard headers (CPU cooler, intake, exhaust) are examples until the it87 driver is bound (DESIGN §13). The GPU fans follow the 3090's measured behaviour, including the stop below 30 %. The profile pills and Full speed work.</p>
+    </div>
+    <div class="callouts">
+      <h3>Callouts</h3>
+      <ol>
+        <li><span class="n">1</span><p>The hero states the situation in one line. When something is wrong, this line names it instead.</p></li>
+        <li><span class="n">2</span><p>Profiles switch in one press. The change shows at once and is confirmed on the next tick.</p></li>
+        <li><span class="n">3</span><p>60 s sparklines on fixed scales, so nothing rescales or jumps. They slide at display rate. Whole degrees, and a value sitting on a boundary doesn't flicker.</p></li>
+        <li><span class="n">4</span><p>Fans lead with RPM, what you hear; duty is second and dimmer. The 2 px line under each row is its duty, gliding.</p></li>
+        <li><span class="n">5</span><p><b>DRIVER</b>: below the 3090's 30 % floor, the driver's own curve runs the fan and may stop it. That is what this card does at idle.</p></li>
+        <li><span class="n">6</span><p>Folded: headers the firmware still runs, and devices Penna can't reach, each with its reason.</p></li>
+        <li><span class="n">7</span><p>Full speed holds every fan at 100 % until pressed again. The bar glyph gets a chevron and the accent while it holds.</p></li>
+      </ol>
+    </div>
+  </div>
+
+  <!-- C · Studio -->
+  <h3 style="margin-top:46px">C · Studio</h3>
+  <div class="frame flush" style="margin-top:22px">
+    <div class="mock studio-scrim" id="studioView">
+      <div class="studio">
+        <div class="head">
+          <div class="t"><svg class="glyph"><use href="#g-fan"/></svg>Penna <span class="dd" id="sProfile">Balanced</span></div>
+          <div style="display:flex;gap:16px;align-items:center"><span class="unsaved" id="sUnsaved" hidden><i></i><span id="sUnsavedT">Unsaved changes</span></span><span class="dim">esc</span></div>
+        </div>
+        <div class="sbody">
+          <div class="col pinned" data-pin="1" style="--pl:84px;--pt:-5px">
+            <div class="sec">Controls</div>
+            <div id="sCards" style="display:grid;gap:8px"></div>
+            <div class="caption" style="margin-top:4px">Firmware: System fan 2 · <span class="dim">Adopt</span></div>
+          </div>
+          <div class="col" style="gap:10px">
+            <div class="ed-head">
+              <div class="nm" id="eName">CPU quiet</div>
+              <div class="chips" id="eChips"></div>
+            </div>
+            <div id="eGraphWrap" class="pinned" data-pin="2" style="--pl:62px;--pt:40px">
+              <svg class="editor" id="editor" viewBox="0 0 600 460" tabindex="0" role="application" aria-label="Curve editor. Use the bracket keys to select a point, h and l to move it by one degree, j and k by one percent, Shift for five, a to add a point, x to delete it."></svg>
+            </div>
+            <div id="eMixWrap" class="mix" hidden></div>
+            <div class="insp pinned" data-pin="5" style="--pl:46%;--pt:-4px"><span id="eNow">63.4 °C → 47 %</span><span class="what" id="eWhat">Following the curve</span></div>
+          </div>
+          <div class="col pinned" data-pin="7" style="--pl:72px;--pt:-5px">
+            <div class="sec">Sensors</div>
+            <div class="srow"><div class="h"><span>CPU <span class="dim">· Tctl</span></span><span class="num" data-stemp="cpu">62.0 °C</span></div><svg class="spark" data-spark="cpu" data-n="300" viewBox="0 0 250 28" preserveAspectRatio="none"></svg></div>
+            <div class="srow"><div class="h"><span>GPU <span class="dim">· RTX 3090</span></span><span class="num" data-stemp="gpu">41.0 °C</span></div><svg class="spark" data-spark="gpu" data-n="300" viewBox="0 0 250 28" preserveAspectRatio="none"></svg></div>
+            <div class="srow"><div class="h"><span>NVMe <span class="dim">· Composite</span></span><span class="num" data-stemp="nvme">37.9 °C</span></div><svg class="spark" data-spark="nvme" data-n="300" viewBox="0 0 250 28" preserveAspectRatio="none"></svg></div>
+            <div class="caption">5 minutes · fixed scales</div>
+            <div style="margin-top:6px"><button type="button" class="btn" style="width:100%">+ Virtual sensor</button></div>
+            <div class="caption" style="margin-top:8px">Not shown: <span class="dim">ACPI thermal zone</span> reads 16.8 °C, below room temperature.</div>
+          </div>
+        </div>
+        <div class="sacts pinned" data-pin="6" style="--pl:64%;--pt:12px">
+          <span class="hint">[ ] point · h/l °C · j/k % · ⇧ ×5 · a add · x delete · ⇥ panels · esc close</span>
+          <div class="btns">
+            <button type="button" class="btn">Pair…</button>
+            <button type="button" class="btn">Calibrate…</button>
+            <button type="button" class="btn" id="sDiscard" disabled>Discard</button>
+            <button type="button" class="btn" id="sSave" disabled>Save</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="callouts wide" style="margin-top:16px">
+    <ol>
+      <li><span class="n">1</span><p>Controls as cards, Fan Control's model: live RPM, duty, state and assigned curve. Click a card to edit its curve.</p></li>
+      <li><span class="n">2</span><p>Drag a point; it snaps to whole °C and %. Neighbours are pushed so the curve never dips. The readout names temperature, duty and the RPM it buys.</p></li>
+      <li><span class="n">3</span><p>The marker rides the curve with a 10 s trail. Inside the shaded hysteresis band it sits off the curve: that is the fan being held.</p></li>
+      <li><span class="n">4</span><p>Right axis: RPM from calibration. Dashed: the control's minimum and its stop speed. For the GPU, the shaded floor is where the driver takes over.</p></li>
+      <li><span class="n">5</span><p>The inspector says what the output is doing: following, holding, or rising at the step limit.</p></li>
+      <li><span class="n">6</span><p>Edits apply live as a draft. Save keeps them. Discard, or closing, returns to the saved curve; the daemon reverts a draft whose connection closes.</p></li>
+      <li><span class="n">7</span><p>Sensors with 5-minute sparklines, full on the first frame. Sensors that can't be trusted are named, not offered.</p></li>
+    </ol>
+  </div>
+  <p class="try"><b>Try it.</b> Drag a point on CPU quiet, or focus the graph and use the keys. Click GPU fan 1 to see the 30 % floor. Click Front intake for a Mix.</p>
+
+  <!-- D · States -->
+  <h3 style="margin-top:46px">D · States</h3>
+  <div class="states">
+    <div>
+      <div class="frame"><div class="mock card2">
+        <div class="hero"><svg class="glyph urgent" style="width:26px;height:26px"><use href="#g-fan-alert"/></svg><div><div class="title">CPU at 91 °C</div><div class="meta2 urgent">Every fan at 100 % until 86 °C</div></div><span></span></div>
+        <div class="kv"><span>CPU cooler</span><span>1,800 RPM · 100 %</span><span>Front intake <span class="dim">×3</span></span><span>1,500 RPM · 100 %</span><span>GPU fan 1</span><span>1,820 RPM · 100 %</span></div>
+      </div></div>
+      <div class="state-t">Emergency<span>A sensor crossed its limit (TjMax for the 5950X: 90 °C). Shape, colour and words all change.</span></div>
+    </div>
+    <div>
+      <div class="frame"><div class="mock card2">
+        <div class="frow" style="grid-template-columns:minmax(0,1fr) auto"><span class="nm">Rear exhaust</span><span class="badge urgent"><svg><use href="#g-fan-alert"/></svg>Contested</span></div>
+        <p class="caption">Something else keeps setting this fan. Penna wrote 41 % and read back 100 % three times in 30 s, then stopped writing. Usually it's the BIOS Smart Fan setting for this header, or another fan tool.</p>
+        <div class="acts"><button type="button" class="btn">Release to firmware</button><button type="button" class="btn primary">Try again</button></div>
+      </div></div>
+      <div class="state-t">Contested<span>The case the it87 community reports on Gigabyte X570 boards. Penna stops fighting and says what it saw.</span></div>
+    </div>
+    <div>
+      <div class="frame"><div class="mock card2">
+        <div class="hero"><svg class="glyph dimg" style="width:26px;height:26px"><use href="#g-fan-off"/></svg><div><div class="title">Penna isn't running</div><div class="meta2">Last update 12 s ago</div></div><span></span></div>
+        <div style="display:grid;gap:3px;opacity:.55"><div class="trow" style="grid-template-columns:1fr auto"><span>CPU · Tctl</span><span class="num">61 °C</span></div><div class="trow" style="grid-template-columns:1fr auto"><span>GPU · RTX 3090</span><span class="num">40 °C</span></div></div>
+        <p class="caption">The fans are back on firmware control. Start Penna with <span style="color:var(--m-fg)">sudo systemctl start pennad</span>.</p>
+      </div></div>
+      <div class="state-t">Daemon unreachable<span>Last known values, dimmed, with their age. Never zeros.</span></div>
+    </div>
+    <div>
+      <div class="frame"><div class="mock card2">
+        <div class="sec">Controls</div>
+        <div><div style="font-weight:700">Motherboard fans aren't visible yet</div>
+        <div class="caption" style="margin-top:6px">No Super I/O driver is bound (it87 isn't loaded).<br>Boot log: ACPI resource conflict.<br>The stock it87 in kernel 7.2 doesn't know the IT8688E.</div>
+        <div class="caption" style="margin-top:6px;color:var(--m-fg)">Install it87-dkms-git and load it with ignore_resource_conflict=1. <span class="dim">penna doctor explains the risk.</span></div></div>
+        <div class="sepl"></div>
+        <div class="kv"><span>GPU fan 1</span><span class="dim">0 RPM · <span class="badge">Driver</span></span><span>GPU fan 2</span><span class="dim">0 RPM · <span class="badge">Driver</span></span></div>
+        <div class="sec">Not reachable</div>
+        <div class="caption">RTX 2060 SUPER · passed through to a VM</div>
+      </div></div>
+      <div class="state-t">Today on this desk<span>The real first-run state: an empty state that diagnoses, from <code>penna doctor</code>.</span></div>
+    </div>
+    <div>
+      <div class="frame"><div class="mock card2">
+        <div style="display:flex;justify-content:space-between"><b>Pairing · control 3 of 6</b><span class="dim num">4 s</span></div>
+        <div class="caption" style="color:var(--m-fg)">PWM 3 held at 100 %</div>
+        <div class="kv"><span>fan 1</span><span class="dim">1,120 RPM</span><span>fan 4</span><span>610 → 1,790 RPM <span class="ok">follows</span></span><span>fan 5</span><span class="dim">0 RPM</span></div>
+        <div class="prog"><i></i></div>
+        <div class="caption">Guards: CPU 64 of 85 °C · GPU 41 of 80 °C</div>
+        <div class="acts"><span></span><button type="button" class="btn">Stop and hand back</button></div>
+      </div></div>
+      <div class="state-t">Pairing<span>What is happening, the live guards, and a way out that hands every fan back at once.</span></div>
+    </div>
+    <div>
+      <div class="frame"><div class="mock card2">
+        <div class="hero"><svg class="glyph" style="width:26px;height:26px"><use href="#g-fan-auto"/></svg><div><div class="title">Firmware runs every fan</div><div class="meta2">Nothing adopted yet</div></div><span></span></div>
+        <p class="caption">Penna reads every sensor but changes nothing until you adopt a fan in the studio. Adopting saves the way back first.</p>
+        <div class="acts"><span></span><button type="button" class="btn primary">Open studio</button></div>
+      </div></div>
+      <div class="state-t">First run<span>Safe by default: the firmware keeps every fan until you choose otherwise.</span></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">E · Motion</div>
+  <h2>The tick is invisible</h2>
+  <p class="lede">Same simulated feed on both sides, one sample a second. Left is what a 1 Hz UI does by default. Right is §8.6: geometry glides over the tick interval and text rounds with a dead band. Switch Animations off above to see Penna's reduced-motion behaviour.</p>
+  <div class="mock mframe" id="motionView" style="margin-top:18px">
+    <div class="mrow">
+      <h3 style="font-family:var(--display);color:var(--ink)">Values glide, text holds still</h3>
+      <div class="mpanes">
+        <div class="mpane" data-mode="step"><div class="ttl"><span>Stepped</span><span>CPU cooler</span></div><div class="mval"><span class="big" data-mv="rpm">1,140 RPM</span><span data-mv="duty">48 %</span><span class="dim" data-mv="temp">62 °C</span></div><div class="mbar"><i data-mv="bar"></i></div></div>
+        <div class="mpane" data-mode="glide"><div class="ttl"><span><b>Penna</b></span><span>CPU cooler</span></div><div class="mval"><span class="big" data-mv="rpm">1,140 RPM</span><span data-mv="duty">48 %</span><span class="dim" data-mv="temp">62 °C</span></div><div class="mbar"><i data-mv="bar"></i></div></div>
+      </div>
+      <p class="small" style="margin-top:8px">The stepped temperature flickers whenever raw Tctl sits near a half degree. Penna's changes only when the value moves 0.6 of a degree past what is shown. Penna also runs one tick behind the raw feed, by design: it glides to each new value over the following second.</p>
+    </div>
+    <div class="mrow">
+      <h3 style="font-family:var(--display);color:var(--ink)">Sparklines slide, never redraw</h3>
+      <div class="mpanes">
+        <div class="mpane" data-mode="step"><div class="ttl"><span>Stepped</span><span>CPU · Tctl · 60 s</span></div><svg class="mspark spark" data-spark="cpu" data-n="60" data-step="1" viewBox="0 0 360 56" preserveAspectRatio="none"></svg></div>
+        <div class="mpane" data-mode="glide"><div class="ttl"><span><b>Penna</b></span><span>CPU · Tctl · 60 s</span></div><svg class="mspark spark" data-spark="cpu" data-n="60" viewBox="0 0 360 56" preserveAspectRatio="none"></svg></div>
+      </div>
+      <p class="small" style="margin-top:8px">Penna's path is fixed between ticks and slides by a transform; only the newest segment grows each frame. In QML that's a <code>Shape</code> under a clipping parent, so no frame rebuilds geometry.</p>
+    </div>
+    <div class="mrow">
+      <h3 style="font-family:var(--display);color:var(--ink)">The marker rides the curve</h3>
+      <div class="mpanes">
+        <div class="mpane" data-mode="step"><div class="ttl"><span>Stepped</span><span>CPU quiet</span></div><svg class="mmini" data-mini="step" viewBox="0 0 360 200"></svg></div>
+        <div class="mpane" data-mode="glide"><div class="ttl"><span><b>Penna</b></span><span>CPU quiet</span></div><svg class="mmini" data-mini="glide" viewBox="0 0 360 200"></svg></div>
+      </div>
+      <p class="small" style="margin-top:8px">Penna interpolates the temperature and evaluates the curve there, carrying any hold as a smooth offset. When hysteresis holds the output, the marker leaves the curve and sits in the shaded band.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">F · State vocabulary</div>
+  <h2>Shape first, words second, colour third</h2>
+  <p class="lede">Measured from each theme's <code>colors.toml</code>: no theme separates urgent from accent by lightness, and miasma's urgent reads at 2.3:1 on its own background. So the glyph changes shape, the row says it in words, and colour only reinforces.</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Theme</th><th class="tabnum">Text on background</th><th class="tabnum">Accent on background</th><th class="tabnum">Urgent on background</th><th class="tabnum">Urgent vs accent</th></tr></thead>
+      <tbody class="tabnum">
+        <tr><td>miasma</td><td>8.8 : 1</td><td>3.9 : 1</td><td class="bad">2.3 : 1</td><td class="bad">1.7 : 1</td></tr>
+        <tr><td>tokyo-night</td><td>8.1 : 1</td><td>6.8 : 1</td><td>6.5 : 1</td><td class="bad">1.1 : 1</td></tr>
+        <tr><td>catppuccin-latte</td><td>7.1 : 1</td><td>4.3 : 1</td><td>4.8 : 1</td><td class="bad">1.1 : 1</td></tr>
+        <tr><td>vantablack</td><td>21 : 1</td><td>6.3 : 1</td><td>8.4 : 1</td><td class="bad">1.3 : 1 (both grey)</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="tablewrap" style="margin-top:24px">
+    <table>
+      <thead><tr><th>State</th><th>Bar glyph</th><th>In the popup and studio</th><th>Colour</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>curve</code></td><td><code>fan</code></td><td>RPM and duty, no badge</td><td>text</td><td>Following its curve.</td></tr>
+        <tr><td><code>handback</code></td><td><code>fan</code></td><td><b>DRIVER</b> badge</td><td>dim</td><td>NVML below its floor; the driver's curve runs it and may stop it.</td></tr>
+        <tr><td><code>override</code></td><td><code>fan-chevron-up</code>, or <code>fan-clock</code> when timed</td><td><b>FULL</b> or the time left</td><td>accent</td><td>Full speed or <code>penna set … --for</code>.</td></tr>
+        <tr><td><code>failsafe</code></td><td><code>fan-alert</code></td><td><b>FAILSAFE</b> and the sensor that failed</td><td>urgent</td><td>A source failed or went stale; the fan runs at its failsafe value.</td></tr>
+        <tr><td><code>emergency</code></td><td><code>fan-alert</code></td><td>Hero: the sensor and its limit</td><td>urgent</td><td>A sensor crossed its limit; every fan at 100 %.</td></tr>
+        <tr><td><code>contested</code></td><td><code>fan-alert</code></td><td><b>CONTESTED</b>, with what was written and read back</td><td>urgent</td><td>Something else keeps setting the fan; Penna stopped writing.</td></tr>
+        <tr><td><code>fault</code></td><td><code>fan-alert</code></td><td><b>FAULT</b> and the error</td><td>urgent</td><td>A write failed; the fan was handed back.</td></tr>
+        <tr><td><code>firmware</code></td><td><code>fan-auto</code> when nothing is adopted</td><td>Folded under Firmware</td><td>dim</td><td>Not adopted.</td></tr>
+        <tr><td><code>absent</code></td><td>no change</td><td>Folded under Not reachable, with the reason</td><td>dim</td><td>Configured but not present, or passed through to a VM.</td></tr>
+        <tr><td>daemon down</td><td><code>fan-off</code></td><td>Last values dimmed, with their age</td><td>dim</td><td>The socket is gone; the fans are back on firmware.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="decisions">
+  <div class="eyebrow">G · Decisions</div>
+  <h2>Eight calls before QML</h2>
+  <p class="lede">All eight recommendations were approved on 21 October 2026, and recorded in DESIGN.md §11.1.</p>
+  <ol>
+    <li><strong>The glyph carries state; colour reinforces.</strong> <span class="rec">Recommended, from the contrast table in F. Six glyphs, all in the installed font.</span></li>
+    <li><strong>The bar widget shows the glyph only by default.</strong> A temperature is a widget setting. <span class="rec">Recommended: the right side of Omarchy's bar is icons, and the glyph already reports health.</span></li>
+    <li><strong>Fan rows lead with RPM; duty is second.</strong> <span class="rec">Recommended: RPM is what you hear and what calibration measures.</span></li>
+    <li><strong>Full speed is a toggle until pressed again, not timed.</strong> The accent chevron in the bar is the reminder; <code>fan-clock</code> is reserved for timed overrides from the CLI. <span class="rec">Recommended.</span></li>
+    <li><strong>Sparkline windows: 60 s in the popup, 5 minutes in the studio,</strong> on fixed per-sensor scales. <span class="rec">Recommended: autoscaling makes lines jump.</span></li>
+    <li><strong>The studio has three columns at 1100 px.</strong> Below that width the sensors column becomes a tab beside the controls. <span class="rec">Recommended.</span></li>
+    <li><strong>Three profiles ship: Quiet, Balanced, Render.</strong> Names are editable; up to five show as pills, more go into a dropdown. <span class="rec">Recommended.</span></li>
+    <li><strong>Motion constants as in E:</strong> linear glide over one tick, text dead band of 0.6 of a step, 140 ms text ease, <code>OutCubic</code> for everything else. <span class="rec">Recommended; judge them in E with Animations on and off.</span></li>
+  </ol>
+</section>
+
+<footer>
+  <span>Source: <code>~/Projects/penna/design/penna-design-review.html</code> · Spec: <code>~/Projects/penna/DESIGN.md</code>, draft 2, §8</span>
+  <span>Colour values from <code>/usr/share/omarchy/themes/*/colors.toml</code>; contrast computed per WCAG 2.1. Desk facts verified 21 October 2026.</span>
+</footer>
+
+</div>
+
+<script>
+(() => {
+  const TICK = 1000;
+  const NS = 'http://www.w3.org/2000/svg';
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+  const clamp01 = (k) => Math.max(0, Math.min(1, k));
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const fmt = (n) => Math.round(n).toLocaleString('en-US');
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* storage unavailable */ } },
+  };
+  const el = (tag, attrs, parent) => {
+    const n = document.createElementNS(NS, tag);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(n);
+    return n;
+  };
+  const setText = (node, s) => { if (node && node.textContent !== s) node.textContent = s; };
+
+  // ------------------------------------------------------------- preview settings
+  const reduceMQ = window.matchMedia('(prefers-reduced-motion: reduce)');
+  let animationsOn = (store.get('penna.anim') || (reduceMQ.matches ? 'off' : 'on')) === 'on';
+  let mtheme = store.get('penna.mtheme') || 'miasma';
+
+  function applyTheme() {
+    $$('.mock').forEach((m) => m.setAttribute('data-mtheme', mtheme));
+    $$('#themeSeg button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.mt === mtheme)));
+  }
+  function applyAnim() {
+    $$('#animSeg button').forEach((b) => b.setAttribute('aria-pressed', String((b.dataset.anim === 'on') === animationsOn)));
+  }
+  $$('#themeSeg button').forEach((b) => b.addEventListener('click', () => { mtheme = b.dataset.mt; store.set('penna.mtheme', mtheme); applyTheme(); }));
+  $$('#animSeg button').forEach((b) => b.addEventListener('click', () => { animationsOn = b.dataset.anim === 'on'; store.set('penna.anim', animationsOn ? 'on' : 'off'); applyAnim(); kick(); }));
+  applyTheme();
+  applyAnim();
+
+  // ------------------------------------------------------------- simulated desk
+  let seed = 21102026;
+  const rand = () => { seed |= 0; seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const HIST = 304;
+  const SENS = {
+    cpu: { raw: 47, base: 47, boost: 0, lo: 30, hi: 95, hist: [] },
+    gpu: { raw: 38, base: 38, lo: 30, hi: 90, hist: [] },
+    nvme: { raw: 37.9, base: 37.9, lo: 30, hi: 60, hist: [] },
+  };
+  const clone = (p) => p.map((q) => q.slice());
+  const SAVED = { cpu: [[45, 30], [65, 40], [78, 65], [88, 100]], gpu: [[45, 0], [55, 35], [70, 60], [83, 100]] };
+  const CURVES = {
+    cpu: { id: 'cpu', name: 'CPU quiet', kind: 'graph', src: 'cpu', srcName: 'CPU · Tctl', pts: clone(SAVED.cpu), tau: 5, hyst: 3, s: 47, out: 30, f: 30, anchor: 47, held: false },
+    gpu: { id: 'gpu', name: 'GPU', kind: 'graph', src: 'gpu', srcName: 'GPU · RTX 3090', pts: clone(SAVED.gpu), tau: 2, hyst: 2, s: 38, out: 0, f: 0, anchor: 38, held: false },
+    case: { id: 'case', name: 'Case', kind: 'mix', of: ['cpu', 'gpu'], out: 30 },
+  };
+  const CTRLS = [
+    { id: 'cpu', name: 'CPU cooler', curve: 'cpu', fans: 1, min: 25, stop: 20, rpm0: 420, rpm1: 1800 },
+    { id: 'front', name: 'Front intake', curve: 'case', fans: 3, min: 30, stop: 22, rpm0: 380, rpm1: 1500 },
+    { id: 'rear', name: 'Rear exhaust', curve: 'case', fans: 1, min: 30, stop: 20, rpm0: 400, rpm1: 1400, offset: -5 },
+    { id: 'gpu1', name: 'GPU fan 1', curve: 'gpu', fans: 1, nvml: true, floor: 30, stop: 30, rpm0: 600, rpm1: 1820 },
+    { id: 'gpu2', name: 'GPU fan 2', curve: 'gpu', fans: 1, nvml: true, floor: 30, stop: 30, rpm0: 600, rpm1: 1820 },
+  ];
+  CTRLS.forEach((k) => Object.assign(k, { duty: 30, rpm: 0, state: 'curve', trend: '', target: 30, hand: false, drvOn: false }));
+  const PROFILES = { Quiet: -8, Balanced: 0, Render: 12 };
+  let profile = 'Balanced';
+  let fullSpeed = false;
+  let simT = 0;
+
+  const loadAt = (t) => { const p = ((t % 90) + 90) % 90; if (p < 20) return 0; if (p < 26) return (p - 20) / 6; if (p < 60) return 1; if (p < 66) return 1 - (p - 60) / 6; return 0; };
+  const evalPts = (pts, x) => {
+    if (x <= pts[0][0]) return pts[0][1];
+    for (let i = 1; i < pts.length; i++) {
+      const [x1, y1] = pts[i];
+      if (x <= x1) { const [x0, y0] = pts[i - 1]; return y0 + ((y1 - y0) * (x - x0)) / (x1 - x0); }
+    }
+    return pts[pts.length - 1][1];
+  };
+  const rpmFor = (k, d) => (d < k.stop ? 0 : k.rpm0 + ((k.rpm1 - k.rpm0) * (d - k.stop)) / (100 - k.stop));
+
+  function stepSensors() {
+    const L = loadAt(simT);
+    const c = SENS.cpu;
+    c.base += (44 + 33 * L - c.base) * 0.35;
+    const spike = rand() < (L < 0.5 ? 0.3 : 0.15) ? 2 + rand() * 6 : 0;
+    c.boost = c.boost * 0.4 + spike;
+    c.raw = c.base + c.boost + (rand() - 0.5) * 1.2;
+    const g = SENS.gpu;
+    g.base += (37 + 31 * loadAt(simT - 3) - g.base) * (1 - Math.exp(-1 / 15));
+    g.raw = g.base + (rand() - 0.5) * 0.6;
+    const n = SENS.nvme;
+    n.base += (37.5 + 6 * L - n.base) * (1 - Math.exp(-1 / 60));
+    n.raw = n.base + (rand() - 0.5) * 0.2;
+    for (const k in SENS) { const s = SENS[k]; s.hist.push(s.raw); if (s.hist.length > HIST) s.hist.shift(); }
+  }
+  function stepCurve(c) {
+    const raw = SENS[c.src].raw;
+    c.s += (raw - c.s) * (1 - Math.exp(-1 / c.tau));
+    const f = evalPts(c.pts, c.s);
+    c.f = f;
+    if (f >= c.out || c.s <= c.anchor - c.hyst) { c.out = f; c.anchor = c.s; c.held = false; } else c.held = true;
+  }
+  function stepCtrl(k) {
+    const c = CURVES[k.curve];
+    let target = c.out + (k.offset || 0) + PROFILES[profile];
+    let state = 'curve';
+    if (fullSpeed) { target = 100; state = 'override'; }
+    else if (k.nvml) {
+      if (!k.hand && target < k.floor) k.hand = true;
+      else if (k.hand && target >= k.floor + 5) k.hand = false;
+      if (k.hand) {
+        const gt = SENS.gpu.raw;
+        if (gt > 42) k.drvOn = true; else if (gt < 37) k.drvOn = false;
+        target = k.drvOn ? 53 : 0;
+        state = 'handback';
+      } else target = Math.max(target, k.floor);
+    } else target = Math.max(target, k.min);
+    target = clamp(target, 0, 100);
+    const next = state === 'handback' ? target : k.duty + clamp(target - k.duty, -5, 20);
+    k.trend = state !== 'handback' && Math.abs(target - next) > 0.5 ? (target > next ? 'rising' : 'falling') : '';
+    k.target = target; k.duty = next; k.state = state;
+    const rt = rpmFor(k, next);
+    k.rpm += (rt - k.rpm) * (1 - Math.exp(-1 / 2));
+    if (rt === 0 && k.rpm < 15) k.rpm = 0;
+    k.rpmShown = k.rpm > 0 ? k.rpm * (1 + (rand() - 0.5) * 0.012) : 0;
+  }
+  function tick() {
+    simT += 1;
+    stepSensors();
+    stepCurve(CURVES.cpu);
+    stepCurve(CURVES.gpu);
+    CURVES.case.out = Math.max(CURVES.cpu.out, CURVES.gpu.out);
+    CTRLS.forEach(stepCtrl);
+  }
+  for (let i = 0; i < 300; i++) tick();
+
+  // ------------------------------------------------------------- display primitives
+  class Glide {
+    constructor(v) { this.from = v; this.to = v; this.t0 = -1e9; }
+    set(v, now) { this.from = this.at(now); this.to = v; this.t0 = now; }
+    at(now) { if (!animationsOn) return this.to; const k = clamp01((now - this.t0) / TICK); return this.from + (this.to - this.from) * k; }
+  }
+  class Shown {
+    constructor(step, ease) { this.step = step; this.ease = ease; this.to = null; this.from = 0; this.t0 = -1e9; }
+    feed(v, now) {
+      const s = this.step;
+      if (this.to === null) { this.to = this.from = Math.round(v / s) * s; return; }
+      if (Math.abs(v - this.to) >= 0.6 * s) { this.from = this.cur(now); this.to = Math.round(v / s) * s; this.t0 = now; }
+    }
+    cur(now) {
+      if (!animationsOn || !this.ease) return this.to;
+      const k = clamp01((now - this.t0) / this.ease);
+      const e = 1 - Math.pow(1 - k, 3);
+      return this.from + (this.to - this.from) * e;
+    }
+    val(now) { return Math.round(this.cur(now) / this.step) * this.step; }
+  }
+
+  class Spark {
+    constructor(svg) {
+      this.svg = svg;
+      this.sens = SENS[svg.dataset.spark];
+      this.N = +svg.dataset.n;
+      this.stepped = svg.dataset.step === '1';
+      const vb = svg.viewBox.baseVal;
+      this.W = vb.width; this.H = vb.height;
+      this.dx = this.W / (this.N - 1);
+      this.g = el('g', {}, svg);
+      this.area = el('path', { class: 'area' }, this.g);
+      this.line = el('path', { class: 'line' }, this.g);
+      this.headArea = el('polygon', { class: 'area' }, svg);
+      this.head = el('line', { class: 'line' }, svg);
+      this.dot = el('circle', { class: 'dot', r: '1.8' }, svg);
+      this.glide = new Glide(this.sens.raw);
+      this.t0 = -1e9;
+      this.lastY = 0;
+    }
+    y(v) { const { lo, hi } = this.sens; return this.H - 2 - ((clamp(v, lo, hi) - lo) / (hi - lo)) * (this.H - 4); }
+    onTick(now) {
+      this.glide.set(this.sens.raw, now);
+      this.t0 = now;
+      const h = this.sens.hist;
+      const pts = this.stepped ? h.slice(-this.N) : h.slice(-(this.N + 2), -1);
+      const n = pts.length;
+      let d = '';
+      let a = '';
+      pts.forEach((v, i) => {
+        const x = this.stepped ? this.W - (n - 1 - i) * this.dx : i * this.dx;
+        const y = this.y(v).toFixed(2);
+        d += (i ? 'L' : 'M') + x.toFixed(2) + ' ' + y;
+        a += (i ? 'L' : 'M' + x.toFixed(2) + ' ' + this.H + 'L') + x.toFixed(2) + ' ' + y;
+      });
+      const lastX = this.stepped ? this.W : (n - 1) * this.dx;
+      a += 'L' + lastX.toFixed(2) + ' ' + this.H + 'Z';
+      this.line.setAttribute('d', d);
+      this.area.setAttribute('d', a);
+      this.n = n;
+      this.lastY = this.y(pts[n - 1]);
+      if (this.stepped) {
+        this.g.removeAttribute('transform');
+        this.head.setAttribute('visibility', 'hidden');
+        this.headArea.setAttribute('visibility', 'hidden');
+        this.dot.setAttribute('cx', this.W - 1.8); this.dot.setAttribute('cy', this.lastY);
+      }
+    }
+    frame(now) {
+      if (this.stepped) return;
+      const frac = animationsOn ? clamp01((now - this.t0) / TICK) : 1;
+      const xk = this.W - frac * this.dx;
+      this.g.setAttribute('transform', 'translate(' + (xk - (this.n - 1) * this.dx).toFixed(2) + ' 0)');
+      const yh = this.y(this.glide.at(now));
+      this.head.setAttribute('x1', xk.toFixed(2)); this.head.setAttribute('y1', this.lastY.toFixed(2));
+      this.head.setAttribute('x2', this.W); this.head.setAttribute('y2', yh.toFixed(2));
+      this.headArea.setAttribute('points', xk.toFixed(2) + ',' + this.H + ' ' + xk.toFixed(2) + ',' + this.lastY.toFixed(2) + ' ' + this.W + ',' + yh.toFixed(2) + ' ' + this.W + ',' + this.H);
+      this.dot.setAttribute('cx', this.W - 1.8); this.dot.setAttribute('cy', yh.toFixed(2));
+    }
+  }
+
+  // ------------------------------------------------------------- views and frame loop
+  const views = [];
+  let rafId = 0;
+  function frame(now) {
+    rafId = 0;
+    let any = false;
+    for (const v of views) if (v.visible) { v.frame(now); any = true; }
+    if (any && !document.hidden) rafId = requestAnimationFrame(frame);
+  }
+  function kick() { if (!rafId && !document.hidden) rafId = requestAnimationFrame(frame); }
+  const io = 'IntersectionObserver' in window ? new IntersectionObserver((entries) => {
+    for (const e of entries) { const v = views.find((x) => x.root === e.target); if (v) v.visible = e.isIntersecting; }
+    kick();
+  }) : null;
+  function addView(v) { v.visible = !io; views.push(v); if (io) io.observe(v.root); }
+
+  // ---- bar strip temperature (setting example): changes once per tick, whole degrees
+  const barTemp = { root: $('#barTempA'), shown: new Shown(1, 0), onTick(now) { this.shown.feed(SENS.cpu.raw, now); setText(this.root, this.shown.val(now) + '°'); }, frame() {} };
+  addView(barTemp);
+
+  // ---- popup
+  const popup = (() => {
+    const root = $('#popupView');
+    const sparks = $$('svg[data-spark]', root).map((s) => new Spark(s));
+    const temps = {};
+    $$('[data-temp]', root).forEach((n) => { temps[n.dataset.temp] = { node: n, g: new Glide(SENS[n.dataset.temp].raw), s: new Shown(1, 140) }; });
+    const fansBox = $('#pFans');
+    const rows = CTRLS.map((k) => {
+      const r = document.createElement('div');
+      r.className = 'frow';
+      r.innerHTML = '<span class="nm"></span><span class="cv"></span><span class="rpm"></span><span class="dt"></span><span class="track"><i></i></span>';
+      fansBox.appendChild(r);
+      const nm = r.children[0];
+      nm.textContent = k.name;
+      if (k.fans > 1) { const sm = document.createElement('small'); sm.textContent = '×' + k.fans; nm.appendChild(sm); }
+      if (k.id === 'gpu1') r.classList.add('pinned'), r.setAttribute('data-pin', '5');
+      return { k, r, cv: r.children[1], rpm: r.children[2], dt: r.children[3], bar: r.children[4].firstChild, g: new Glide(k.duty), sr: new Shown(10, 140), sd: new Shown(1, 140), lastBadge: '' };
+    });
+    const title = $('#pTitle');
+    const meta = $('#pMeta');
+    const heroGlyph = $('#pHeroGlyph use');
+    const barGlyph = $('#pBarGlyph');
+    const fullBtn = $('#pFull');
+    const fanCount = CTRLS.reduce((a, k) => a + k.fans, 0);
+    $$('#pProfiles .pill').forEach((b) => b.addEventListener('click', () => {
+      profile = b.dataset.prof;
+      $$('#pProfiles .pill').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      setText(title, fullSpeed ? 'Full speed' : profile);
+      setText($('#sProfile'), profile);
+    }));
+    fullBtn.addEventListener('click', () => {
+      fullSpeed = !fullSpeed;
+      fullBtn.setAttribute('aria-pressed', String(fullSpeed));
+      fullBtn.classList.toggle('on', fullSpeed);
+      setText(title, fullSpeed ? 'Full speed' : profile);
+      heroGlyph.setAttribute('href', fullSpeed ? '#g-fan-up' : '#g-fan');
+      $('#pBarGlyph use').setAttribute('href', fullSpeed ? '#g-fan-up' : '#g-fan');
+      $('#pHeroGlyph').classList.toggle('accent', fullSpeed);
+      barGlyph.classList.toggle('accent', fullSpeed);
+    });
+    return {
+      root,
+      onTick(now) {
+        sparks.forEach((s) => s.onTick(now));
+        for (const id in temps) temps[id].g.set(SENS[id].raw, now);
+        rows.forEach((x) => {
+          x.g.set(x.k.duty, now);
+          const badge = x.k.state === 'handback' ? 'driver' : x.k.state === 'override' ? 'full' : '';
+          if (badge !== x.lastBadge) {
+            x.lastBadge = badge;
+            x.cv.innerHTML = '';
+            if (badge) { const b = document.createElement('span'); b.className = 'badge' + (badge === 'full' ? ' accent' : ''); b.textContent = badge === 'full' ? 'FULL' : 'DRIVER'; x.cv.appendChild(b); }
+            const c = document.createElement('span'); c.textContent = CURVES[x.k.curve].name; x.cv.appendChild(c);
+          }
+        });
+        this.frame(now);
+      },
+      frame(now) {
+        sparks.forEach((s) => s.frame(now));
+        const shownT = {};
+        for (const id in temps) { const t = temps[id]; t.s.feed(t.g.at(now), now); shownT[id] = t.s.val(now); setText(t.node, shownT[id] + ' °C'); }
+        setText(meta, fanCount + ' fans · CPU ' + shownT.cpu + ' °C · GPU ' + shownT.gpu + ' °C');
+        rows.forEach((x) => {
+          x.sr.feed(x.k.rpmShown || 0, now);
+          setText(x.rpm, fmt(x.sr.val(now)) + ' RPM');
+          x.sd.feed(x.g.at(now), now);
+          setText(x.dt, x.k.state === 'handback' ? '—' : x.sd.val(now) + ' %');
+          x.bar.style.width = x.g.at(now).toFixed(2) + '%';
+        });
+      },
+    };
+  })();
+  addView(popup);
+
+  // ---- studio
+  const studio = (() => {
+    const root = $('#studioView');
+    const sparks = $$('svg[data-spark]', root).map((s) => new Spark(s));
+    const stemps = {};
+    $$('[data-stemp]', root).forEach((n) => { stemps[n.dataset.stemp] = { node: n, g: new Glide(SENS[n.dataset.stemp].raw), s: new Shown(0.1, 140) }; });
+    const cardsBox = $('#sCards');
+    let selCtrl = CTRLS[0];
+    const cards = CTRLS.map((k, i) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'card';
+      b.setAttribute('aria-pressed', String(i === 0));
+      b.innerHTML = '<div class="r1"><span></span><span class="st"></span></div><div class="r2"><span class="rpm"></span><span class="dt dim"></span></div><div class="track"><i></i></div><div class="r3"><span class="cv"></span><span class="tr"></span></div>';
+      b.querySelector('.r1 span').textContent = k.name + (k.fans > 1 ? ' ×' + k.fans : '');
+      b.querySelector('.cv').textContent = CURVES[k.curve].name;
+      b.addEventListener('click', () => { selCtrl = k; cards.forEach((c) => c.b.setAttribute('aria-pressed', String(c.k === k))); editor.setCurve(CURVES[k.curve]); });
+      cardsBox.appendChild(b);
+      return { k, b, st: b.querySelector('.st'), rpm: b.querySelector('.rpm'), dt: b.querySelector('.dt'), bar: b.querySelector('.track i'), tr: b.querySelector('.tr'), g: new Glide(k.duty), sr: new Shown(10, 140), sd: new Shown(1, 140), lastSt: null };
+    });
+
+    // editor
+    const svg = $('#editor');
+    const X0 = 46, X1 = 540, Y0 = 24, Y1 = 426;
+    const sx = (t) => X0 + ((t - 20) / 80) * (X1 - X0);
+    const sy = (d) => Y1 - (d / 100) * (Y1 - Y0);
+    const ix = (x) => 20 + ((x - X0) / (X1 - X0)) * 80;
+    const iy = (y) => ((Y1 - y) / (Y1 - Y0)) * 100;
+    const gStatic = el('g', {}, svg);
+    const gBand = el('path', { class: 'band' }, gStatic);
+    const gCurve = el('path', { class: 'curve' }, svg);
+    const gTrail = el('g', {}, svg);
+    const trailDots = Array.from({ length: 40 }, () => el('circle', { class: 'trail', r: '2', opacity: '0' }, gTrail));
+    const crossV = el('line', { class: 'cross' }, svg);
+    const crossH = el('line', { class: 'cross' }, svg);
+    const mkRing = el('circle', { class: 'mkring', r: '9' }, svg);
+    const mk = el('circle', { class: 'mk', r: '5' }, svg);
+    const gPts = el('g', {}, svg);
+    const ro = el('g', { class: 'ro', visibility: 'hidden' }, svg);
+    const roRect = el('rect', { height: '22' }, ro);
+    const roText = el('text', { y: '15' }, ro);
+    const mixWrap = $('#eMixWrap');
+    const graphWrap = $('#eGraphWrap');
+    const eName = $('#eName');
+    const eChips = $('#eChips');
+    const eNow = $('#eNow');
+    const eWhat = $('#eWhat');
+    const unsaved = $('#sUnsaved');
+    const unsavedT = $('#sUnsavedT');
+    const saveBtn = $('#sSave');
+    const discardBtn = $('#sDiscard');
+    let curve = CURVES.cpu;
+    let sel = 1;
+    let drag = -1;
+    let hover = -1;
+    const mT = new Glide(curve.s);
+    const mOff = new Glide(curve.out - curve.f);
+    const trail = [];
+    let lastTrail = 0;
+    const nowS = new Shown(0.1, 140);
+    const nowO = new Shown(1, 140);
+
+    function dirty() { return curve.kind === 'graph' && JSON.stringify(curve.pts) !== JSON.stringify(SAVED[curve.id]); }
+    function updateDraftUi() {
+      const anyDirty = ['cpu', 'gpu'].filter((id) => JSON.stringify(CURVES[id].pts) !== JSON.stringify(SAVED[id]));
+      unsaved.hidden = anyDirty.length === 0;
+      setText(unsavedT, anyDirty.length ? 'Unsaved changes to ' + anyDirty.map((id) => CURVES[id].name).join(' and ') : '');
+      const d = dirty();
+      saveBtn.disabled = !d; discardBtn.disabled = !d;
+      saveBtn.classList.toggle('primary', d);
+    }
+    saveBtn.addEventListener('click', () => { SAVED[curve.id] = clone(curve.pts); updateDraftUi(); });
+    discardBtn.addEventListener('click', () => { curve.pts = clone(SAVED[curve.id]); sel = Math.min(sel, curve.pts.length - 1); drawStatic(); updateDraftUi(); });
+
+    function chips() {
+      eChips.innerHTML = '';
+      const list = curve.kind === 'graph' ? ['Graph', curve.srcName, 'Response ' + curve.tau + ' s', 'Hysteresis ' + curve.hyst + ' °C'] : ['Mix', 'max'];
+      list.forEach((t) => { const c = document.createElement('span'); c.className = 'chip'; c.textContent = t; eChips.appendChild(c); });
+    }
+
+    function drawStatic() {
+      while (gStatic.childNodes.length > 1) gStatic.removeChild(gStatic.lastChild);
+      for (let t = 20; t <= 100; t += 10) {
+        el('line', { class: 'gridl', x1: sx(t), x2: sx(t), y1: Y0, y2: Y1 }, gStatic);
+        const tx = el('text', { class: 'axis', x: sx(t), y: Y1 + 16, 'text-anchor': 'middle' }, gStatic); tx.textContent = t + (t === 100 ? ' °C' : '');
+      }
+      for (let d = 0; d <= 100; d += 10) {
+        el('line', { class: 'gridl', x1: X0, x2: X1, y1: sy(d), y2: sy(d) }, gStatic);
+        if (d % 20 === 0) { const ty = el('text', { class: 'axis', x: X0 - 8, y: sy(d) + 3.5, 'text-anchor': 'end' }, gStatic); ty.textContent = d; }
+      }
+      const pt = el('text', { class: 'axis', x: X0 - 8, y: 12, 'text-anchor': 'end' }, gStatic); pt.textContent = '%';
+      const k = selCtrl.curve === curve.id ? selCtrl : CTRLS.find((c) => c.curve === curve.id);
+      for (let d = 20; d <= 100; d += 20) {
+        const r = rpmFor(k, d);
+        const tr = el('text', { class: 'axis', x: X1 + 8, y: sy(d) + 3.5 }, gStatic); tr.textContent = r ? fmt(Math.round(r / 10) * 10) : '0';
+      }
+      const rt = el('text', { class: 'axis', x: X1 + 8, y: 12 }, gStatic); rt.textContent = 'RPM';
+      if (k.nvml) {
+        el('rect', { class: 'floor', x: X0, y: sy(k.floor), width: X1 - X0, height: Y1 - sy(k.floor) }, gStatic);
+        el('line', { class: 'lim', x1: X0, x2: X1, y1: sy(k.floor), y2: sy(k.floor) }, gStatic);
+        const t1 = el('text', { class: 'limt', x: X0 + 6, y: sy(k.floor) + 13 }, gStatic); t1.textContent = 'below 30 %: the driver runs this fan and may stop it';
+      } else {
+        el('line', { class: 'lim', x1: X0, x2: X1, y1: sy(k.min), y2: sy(k.min) }, gStatic);
+        const t1 = el('text', { class: 'limt', x: X1 - 6, y: sy(k.min) - 4, 'text-anchor': 'end' }, gStatic); t1.textContent = 'min ' + k.min + ' %';
+        el('line', { class: 'lim', x1: X0, x2: X1, y1: sy(k.stop), y2: sy(k.stop) }, gStatic);
+        const t2 = el('text', { class: 'limt', x: X1 - 6, y: sy(k.stop) + 12, 'text-anchor': 'end' }, gStatic); t2.textContent = 'stops below ' + k.stop + ' %';
+      }
+      // hysteresis band: between f(T) and f(T + H)
+      let top = '';
+      let bot = '';
+      for (let t = 20; t <= 100; t += 0.5) {
+        top += (t === 20 ? 'M' : 'L') + sx(t).toFixed(1) + ' ' + sy(evalPts(curve.pts, Math.min(100, t + curve.hyst))).toFixed(1);
+      }
+      for (let t = 100; t >= 20; t -= 0.5) bot += 'L' + sx(t).toFixed(1) + ' ' + sy(evalPts(curve.pts, t)).toFixed(1);
+      gBand.setAttribute('d', top + bot + 'Z');
+      let d = 'M' + sx(20) + ' ' + sy(curve.pts[0][1]);
+      curve.pts.forEach((p) => { d += 'L' + sx(p[0]).toFixed(1) + ' ' + sy(p[1]).toFixed(1); });
+      d += 'L' + sx(100) + ' ' + sy(curve.pts[curve.pts.length - 1][1]);
+      gCurve.setAttribute('d', d);
+      gPts.innerHTML = '';
+      curve.pts.forEach((p, i) => {
+        el('circle', { class: 'pt' + (i === sel ? ' sel' : ''), cx: sx(p[0]), cy: sy(p[1]), r: i === sel ? '6' : '5' }, gPts);
+        const h = el('circle', { class: 'hit', cx: sx(p[0]), cy: sy(p[1]), r: '13' }, gPts);
+        h.dataset.i = i;
+      });
+      readout();
+    }
+
+    function readout() {
+      const i = drag >= 0 ? drag : hover;
+      if (i < 0 || curve.kind !== 'graph') { ro.setAttribute('visibility', 'hidden'); return; }
+      const [t, d] = curve.pts[i];
+      const k = selCtrl.curve === curve.id ? selCtrl : CTRLS.find((c) => c.curve === curve.id);
+      const r = rpmFor(k, d);
+      const tail = k.nvml && d < k.floor ? 'driver curve' : r ? '≈ ' + fmt(Math.round(r / 10) * 10) + ' RPM' : 'stopped';
+      roText.textContent = t + ' °C → ' + d + ' % ' + tail;
+      const w = roText.getComputedTextLength ? roText.getComputedTextLength() + 16 : 200;
+      let x = sx(t) + 14;
+      let y = sy(d) - 34;
+      if (x + w > 596) x = sx(t) - 14 - w;
+      if (y < 2) y = sy(d) + 12;
+      ro.setAttribute('transform', 'translate(' + x.toFixed(1) + ' ' + y.toFixed(1) + ')');
+      roRect.setAttribute('width', w.toFixed(1));
+      roText.setAttribute('x', '8');
+      ro.setAttribute('visibility', 'visible');
+    }
+
+    function movePoint(i, t, d) {
+      const pts = curve.pts;
+      const lo = i === 0 ? 20 : pts[i - 1][0] + 1;
+      const hi = i === pts.length - 1 ? 100 : pts[i + 1][0] - 1;
+      t = clamp(Math.round(t), lo, hi);
+      d = clamp(Math.round(d), 0, 100);
+      pts[i] = [t, d];
+      for (let j = i + 1; j < pts.length; j++) pts[j][1] = Math.max(pts[j][1], d);
+      for (let j = i - 1; j >= 0; j--) pts[j][1] = Math.min(pts[j][1], d);
+      drawStatic();
+      updateDraftUi();
+    }
+    const toSvg = (ev) => { const p = svg.createSVGPoint(); p.x = ev.clientX; p.y = ev.clientY; return p.matrixTransform(svg.getScreenCTM().inverse()); };
+    svg.addEventListener('pointerdown', (ev) => {
+      const t = ev.target;
+      if (!t.classList || !t.classList.contains('hit')) return;
+      drag = +t.dataset.i; sel = drag;
+      svg.setPointerCapture(ev.pointerId);
+      svg.focus({ preventScroll: true });
+      drawStatic();
+      ev.preventDefault();
+    });
+    svg.addEventListener('pointermove', (ev) => {
+      if (drag >= 0) { const p = toSvg(ev); movePoint(drag, ix(p.x), iy(p.y)); return; }
+      const t = ev.target;
+      const h = t.classList && t.classList.contains('hit') ? +t.dataset.i : -1;
+      if (h !== hover) { hover = h; readout(); }
+    });
+    const endDrag = () => { if (drag >= 0) { drag = -1; readout(); } };
+    svg.addEventListener('pointerup', endDrag);
+    svg.addEventListener('pointercancel', endDrag);
+    svg.addEventListener('pointerleave', () => { if (drag < 0 && hover >= 0) { hover = -1; readout(); } });
+    svg.addEventListener('keydown', (ev) => {
+      if (curve.kind !== 'graph') return;
+      const step = ev.shiftKey ? 5 : 1;
+      const p = curve.pts[sel];
+      const k = ev.key;
+      let used = true;
+      if (k === '[') sel = Math.max(0, sel - 1);
+      else if (k === ']') sel = Math.min(curve.pts.length - 1, sel + 1);
+      else if (k === 'h' || k === 'H' || k === 'ArrowLeft') movePoint(sel, p[0] - step, p[1]);
+      else if (k === 'l' || k === 'L' || k === 'ArrowRight') movePoint(sel, p[0] + step, p[1]);
+      else if (k === 'k' || k === 'K' || k === 'ArrowUp') movePoint(sel, p[0], p[1] + step);
+      else if (k === 'j' || k === 'J' || k === 'ArrowDown') movePoint(sel, p[0], p[1] - step);
+      else if (k === 'a' && curve.pts.length < 8) {
+        const nx = sel < curve.pts.length - 1 ? curve.pts[sel + 1] : null;
+        if (nx && nx[0] - p[0] >= 2) { curve.pts.splice(sel + 1, 0, [Math.round((p[0] + nx[0]) / 2), Math.round((p[1] + nx[1]) / 2)]); sel += 1; updateDraftUi(); }
+      } else if (k === 'x' && curve.pts.length > 2) { curve.pts.splice(sel, 1); sel = Math.min(sel, curve.pts.length - 1); updateDraftUi(); }
+      else used = false;
+      if (used) { ev.preventDefault(); hover = sel; drawStatic(); }
+    });
+    svg.addEventListener('blur', () => { if (drag < 0) { hover = -1; readout(); } });
+
+    function drawMix(now) {
+      if (!mixWrap.dataset.built) {
+        mixWrap.innerHTML = '<div class="sec">Max of</div><div class="mixrow" data-c="cpu"><span>CPU quiet</span><span class="track"><i></i></span><span class="v"></span></div><div class="mixrow" data-c="gpu"><span>GPU</span><span class="track"><i></i></span><span class="v"></span></div><div class="sepl"></div><div class="mixrow" data-c="case"><b>Output</b><span class="track"><i></i></span><b class="v"></b></div><div class="caption">Used by Front intake ×3, and Rear exhaust with a −5 % offset. The larger input wins; the highlighted row is driving the fans now.</div><div><button type="button" class="btn">+ Add curve</button></div>';
+        mixWrap.dataset.built = '1';
+        mixWrap._g = { cpu: new Glide(CURVES.cpu.out), gpu: new Glide(CURVES.gpu.out), case: new Glide(CURVES.case.out) };
+      }
+      $$('.mixrow', mixWrap).forEach((r) => {
+        const id = r.dataset.c;
+        const v = mixWrap._g[id].at(now);
+        r.querySelector('.track i').style.width = v.toFixed(2) + '%';
+        setText(r.querySelector('.v'), Math.round(v) + ' %');
+        if (id !== 'case') r.classList.toggle('win', CURVES[id].out >= CURVES[id === 'cpu' ? 'gpu' : 'cpu'].out);
+      });
+    }
+
+    const editor = {
+      setCurve(c) {
+        curve = c;
+        sel = c.kind === 'graph' ? Math.min(1, c.pts.length - 1) : 0;
+        hover = -1; drag = -1;
+        setText(eName, c.name);
+        chips();
+        graphWrap.hidden = c.kind !== 'graph';
+        mixWrap.hidden = c.kind === 'graph';
+        trail.length = 0;
+        if (c.kind === 'graph') { mT.from = mT.to = c.s; mOff.from = mOff.to = c.out - c.f; drawStatic(); }
+        updateDraftUi();
+        this.inspect(performance.now());
+      },
+      inspect(now) {
+        if (curve.kind !== 'graph') {
+          setText(eNow, 'Output ' + Math.round(CURVES.case.out) + ' %');
+          setText(eWhat, 'Following the larger input');
+          return;
+        }
+        nowS.feed(mT.at(now), now);
+        nowO.feed(evalPts(curve.pts, mT.at(now)) + mOff.at(now), now);
+        setText(eNow, nowS.val(now).toFixed(1) + ' °C → ' + nowO.val(now) + ' %');
+        const k = selCtrl.curve === curve.id ? selCtrl : CTRLS.find((c) => c.curve === curve.id);
+        let what = 'Following the curve';
+        if (k.state === 'override') what = 'Full speed holds this fan at 100 %';
+        else if (k.state === 'handback') what = 'Below the 30 % floor: the driver runs this fan (' + fmt(k.rpmShown || 0) + ' RPM)';
+        else if (curve.held) what = 'Holding: hysteresis keeps it until ' + (curve.anchor - curve.hyst).toFixed(1) + ' °C';
+        else if (k.trend === 'rising') what = 'Rising at the step limit, 20 %/s → ' + Math.round(k.target) + ' %';
+        else if (k.trend === 'falling') what = 'Falling at the step limit, 5 %/s → ' + Math.round(k.target) + ' %';
+        setText(eWhat, what);
+      },
+    };
+
+    return {
+      root,
+      onTick(now) {
+        sparks.forEach((s) => s.onTick(now));
+        for (const id in stemps) stemps[id].g.set(SENS[id].raw, now);
+        cards.forEach((c) => {
+          c.g.set(c.k.duty, now);
+          const st = c.k.state === 'handback' ? 'DRIVER' : c.k.state === 'override' ? 'FULL' : '';
+          if (st !== c.lastSt) {
+            c.lastSt = st;
+            c.st.innerHTML = '';
+            if (st) { const b = document.createElement('span'); b.className = 'badge' + (st === 'FULL' ? ' accent' : ''); b.textContent = st; c.st.appendChild(b); }
+          }
+          setText(c.tr, c.k.trend === 'rising' ? '↑ rising' : c.k.trend === 'falling' ? '↓ falling' : '');
+        });
+        if (curve.kind === 'graph') { mT.set(curve.s, now); mOff.set(curve.out - curve.f, now); }
+        else if (mixWrap._g) { ['cpu', 'gpu', 'case'].forEach((id) => mixWrap._g[id].set(CURVES[id].out, now)); }
+        this.frame(now);
+      },
+      frame(now) {
+        sparks.forEach((s) => s.frame(now));
+        for (const id in stemps) { const t = stemps[id]; t.s.feed(t.g.at(now), now); setText(t.node, t.s.val(now).toFixed(1) + ' °C'); }
+        cards.forEach((c) => {
+          c.sr.feed(c.k.rpmShown || 0, now);
+          setText(c.rpm, fmt(c.sr.val(now)) + ' RPM');
+          c.sd.feed(c.g.at(now), now);
+          setText(c.dt, c.k.state === 'handback' ? 'driver' : c.sd.val(now) + ' %');
+          c.bar.style.width = c.g.at(now).toFixed(2) + '%';
+        });
+        if (curve.kind === 'graph') {
+          const T = clamp(mT.at(now), 20, 100);
+          const D = clamp(evalPts(curve.pts, T) + mOff.at(now), 0, 100);
+          const x = sx(T), y = sy(D);
+          mk.setAttribute('cx', x.toFixed(2)); mk.setAttribute('cy', y.toFixed(2));
+          mkRing.setAttribute('cx', x.toFixed(2)); mkRing.setAttribute('cy', y.toFixed(2));
+          crossV.setAttribute('x1', x.toFixed(2)); crossV.setAttribute('x2', x.toFixed(2)); crossV.setAttribute('y1', y.toFixed(2)); crossV.setAttribute('y2', Y1);
+          crossH.setAttribute('x1', X0); crossH.setAttribute('x2', x.toFixed(2)); crossH.setAttribute('y1', y.toFixed(2)); crossH.setAttribute('y2', y.toFixed(2));
+          if (now - lastTrail > 250) { trail.push({ x, y, t: now }); lastTrail = now; while (trail.length > 40) trail.shift(); }
+          trailDots.forEach((dot, i) => {
+            const p = trail[trail.length - 1 - i];
+            if (!p || now - p.t > 10000 || !animationsOn) { dot.setAttribute('opacity', '0'); return; }
+            dot.setAttribute('cx', p.x.toFixed(1)); dot.setAttribute('cy', p.y.toFixed(1));
+            dot.setAttribute('opacity', (0.38 * (1 - (now - p.t) / 10000)).toFixed(3));
+          });
+        } else drawMix(now);
+        editor.inspect(now);
+      },
+      init() { chips(); drawStatic(); updateDraftUi(); },
+    };
+  })();
+  studio.init();
+  addView(studio);
+
+  // ---- motion demos
+  const motion = (() => {
+    const root = $('#motionView');
+    const sparks = $$('svg[data-spark]', root).map((s) => new Spark(s));
+    const k = CTRLS[0];
+    const panes = $$('.mrow:first-child .mpane', root).map((p) => ({
+      glide: p.dataset.mode === 'glide',
+      rpm: $('[data-mv="rpm"]', p), duty: $('[data-mv="duty"]', p), temp: $('[data-mv="temp"]', p), bar: $('[data-mv="bar"]', p),
+      g: new Glide(k.duty), gt: new Glide(SENS.cpu.raw), gr: new Glide(k.rpm),
+      sr: new Shown(10, 140), sd: new Shown(1, 140), st: new Shown(1, 140),
+    }));
+    const minis = $$('svg[data-mini]', root).map((svg) => {
+      const glide = svg.dataset.mini === 'glide';
+      const X0 = 30, X1 = 350, Y0 = 8, Y1 = 178;
+      const sx = (t) => X0 + ((t - 30) / 70) * (X1 - X0);
+      const sy = (d) => Y1 - (d / 100) * (Y1 - Y0);
+      const gS = el('g', {}, svg);
+      const band = el('path', { class: 'band' }, svg);
+      const line = el('path', { class: 'curve' }, svg);
+      const dots = glide ? Array.from({ length: 30 }, () => el('circle', { class: 'trail', r: '2', opacity: '0' }, svg)) : [];
+      const mk = el('circle', { class: 'mk', r: '4.5' }, svg);
+      svg.classList.add('editor');
+      for (let t = 30; t <= 100; t += 10) { el('line', { class: 'gridl', x1: sx(t), x2: sx(t), y1: Y0, y2: Y1 }, gS); const tx = el('text', { class: 'axis', x: sx(t), y: Y1 + 15, 'text-anchor': 'middle' }, gS); tx.textContent = t + (t === 100 ? '°' : ''); }
+      for (let d = 0; d <= 100; d += 25) { el('line', { class: 'gridl', x1: X0, x2: X1, y1: sy(d), y2: sy(d) }, gS); const ty = el('text', { class: 'axis', x: X0 - 5, y: sy(d) + 3.5, 'text-anchor': 'end' }, gS); ty.textContent = d; }
+      return { svg, glide, sx, sy, band, line, dots, mk, mT: new Glide(CURVES.cpu.s), mOff: new Glide(0), trail: [], last: 0, sig: '' };
+    });
+    function drawMiniCurve(m) {
+      const c = CURVES.cpu;
+      const sig = JSON.stringify(c.pts);
+      if (sig === m.sig) return;
+      m.sig = sig;
+      let d = 'M' + m.sx(30) + ' ' + m.sy(evalPts(c.pts, 30));
+      for (let t = 30; t <= 100; t += 1) d += 'L' + m.sx(t).toFixed(1) + ' ' + m.sy(evalPts(c.pts, t)).toFixed(1);
+      m.line.setAttribute('d', d);
+      let top = '';
+      let bot = '';
+      for (let t = 30; t <= 100; t += 0.5) top += (t === 30 ? 'M' : 'L') + m.sx(t).toFixed(1) + ' ' + m.sy(evalPts(c.pts, Math.min(100, t + c.hyst))).toFixed(1);
+      for (let t = 100; t >= 30; t -= 0.5) bot += 'L' + m.sx(t).toFixed(1) + ' ' + m.sy(evalPts(c.pts, t)).toFixed(1);
+      m.band.setAttribute('d', top + bot + 'Z');
+    }
+    return {
+      root,
+      onTick(now) {
+        sparks.forEach((s) => s.onTick(now));
+        panes.forEach((p) => {
+          if (p.glide) { p.g.set(k.duty, now); p.gt.set(SENS.cpu.raw, now); p.gr.set(k.rpmShown || 0, now); }
+          else {
+            setText(p.rpm, fmt(Math.round((k.rpmShown || 0) / 10) * 10) + ' RPM');
+            setText(p.duty, Math.round(k.duty) + ' %');
+            setText(p.temp, Math.round(SENS.cpu.raw) + ' °C');
+            p.bar.style.width = k.duty.toFixed(2) + '%';
+          }
+        });
+        const c = CURVES.cpu;
+        minis.forEach((m) => {
+          drawMiniCurve(m);
+          if (m.glide) { m.mT.set(c.s, now); m.mOff.set(c.out - c.f, now); }
+          else { m.mk.setAttribute('cx', m.sx(clamp(c.s, 30, 100)).toFixed(2)); m.mk.setAttribute('cy', m.sy(c.out).toFixed(2)); }
+        });
+        this.frame(now);
+      },
+      frame(now) {
+        sparks.forEach((s) => s.frame(now));
+        panes.forEach((p) => {
+          if (!p.glide) return;
+          p.sr.feed(p.gr.at(now), now); setText(p.rpm, fmt(p.sr.val(now)) + ' RPM');
+          p.sd.feed(p.g.at(now), now); setText(p.duty, p.sd.val(now) + ' %');
+          p.st.feed(p.gt.at(now), now); setText(p.temp, p.st.val(now) + ' °C');
+          p.bar.style.width = p.g.at(now).toFixed(2) + '%';
+        });
+        const c = CURVES.cpu;
+        minis.forEach((m) => {
+          if (!m.glide) return;
+          const T = clamp(m.mT.at(now), 30, 100);
+          const D = clamp(evalPts(c.pts, T) + m.mOff.at(now), 0, 100);
+          const x = m.sx(T), y = m.sy(D);
+          m.mk.setAttribute('cx', x.toFixed(2)); m.mk.setAttribute('cy', y.toFixed(2));
+          if (now - m.last > 300) { m.trail.push({ x, y, t: now }); m.last = now; while (m.trail.length > 30) m.trail.shift(); }
+          m.dots.forEach((dot, i) => {
+            const p = m.trail[m.trail.length - 1 - i];
+            if (!p || now - p.t > 9000 || !animationsOn) { dot.setAttribute('opacity', '0'); return; }
+            dot.setAttribute('cx', p.x.toFixed(1)); dot.setAttribute('cy', p.y.toFixed(1));
+            dot.setAttribute('opacity', (0.4 * (1 - (now - p.t) / 9000)).toFixed(3));
+          });
+        });
+      },
+    };
+  })();
+  addView(motion);
+
+  // ------------------------------------------------------------- start: complete at rest, then live
+  const t0 = performance.now();
+  views.forEach((v) => { v.onTick(t0); v.frame(t0); });
+  let timer = 0;
+  function start() {
+    if (timer) return;
+    timer = setInterval(() => {
+      if (document.hidden) return;
+      tick();
+      const now = performance.now();
+      views.forEach((v) => v.onTick(now));
+      kick();
+    }, TICK);
+  }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) kick(); });
+  start();
+  kick();
+})();
+</script>

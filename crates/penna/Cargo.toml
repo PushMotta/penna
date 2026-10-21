@@ -1,0 +1,16 @@
+[package]
+name = "penna"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Penna's command line: watch the machine's temperatures and fans"
+
+[dependencies]
+penna-core.workspace = true
+penna-hw.workspace = true
+penna-proto.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+ctrlc.workspace = true
+serde_json.workspace = true

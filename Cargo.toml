@@ -1,0 +1,25 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+rust-version = "1.85"
+
+[workspace.dependencies]
+penna-core = { path = "crates/penna-core" }
+penna-hw = { path = "crates/penna-hw" }
+penna-proto = { path = "crates/penna-proto" }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+ctrlc = "3"
+nvml-wrapper = "0.13"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libc = "0.2"
+proptest = "1"
+sd-notify = "0.5"
+signal-hook = "0.3"
+toml = "0.8"

@@ -1,0 +1,20 @@
+[package]
+name = "pennad"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Penna's daemon: the control loop, held.json, and every way of handing the fans back (M1: simulated hardware)"
+
+[dependencies]
+penna-core.workspace = true
+penna-hw.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+sd-notify.workspace = true
+signal-hook.workspace = true
+
+[dev-dependencies]
+libc.workspace = true
+penna-core.workspace = true
+serde_json.workspace = true
