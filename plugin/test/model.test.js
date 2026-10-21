@@ -105,3 +105,18 @@ test("the popup says when the studio is previewing unsaved changes", () => {
   assert.equal(h.meta, "PREVIEWING UNSAVED CHANGES FROM THE STUDIO")
   assert.equal(M.hero(tick({ draft: null }), true, 0, 0).meta, null)
 })
+
+test("configured fans on firmware fold away, and nothing adopted reads as firmware running every fan", () => {
+  const firstStart = tick({
+    controls: [control({ key: "fan0", label: "GPU fan 1", state: "firmware", curve: null }),
+               control({ key: "fan1", label: "GPU fan 2", state: "absent", curve: null })],
+    firmware: [{ key: "pwm4", label: "pwm4" }],
+    unreachable: [{ id: "pci/0a", label: "RTX 2060 SUPER", reason: "passed through to a VM (vfio-pci)" }]
+  })
+  assert.equal(M.adopted(firstStart).length, 0)
+  assert.equal(M.barState(firstStart, true).glyph, M.GLYPH.auto)
+  assert.equal(M.hero(firstStart, true, 0, 0).title, "Firmware runs every fan")
+  assert.deepEqual(M.firmwareLines(firstStart), ["GPU fan 1", "pwm4"])
+  assert.deepEqual(M.unreachableLines(firstStart), ["GPU fan 2 · configured, but not on this machine now", "RTX 2060 SUPER · passed through to a VM (vfio-pci)"])
+  assert.equal(M.fanCount(firstStart), 0)
+})

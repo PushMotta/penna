@@ -1,0 +1,493 @@
+//! `penna doctor` (DESIGN.md §8.5): what stands between this machine and Penna running its fans, each finding with what to do.
+//! Read-only, and it works as an ordinary user: [`gather`] reads the machine and asks every daemon that answers, and
+//! [`findings`] turns that into sentences, so the wording is tested without any of the I/O.
+use crate::client::Client;
+use penna_core::{Source, State, Unreachable};
+use penna_hw::{Machine, Options};
+use penna_proto::Tick;
+use serde::Serialize;
+use std::path::Path;
+use std::process::Command;
+
+/// Super I/O and laptop EC drivers that expose motherboard fans through hwmon.
+const FAN_DRIVERS: &[&str] = &[
+    "it87",
+    "nct6775",
+    "nct6683",
+    "nct6687",
+    "f71882fg",
+    "f71805f",
+    "f75375s",
+    "w83627ehf",
+    "w83627hf",
+    "w83781d",
+    "w83795",
+    "sch5627",
+    "sch5636",
+    "pc87360",
+    "pc87427",
+    "smsc47m1",
+    "vt1211",
+    "asb100",
+    "dell_smm",
+    "thinkpad",
+    "applesmc",
+];
+
+/// Other programs that drive fans; with Penna they would fight over the same controls (§6.4).
+pub const OTHER_DAEMONS: &[&str] = &["coolercontrold", "fan2go", "fancontrol", "thinkfan", "nbfc_service"];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Status {
+    Ok,
+    Attention,
+    Info,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Finding {
+    pub area: &'static str,
+    pub status: Status,
+    pub text: String,
+    /// What to do about it, when there is something to do.
+    #[serde(rename = "do", skip_serializing_if = "Option::is_none")]
+    pub todo: Option<String>,
+}
+
+/// A daemon that answered, and what it said.
+pub struct Daemon {
+    pub via: String,
+    pub mock: bool,
+    pub version: String,
+    pub can_write: bool,
+    pub why: Option<String>,
+    pub tick: Option<Tick>,
+}
+
+pub enum KernelLog {
+    /// The ACPI resource-conflict line.
+    Conflict(String),
+    NoConflict,
+    Unreadable,
+}
+
+pub struct Facts {
+    pub daemons: Vec<Daemon>,
+    pub production_socket: String,
+    /// Fan drivers bound to an hwmon device, with how many fan controls each offers.
+    pub fan_drivers: Vec<(String, usize)>,
+    /// Vendor and model, from DMI.
+    pub board: Option<(String, String)>,
+    pub kernel_log: KernelLog,
+    /// The chips the stock it87 module knows, when the module is there.
+    pub it87_chips: Option<Vec<String>>,
+    pub other_daemons: Vec<String>,
+    /// NVIDIA GPUs through NVML (label, fans), or why there is no NVML.
+    pub nvidia: Result<Vec<(String, usize)>, String>,
+    pub unreachable: Vec<Unreachable>,
+}
+
+/// Reads everything [`findings`] needs. Nothing here changes anything.
+pub fn gather() -> Facts {
+    let mut daemons = Vec::new();
+    for path in penna_proto::socket_candidates() {
+        if let Ok(mut c) = Client::connect(&path) {
+            let tick = c.call(penna_proto::Op::State).ok().flatten().and_then(|v| serde_json::from_value::<Tick>(v).ok());
+            daemons.push(Daemon {
+                via: c.via(),
+                mock: c.hello.mock,
+                version: c.hello.daemon.clone(),
+                can_write: c.hello.can_write,
+                why: c.hello.why.clone(),
+                tick,
+            });
+        }
+    }
+    let (fan_drivers, nvidia, unreachable) = match Machine::open(&Options::default()) {
+        Ok(m) => {
+            let inv = m.inventory;
+            let fan_drivers = inv
+                .devices
+                .iter()
+                .filter(|d| d.source == Source::Hwmon && FAN_DRIVERS.contains(&d.driver.as_str()))
+                .map(|d| (d.driver.clone(), d.controls.len()))
+                .collect();
+            let gpus: Vec<(String, usize)> =
+                inv.devices.iter().filter(|d| d.source == Source::Nvml).map(|d| (d.label.clone(), d.controls.len())).collect();
+            let nvml_note = inv.notes.iter().find(|n| n.starts_with("NVML")).cloned();
+            let nvidia = match (gpus.is_empty(), nvml_note) {
+                (true, Some(why)) => Err(why),
+                _ => Ok(gpus),
+            };
+            (fan_drivers, nvidia, inv.unreachable)
+        }
+        Err(e) => (Vec::new(), Err(format!("reading the machine failed: {e:#}")), Vec::new()),
+    };
+    Facts {
+        daemons,
+        production_socket: penna_proto::PRODUCTION_SOCKET.to_owned(),
+        fan_drivers,
+        board: board(),
+        kernel_log: kernel_log(),
+        it87_chips: it87_chips(),
+        other_daemons: OTHER_DAEMONS.iter().filter(|d| active(d)).map(|d| (*d).to_owned()).collect(),
+        nvidia,
+        unreachable,
+    }
+}
+
+fn board() -> Option<(String, String)> {
+    let read = |f: &str| std::fs::read_to_string(Path::new("/sys/class/dmi/id").join(f)).ok().map(|s| s.trim().to_owned());
+    Some((read("board_vendor")?, read("board_name")?))
+}
+
+fn kernel_log() -> KernelLog {
+    let Ok(out) = Command::new("journalctl").args(["-k", "-b", "--no-pager", "-q", "-o", "cat", "-g", "resource conflict"]).output() else {
+        return KernelLog::Unreadable;
+    };
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if let Some(line) = stdout.lines().find(|l| l.to_ascii_lowercase().contains("resource conflict")) {
+        return KernelLog::Conflict(line.trim().to_owned());
+    }
+    // Without the right group, journalctl shows nothing and says why on stderr.
+    if stderr.contains("not seeing messages") || stderr.contains("No journal files") || stderr.contains("ermission") {
+        KernelLog::Unreadable
+    } else {
+        KernelLog::NoConflict
+    }
+}
+
+fn active(unit: &str) -> bool {
+    Command::new("systemctl").args(["is-active", "--quiet", unit]).status().is_ok_and(|s| s.success())
+}
+
+fn it87_chips() -> Option<Vec<String>> {
+    let out = Command::new("modinfo").args(["-F", "filename", "it87"]).output().ok()?;
+    let file = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    if file.is_empty() {
+        return None;
+    }
+    let decompress = |prog: &str| Command::new(prog).args(["-dc", &file]).output().ok().map(|o| o.stdout);
+    let bytes = if file.ends_with(".zst") {
+        decompress("zstd")?
+    } else if file.ends_with(".xz") {
+        decompress("xz")?
+    } else if file.ends_with(".gz") {
+        decompress("gzip")?
+    } else {
+        std::fs::read(&file).ok()?
+    };
+    let chips = chip_names(&bytes);
+    (!chips.is_empty()).then_some(chips)
+}
+
+/// ITE chip names in a module's strings: `IT8792E/IT8795E` and the like, each part `IT8` followed by digits and `E` or `F`.
+fn chip_names(bytes: &[u8]) -> Vec<String> {
+    let is_chip = |s: &str| {
+        s.split('/').all(|p| {
+            let digits = p.strip_prefix("IT").and_then(|r| r.strip_suffix(['E', 'F']));
+            digits.is_some_and(|d| d.starts_with('8') && (3..=5).contains(&d.len()) && d.bytes().all(|b| b.is_ascii_digit()))
+        })
+    };
+    let mut out: Vec<String> = bytes
+        .split(|b| !b.is_ascii_graphic())
+        .filter_map(|w| std::str::from_utf8(w).ok())
+        .filter(|w| is_chip(w))
+        .map(str::to_owned)
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// The findings, most important first within each area.
+pub fn findings(f: &Facts) -> Vec<Finding> {
+    let mut out = Vec::new();
+    let push = |out: &mut Vec<Finding>, area, status, text: String, todo: Option<String>| out.push(Finding { area, status, text, todo });
+
+    // The daemon.
+    let production = f.daemons.iter().find(|d| !d.mock);
+    match production {
+        Some(d) if d.can_write => {
+            push(&mut out, "daemon", Status::Ok, format!("pennad {} runs at {}, and you can change fans.", d.version, d.via), None)
+        }
+        Some(d) => push(
+            &mut out,
+            "daemon",
+            Status::Attention,
+            format!("pennad {} runs at {}, but you can't change fans from this account.", d.version, d.via),
+            Some(d.why.clone().unwrap_or_else(|| "Ask pennad's administrator for membership of the penna group.".into())),
+        ),
+        None => push(
+            &mut out,
+            "daemon",
+            Status::Attention,
+            format!("No pennad is running at {}, so nothing manages this machine's fans.", f.production_socket),
+            Some("Start it: sudo systemctl enable --now pennad".into()),
+        ),
+    }
+    for d in f.daemons.iter().filter(|d| d.mock) {
+        push(
+            &mut out,
+            "daemon",
+            Status::Info,
+            format!("A mock desk (pennad {}) answers at {}: it drives simulated fans only.", d.version, d.via),
+            None,
+        );
+    }
+
+    // Fans that need someone.
+    for d in &f.daemons {
+        let Some(tick) = &d.tick else { continue };
+        let whose = if d.mock { "Mock desk: " } else { "" };
+        let mut any = false;
+        for e in &tick.emergency {
+            any = true;
+            push(
+                &mut out,
+                "fans",
+                Status::Attention,
+                format!(
+                    "{whose}{} is at or over its {} °C limit: every fan is at 100 % until it cools to {} °C.",
+                    e.label, e.limit, e.release
+                ),
+                Some("Find out what is heating it; Penna releases the fans on its own once it cools.".into()),
+            );
+        }
+        for c in &tick.controls {
+            let reason = c.reason.as_deref().map(|r| format!(": {r}")).unwrap_or_default();
+            let (text, todo) = match c.state {
+                State::Contested => (
+                    format!("{whose}{} is contested{reason}.", c.label),
+                    format!(
+                        "Something else keeps setting it: check the BIOS fan setting for it, or another fan tool. Then: penna retry \"{}\"",
+                        c.label
+                    ),
+                ),
+                State::Fault => {
+                    (format!("{whose}{} has a fault{reason}.", c.label), format!("When the cause is fixed: penna retry \"{}\"", c.label))
+                }
+                State::Failsafe => (
+                    format!("{whose}{} is at its failsafe speed{reason}.", c.label),
+                    "A sensor its curve reads failed; it goes back to its curve once the sensor reads again.".to_owned(),
+                ),
+                _ => continue,
+            };
+            any = true;
+            push(&mut out, "fans", Status::Attention, text, Some(todo));
+        }
+        if !any {
+            push(&mut out, "fans", Status::Ok, format!("{whose}No fan needs attention."), None);
+        }
+    }
+
+    // Motherboard fans.
+    if f.fan_drivers.is_empty() {
+        let board = f.board.as_ref().map(|(v, n)| format!(" This board is a {v} {n}.")).unwrap_or_default();
+        let mut text = format!("No motherboard fan driver is bound, so Penna can't see the motherboard's fans.{board}");
+        match &f.kernel_log {
+            KernelLog::Conflict(line) => text.push_str(&format!(" The kernel log says: \"{line}\".")),
+            KernelLog::NoConflict => {}
+            KernelLog::Unreadable => text.push_str(
+                " The kernel log isn't readable from this account, so the ACPI-conflict check was skipped (it needs the wheel, adm or \
+                 systemd-journal group).",
+            ),
+        }
+        let vendor = f.board.as_ref().map(|(v, _)| v.to_ascii_lowercase()).unwrap_or_default();
+        let todo = if vendor.contains("gigabyte") {
+            let known = f
+                .it87_chips
+                .as_ref()
+                .map(|c| format!(" The stock it87 module knows {}.", c.join(", ")))
+                .unwrap_or_else(|| " The stock it87 module isn't installed.".to_owned());
+            format!(
+                "Gigabyte boards use ITE chips, driven by it87.{known} Newer ITE chips need the out-of-tree it87-dkms-git (AUR), loaded \
+                 with ignore_resource_conflict=1. Its README calls that inherently risky: ACPI and the driver may use the chip at the \
+                 same time, which can cause unexpected reboots. Penna drives motherboard fans from M5."
+            )
+        } else if ["asus", "micro-star", "msi", "asrock"].iter().any(|v| vendor.contains(v)) {
+            "Most ASUS, MSI and ASRock boards use a Nuvoton chip: try sudo modprobe nct6775 (or nct6683). sudo sensors-detect, from \
+             lm_sensors, names the chip. Penna drives motherboard fans from M5."
+                .to_owned()
+        } else {
+            "sudo sensors-detect, from lm_sensors, names the chip and the driver it needs. Penna drives motherboard fans from M5."
+                .to_owned()
+        };
+        push(&mut out, "motherboard", Status::Attention, text, Some(todo));
+    } else {
+        for (driver, controls) in &f.fan_drivers {
+            push(
+                &mut out,
+                "motherboard",
+                Status::Ok,
+                format!(
+                    "{driver} is bound, with {controls} fan control{}. Penna drives motherboard fans from M5.",
+                    if *controls == 1 { "" } else { "s" }
+                ),
+                None,
+            );
+        }
+    }
+
+    // Other fan programs.
+    if f.other_daemons.is_empty() {
+        push(&mut out, "other tools", Status::Ok, format!("No other fan daemon is running ({}).", OTHER_DAEMONS.join(", ")), None);
+    }
+    for d in &f.other_daemons {
+        push(
+            &mut out,
+            "other tools",
+            Status::Attention,
+            format!("{d} is running and drives fans too: Penna would find the fans they share contested."),
+            Some(format!("Choose one: sudo systemctl disable --now {d}")),
+        );
+    }
+
+    // GPUs.
+    match &f.nvidia {
+        Ok(gpus) if !gpus.is_empty() => {
+            let list: Vec<String> = gpus.iter().map(|(l, n)| format!("{l} ({n} fan{})", if *n == 1 { "" } else { "s" })).collect();
+            push(&mut out, "nvidia", Status::Ok, format!("NVML sees {}.", list.join(", ")), None);
+        }
+        Ok(_) => push(&mut out, "nvidia", Status::Info, "NVML is here but sees no NVIDIA GPU.".into(), None),
+        Err(why) => push(&mut out, "nvidia", Status::Info, format!("No NVIDIA fans: {why}."), None),
+    }
+    for u in &f.unreachable {
+        push(&mut out, "gpu", Status::Info, format!("{} is {}: its fans belong to the VM, not to this machine.", u.label, u.reason), None);
+    }
+    out
+}
+
+/// Prints the findings and returns how many need attention.
+pub fn run(json: bool) -> anyhow::Result<usize> {
+    let all = findings(&gather());
+    let attention = all.iter().filter(|f| f.status == Status::Attention).count();
+    if json {
+        println!("{}", serde_json::json!({ "attention": attention, "findings": all }));
+        return Ok(attention);
+    }
+    println!("Penna doctor\n");
+    for f in &all {
+        let mark = match f.status {
+            Status::Ok => "✓",
+            Status::Attention => "!",
+            Status::Info => "·",
+        };
+        println!("{mark} {:<12} {}", f.area, f.text);
+        if let Some(todo) = &f.todo {
+            println!("  {:<12} → {todo}", "");
+        }
+    }
+    println!();
+    println!(
+        "{}",
+        if attention == 0 {
+            "Nothing needs attention.".to_owned()
+        } else {
+            format!("{attention} {} attention.", if attention == 1 { "thing needs" } else { "things need" })
+        }
+    );
+    Ok(attention)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn facts() -> Facts {
+        Facts {
+            daemons: vec![],
+            production_socket: "/run/penna/penna.sock".into(),
+            fan_drivers: vec![],
+            board: Some(("Gigabyte Technology Co., Ltd.".into(), "X570 AORUS PRO".into())),
+            kernel_log: KernelLog::Conflict("ACPI: OSL: Resource conflict; ACPI support missing from driver?".into()),
+            it87_chips: Some(vec!["IT8689E".into(), "IT8792E/IT8795E".into()]),
+            other_daemons: vec![],
+            nvidia: Ok(vec![("NVIDIA GeForce RTX 3090".into(), 2)]),
+            unreachable: vec![Unreachable {
+                id: "pci/0000:0a:00.0".into(),
+                label: "NVIDIA TU106 [GeForce RTX 2060 SUPER]".into(),
+                reason: "passed through to a VM (vfio-pci)".into(),
+            }],
+        }
+    }
+
+    fn by_area<'a>(all: &'a [Finding], area: &str) -> Vec<&'a Finding> {
+        all.iter().filter(|f| f.area == area).collect()
+    }
+
+    #[test]
+    fn this_desk_today_names_the_board_the_conflict_and_the_risk() {
+        let all = findings(&facts());
+        let mb = by_area(&all, "motherboard");
+        assert_eq!(mb[0].status, Status::Attention);
+        assert!(mb[0].text.contains("X570 AORUS PRO") && mb[0].text.contains("Resource conflict"), "{}", mb[0].text);
+        let todo = mb[0].todo.as_deref().unwrap();
+        assert!(todo.contains("it87-dkms-git") && todo.contains("inherently risky") && todo.contains("IT8792E/IT8795E"), "{todo}");
+        assert_eq!(by_area(&all, "daemon")[0].status, Status::Attention, "no production pennad");
+        assert_eq!(by_area(&all, "nvidia")[0].text, "NVML sees NVIDIA GeForce RTX 3090 (2 fans).");
+        assert!(by_area(&all, "gpu")[0].text.contains("2060 SUPER"));
+        assert_eq!(by_area(&all, "other tools")[0].status, Status::Ok);
+    }
+
+    #[test]
+    fn a_daemon_that_refuses_writes_says_why_and_fans_in_trouble_say_what_to_do() {
+        let mut f = facts();
+        let mut tick: Tick = serde_json::from_str(include_str!("../../penna-proto/tests/fixtures/tick.json")).unwrap();
+        tick.emergency.clear();
+        f.daemons.push(Daemon {
+            via: "/run/penna/penna.sock".into(),
+            mock: false,
+            version: "0.6.0".into(),
+            can_write: false,
+            why: Some("Changing fans needs membership of the penna group: sudo usermod -aG penna $USER (it applies at once).".into()),
+            tick: Some(tick),
+        });
+        let all = findings(&f);
+        let daemon = by_area(&all, "daemon")[0];
+        assert_eq!(daemon.status, Status::Attention);
+        assert!(daemon.todo.as_deref().unwrap().contains("usermod -aG penna"));
+        let fans = by_area(&all, "fans");
+        assert!(fans.iter().any(|x| x.text.contains("contested") && x.todo.as_deref().unwrap().contains("penna retry")), "{fans:?}");
+    }
+
+    #[test]
+    fn a_healthy_machine_needs_nothing() {
+        let mut f = facts();
+        f.fan_drivers = vec![("it87".into(), 5)];
+        let mut tick: Tick = serde_json::from_str(include_str!("../../penna-proto/tests/fixtures/tick.json")).unwrap();
+        tick.emergency.clear();
+        tick.controls.retain(|c| matches!(c.state, State::Curve | State::Handback | State::Override));
+        f.daemons.push(Daemon {
+            via: "/run/penna/penna.sock".into(),
+            mock: false,
+            version: "0.6.0".into(),
+            can_write: true,
+            why: None,
+            tick: Some(tick),
+        });
+        let all = findings(&f);
+        assert!(all.iter().all(|x| x.status != Status::Attention), "{all:?}");
+        assert_eq!(by_area(&all, "motherboard")[0].text, "it87 is bound, with 5 fan controls. Penna drives motherboard fans from M5.");
+    }
+
+    #[test]
+    fn other_fan_daemons_and_unreadable_logs_are_named() {
+        let mut f = facts();
+        f.other_daemons = vec!["coolercontrold".into()];
+        f.kernel_log = KernelLog::Unreadable;
+        f.board = Some(("ASUSTeK COMPUTER INC.".into(), "ROG STRIX B550-F".into()));
+        let all = findings(&f);
+        assert!(by_area(&all, "other tools")[0].todo.as_deref().unwrap().contains("disable --now coolercontrold"));
+        let mb = by_area(&all, "motherboard")[0];
+        assert!(mb.text.contains("isn't readable") && mb.todo.as_deref().unwrap().contains("nct6775"));
+    }
+
+    #[test]
+    fn chip_names_come_out_of_the_module_strings() {
+        let bytes = b"\0it8792\0IT8792E/IT8795E\0IT8689E\0IT87952E\0IT8705F\0not IT9999E\0ITE\0IT8\0";
+        assert_eq!(chip_names(bytes), ["IT8689E", "IT8705F", "IT8792E/IT8795E", "IT87952E"]);
+    }
+}

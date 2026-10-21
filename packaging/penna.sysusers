@@ -1,0 +1,2 @@
+# Members of penna may change fans through pennad's socket (DESIGN.md §7.4). Reading needs no group.
+g penna - -

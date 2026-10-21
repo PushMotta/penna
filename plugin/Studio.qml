@@ -679,7 +679,7 @@ Item {
               text: client.error !== "" ? client.error
                   : root.closeArmed ? "Unsaved changes. Esc again discards them and closes; ctrl+s keeps them."
                   : client.lockedByOther ? "Another studio has unsaved changes."
-                  : !root.canWrite && client.ready ? Model.writeBlockedReason(true, false)
+                  : !root.canWrite && client.ready ? (root.service && root.service.writeWhy !== "" ? root.service.writeWhy : Model.writeBlockedReason(true, false))
                   : root.notice !== "" ? root.notice
                   : root.hints
               color: client.error !== "" || root.closeArmed ? root.urgent : root.dim

@@ -6,8 +6,10 @@
 pub struct Peer {
     pub uid: u32,
     pub gid: u32,
-    /// Supplementary groups.
+    /// Supplementary groups, as the process holds them: fixed when its session started.
     pub groups: Vec<u32>,
+    /// Its user is listed in `penna`'s line of `/etc/group` now, so `usermod -aG penna` counts without logging in again.
+    pub listed: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -25,8 +27,8 @@ pub fn decide(peer: &Peer, policy: &Policy) -> Result<(), String> {
         return Ok(());
     }
     match policy.penna_gid {
-        Some(g) if peer.gid == g || peer.groups.contains(&g) => Ok(()),
-        Some(_) => Err("Changing fans needs membership of the penna group: run sudo usermod -aG penna $USER, then log in again.".into()),
+        Some(g) if peer.gid == g || peer.groups.contains(&g) || peer.listed => Ok(()),
+        Some(_) => Err("Changing fans needs membership of the penna group: sudo usermod -aG penna $USER (it applies at once).".into()),
         None => Err("Changing fans needs membership of the penna group, which doesn't exist yet: installing Penna creates it.".into()),
     }
 }
@@ -42,6 +44,29 @@ fn group_gid(etc_group: &str, name: &str) -> Option<u32> {
         let mut f = l.split(':');
         (f.next()? == name).then_some(())?;
         f.nth(1)?.parse().ok()
+    })
+}
+
+/// Whether `uid`'s user name is a member of `group` in `/etc/group`, read now. Read per connection, so a `usermod -aG` made
+/// while the daemon runs applies to the next connection.
+pub fn listed(group: &str, uid: u32) -> bool {
+    let (Ok(passwd), Ok(groups)) = (std::fs::read_to_string("/etc/passwd"), std::fs::read_to_string("/etc/group")) else {
+        return false;
+    };
+    is_listed(&passwd, &groups, group, uid)
+}
+
+fn is_listed(etc_passwd: &str, etc_group: &str, group: &str, uid: u32) -> bool {
+    let Some(name) = etc_passwd.lines().find_map(|l| {
+        let mut f = l.split(':');
+        let name = f.next()?;
+        (f.nth(1)?.parse::<u32>().ok()? == uid).then_some(name)
+    }) else {
+        return false;
+    };
+    etc_group.lines().any(|l| {
+        let mut f = l.split(':');
+        f.next() == Some(group) && f.nth(2).is_some_and(|members| members.split(',').any(|m| m.trim() == name))
     })
 }
 
@@ -63,7 +88,7 @@ mod tests {
     use super::*;
 
     fn peer(uid: u32, gid: u32, groups: &[u32]) -> Peer {
-        Peer { uid, gid, groups: groups.to_vec() }
+        Peer { uid, gid, groups: groups.to_vec(), listed: false }
     }
 
     #[test]
@@ -78,7 +103,7 @@ mod tests {
     fn everyone_else_is_refused_with_what_to_do() {
         let p = Policy { daemon_uid: 0, mock: false, penna_gid: Some(960) };
         let e = decide(&peer(1000, 1000, &[998]), &p).unwrap_err();
-        assert!(e.contains("usermod -aG penna"), "{e}");
+        assert!(e.contains("usermod -aG penna") && e.contains("applies at once"), "{e}");
         let none = Policy { penna_gid: None, ..p };
         assert!(decide(&peer(1000, 1000, &[]), &none).unwrap_err().contains("doesn't exist yet"));
     }
@@ -98,5 +123,21 @@ mod tests {
         assert_eq!(group_gid("root:x:0:\n", "penna"), None);
         assert_eq!(parse_groups("Name:\tpenna\nGroups:\t3 90 998 1000 \nNSpid:\t1\n"), [3, 90, 998, 1000]);
         assert_eq!(parse_groups("Groups:\n"), Vec::<u32>::new());
+    }
+
+    const PASSWD: &str =
+        "root:x:0:0::/root:/usr/bin/bash\npmotta:x:1000:1000:Pedro Motta:/home/pmotta:/bin/bash\nguest:x:1001:1001::/home/guest:/bin/sh\n";
+
+    #[test]
+    fn a_user_added_to_penna_may_write_before_logging_in_again() {
+        let group = "root:x:0:\nwheel:x:998:pmotta\npenna:x:960:pmotta\n";
+        assert!(is_listed(PASSWD, group, "penna", 1000));
+        assert!(!is_listed(PASSWD, group, "penna", 1001), "guest is not a member");
+        assert!(!is_listed(PASSWD, group, "penna", 4242), "a uid with no user");
+        assert!(is_listed(PASSWD, "penna:x:960:guest, pmotta\n", "penna", 1000), "members are a comma list");
+        assert!(!is_listed(PASSWD, "pennant:x:961:pmotta\npenna:x:960:\n", "penna", 1000), "another group's line doesn't count");
+        // The process's own groups still say nothing about penna: only the listing does.
+        let p = Policy { daemon_uid: 0, mock: false, penna_gid: Some(960) };
+        assert_eq!(decide(&Peer { listed: true, ..peer(1000, 1000, &[998]) }, &p), Ok(()));
     }
 }

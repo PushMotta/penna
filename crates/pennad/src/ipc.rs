@@ -156,13 +156,19 @@ async fn connection(stream: UnixStream, setup: Arc<Setup>, conn: u64) {
 
 async fn talk(stream: UnixStream, setup: &Setup, conn: u64) {
     let peer = match stream.peer_cred() {
-        Ok(c) => Peer { uid: c.uid(), gid: c.gid(), groups: c.pid().map(auth::groups_of).unwrap_or_default() },
+        Ok(c) => Peer {
+            uid: c.uid(),
+            gid: c.gid(),
+            groups: c.pid().map(auth::groups_of).unwrap_or_default(),
+            listed: auth::listed("penna", c.uid()),
+        },
         Err(e) => {
             eprintln!("pennad: a client without credentials ({e}); closed");
             return;
         }
     };
-    let decision = auth::decide(&peer, &setup.policy);
+    // The group is looked up per connection too: installing Penna can create it after this daemon started.
+    let decision = auth::decide(&peer, &Policy { penna_gid: auth::penna_gid(), ..setup.policy.clone() });
     let (rd, mut wr) = stream.into_split();
     let mut lines = read_lines(rd);
     let mut published = setup.published.clone();

@@ -32,8 +32,7 @@ against the mock desk:
 ln -s ~/Projects/penna/plugin ~/.config/omarchy/plugins/io.github.pushmotta.penna
 omarchy plugin enable io.github.pushmotta.penna
 cargo run -p pennad -- --mock render-burst --forever
-omarchy-shell shell toggle io.github.pushmotta.penna '{}'   # open the popup
-cargo run -p penna -- open                                   # open the studio (or Curves… in the popup)
+penna open                                                   # open the studio (or click the glyph, then Curves…)
 node --test plugin/test/model.test.js plugin/test/studio.test.js
 ```
 
@@ -45,6 +44,23 @@ budget is missed.
 With the plugin symlinked, the shell doesn't notice edits inside it. It also keeps a plugin's scripts in memory across its own
 plugin reload. So after editing, restart the shell with `omarchy-restart-shell`. `omarchy plugin disable
 io.github.pushmotta.penna` takes the widget off the bar.
+
+## Installing (M6)
+
+```
+cd packaging && makepkg -f --nodeps     # --nodeps when cargo comes from rustup rather than pacman
+pkexec pacman -U penna-0.6.0-*-x86_64.pkg.tar.zst
+sudo systemctl enable --now pennad      # the first start writes /etc/penna/config.toml, adopting nothing
+sudo usermod -aG penna "$USER"          # change fans from the popup and the studio; applies at once
+penna doctor                            # what Penna can and can't reach on this machine
+```
+
+On this desk, `pkexec tools/install-desk.sh` does all of that, and installs the RTX 3090 config the M4 hardware test used.
+`pkexec pacman -R penna` stops `pennad` first, which hands every fan back.
+
+The package holds `/usr/bin/pennad`, `/usr/bin/penna`, the systemd unit (`packaging/pennad.service`: `Type=notify`,
+watchdog, `ExecStopPost=penna restore`, `Restart=on-failure`, hardened but allowed `/sys` and `/dev/nvidia*`), the `penna`
+group (`sysusers.d`), and the plugin under `/usr/share/penna/plugin`.
 
 ## Real hardware (M4: NVIDIA fans)
 

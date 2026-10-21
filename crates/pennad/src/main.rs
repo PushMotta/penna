@@ -41,7 +41,7 @@ const REQUEST_POLL: Duration = Duration::from_millis(20);
 #[derive(Parser)]
 #[command(
     name = "pennad",
-    version,
+    version = env!("PENNA_VERSION"),
     about = "Penna's daemon: as root, this machine's fans (NVIDIA from M4, motherboard from M5); or a mock desk."
 )]
 struct Args {
@@ -89,6 +89,9 @@ struct Args {
     /// WatchdogSec kills it. SIGTERM still stops it cleanly.
     #[arg(long, hide = true)]
     test_hang_after: Option<u64>,
+    /// Print the configuration pennad would write on its first start on this machine, read-only, and exit.
+    #[arg(long, hide = true)]
+    print_starter: bool,
 }
 
 fn parse_tick(s: &str) -> Result<f64, String> {
@@ -102,7 +105,9 @@ fn parse_speed(s: &str) -> Result<f64, String> {
 }
 
 fn main() -> ExitCode {
-    match run(Args::parse()) {
+    let args = Args::parse();
+    let result = if args.print_starter { print_starter() } else { run(args) };
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             let text = format!("{e:#}");
@@ -121,7 +126,8 @@ struct Setup {
     /// This machine's real hardware: NVIDIA under control, motherboard fans read only (M4).
     real: bool,
     sysfs_root: PathBuf,
-    config: String,
+    /// `None` on a first start: there is no configuration yet, and the loop writes a starter (§7.5).
+    config: Option<String>,
     /// Where changes from surfaces are saved.
     config_path: Option<PathBuf>,
     measured: Measured,
@@ -140,15 +146,17 @@ fn setup(args: &Args) -> Result<Setup> {
             let root = unsafe { libc::geteuid() } == 0;
             let path = args.config.clone().unwrap_or_else(|| PathBuf::from(DEFAULT_CONFIG));
             let config = match std::fs::read_to_string(&path) {
-                Ok(c) => c,
+                Ok(c) => Some(c),
                 Err(_) if !root => bail!("{NOT_ROOT}"),
+                // A first start: the loop writes a starter once it knows the machine.
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
                 Err(e) => {
                     return Err(anyhow!(e)
                         .context(format!("reading {} (write one, check it with `penna check`, or pass --config)", path.display())));
                 }
             };
             // What the configuration asks for is explained first, root or not.
-            let assigned = Config::parse(&config).map(|c| c.assigned_motherboard()).unwrap_or_default();
+            let assigned = config.as_deref().and_then(|c| Config::parse(c).ok()).map(|c| c.assigned_motherboard()).unwrap_or_default();
             if !assigned.is_empty() {
                 bail!("Motherboard fans arrive in M5; this config assigns {}. Set them to \"firmware\" for now.", assigned.join(", "));
             }
@@ -207,7 +215,7 @@ fn setup(args: &Args) -> Result<Setup> {
                 cpu_model: Some(sim.scenario().cpu_model.clone()),
                 runtime_dir: args.runtime_dir.clone().unwrap_or_else(|| tree.join("run")),
                 sim: Some(sim),
-                config,
+                config: Some(config),
                 config_path: Some(config_path),
                 measured,
                 socket,
@@ -222,7 +230,7 @@ fn setup(args: &Args) -> Result<Setup> {
                 sim: None,
                 real: false,
                 sysfs_root: root.clone(),
-                config: std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?,
+                config: Some(std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?),
                 config_path: Some(path.clone()),
                 measured: match &args.measured {
                     Some(p) => read_measured(p)?,
@@ -236,6 +244,31 @@ fn setup(args: &Args) -> Result<Setup> {
             })
         }
     }
+}
+
+/// No configuration yet (§7.5): write a starter for this machine, which adopts nothing, or run with it in memory when its
+/// directory can't be written.
+fn first_start(inventory: &Inventory, path: Option<&Path>) -> Config {
+    let config = penna_core::starter::starter(inventory);
+    let summary = penna_core::starter::summary(&config);
+    match path {
+        Some(p) => match held::write_atomically(p, penna_core::starter::text(&config).as_bytes()) {
+            Ok(()) => eprintln!("pennad: no configuration yet, so wrote a starter to {}: {summary}.", p.display()),
+            Err(e) => eprintln!(
+                "pennad: no configuration yet, and {} can't be written ({e:#}): running with a starter in memory: {summary}.",
+                p.display()
+            ),
+        },
+        None => eprintln!("pennad: no configuration yet: running with a starter in memory: {summary}."),
+    }
+    config
+}
+
+/// `--print-starter`: what a first start would write on this machine. Read-only, and needs no root.
+fn print_starter() -> Result<()> {
+    let machine = Machine::open(&Options::default())?;
+    print!("{}", penna_core::starter::text(&penna_core::starter::starter(&machine.inventory)));
+    Ok(())
 }
 
 fn read_measured(path: &Path) -> Result<Measured> {
@@ -307,7 +340,6 @@ fn run(args: Args) -> Result<()> {
     let Setup { mut sim, real, sysfs_root, config, config_path, measured, cpu_model, runtime_dir, socket, scratch, seconds } =
         setup(&args)?;
     let mock = sim.is_some();
-    let config = Config::parse(&config).map_err(|e| anyhow!("configuration: {e}"))?;
     let opts = if real {
         // Motherboard fans read only; NVIDIA fans under control.
         Options { sysfs_root, nvml: true, mock_nvml: None, control: false }
@@ -315,6 +347,10 @@ fn run(args: Args) -> Result<()> {
         Options { sysfs_root, nvml: false, mock_nvml: sim.as_ref().map(Sim::mock_nvml_root), control: true }
     };
     let mut machine = Machine::open(&opts)?;
+    let config = match config {
+        Some(text) => Config::parse(&text).map_err(|e| anyhow!("configuration: {e}"))?,
+        None => first_start(&machine.inventory, config_path.as_deref()),
+    };
     let plan = Plan::new(config, &machine.inventory, &measured, cpu_model.as_deref()).map_err(|problems| {
         anyhow!(
             "the configuration does not fit this machine:\n  {}",
@@ -566,4 +602,67 @@ fn install_panic_hook(held_path: PathBuf) {
         }
         default(info);
     }));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use penna_core::{ControlInfo, ControlKind, Device, Key, SensorInfo, Source};
+
+    fn desk() -> Inventory {
+        let uuid = "GPU-1";
+        let sensor =
+            |key: Key, label: &str| SensorInfo { key, label: label.into(), limits: vec![], ignored_limits: vec![], below_ambient: false };
+        Inventory {
+            devices: vec![
+                Device {
+                    id: "hwmon/k10temp/0000:00:18.3".into(),
+                    source: Source::Hwmon,
+                    driver: "k10temp".into(),
+                    label: "AMD CPU".into(),
+                    location: "0000:00:18.3".into(),
+                    model: None,
+                    sensors: vec![sensor(Key::hwmon("k10temp", "0000:00:18.3", "temp1"), "Tctl")],
+                    tachs: vec![],
+                    controls: vec![],
+                },
+                Device {
+                    id: format!("nvml/{uuid}"),
+                    source: Source::Nvml,
+                    driver: "nvml".into(),
+                    label: "GPU".into(),
+                    location: String::new(),
+                    model: None,
+                    sensors: vec![sensor(Key::nvml_temp(uuid), "GPU")],
+                    tachs: vec![],
+                    controls: vec![ControlInfo {
+                        key: Key::nvml_fan(uuid, 0),
+                        label: "Fan 1".into(),
+                        kind: ControlKind::Nvml { min: 30, max: 100 },
+                    }],
+                },
+            ],
+            ..Inventory::default()
+        }
+    }
+
+    #[test]
+    fn a_first_start_writes_a_starter_that_reads_back_and_adopts_nothing() {
+        let dir = std::env::temp_dir().join(format!("pennad-first-start-{}", std::process::id()));
+        let path = dir.join("etc/penna/config.toml");
+        let config = first_start(&desk(), Some(&path));
+        let text = std::fs::read_to_string(&path).expect("the starter was written, directories and all");
+        assert!(text.starts_with("# Penna's configuration, generated by pennad on its first start"));
+        assert_eq!(Config::parse(&text).expect("it reads back"), config);
+        assert!(config.profiles.values().all(|p| p.is_empty()));
+        Plan::new(config, &desk(), &Measured::default(), None).expect("it fits the machine it was made for");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_first_start_that_cannot_write_runs_with_the_starter_in_memory() {
+        let config = first_start(&desk(), Some(Path::new("/proc/penna/config.toml")));
+        assert_eq!(config.curves.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), ["gpu", "cpu-quiet"]);
+        assert!(!Path::new("/proc/penna/config.toml").exists());
+    }
 }

@@ -1,6 +1,6 @@
 # Penna — design specification
 
-Draft 2 · 21 October 2026 · status: decisions approved (§11), UI quality bar added (§8.6), M0–M4 done, design review 01 approved (milestone D, §11.1). Penna controls the real 3090 (§9.4).
+Draft 2 · 21 October 2026 · status: decisions approved (§11), UI quality bar added (§8.6), M0–M4 and M6 done, design review 01 approved (milestone D, §11.1). Penna 0.6.0 runs as a service on this desk and controls the 3090; M5 (motherboard fans) waits on the it87 decision.
 
 Companion: design review 01 — mockups in real theme tokens, live motion prototypes, and eight calls before QML — is published as an artifact (https://claude.ai/artifact/DmFftUzWVBd11NNBv4e8aK). Its source is `design/penna-design-review.html`.
 
@@ -431,7 +431,7 @@ A draft is validated like `penna check`; a refused change leaves the draft as it
 
 ### 7.4 Authorisation and drafts
 
-- The socket is world-connectable. Each request is checked against the peer's credentials: reads are open to any local user; writes need uid 0 or membership of the `penna` group, which is created by `sysusers.d`. polkit (the shell already ships an agent) is the v2 route if group membership proves awkward. Under `--mock`, the daemon's own uid may also write, so the whole stack runs unprivileged.
+- The socket is world-connectable. Each request is checked against the peer's credentials: reads are open to any local user; writes need uid 0 or membership of the `penna` group, which is created by `sysusers.d`. polkit (the shell already ships an agent) is the v2 route if group membership proves awkward. Under `--mock`, the daemon's own uid may also write, so the whole stack runs unprivileged. Membership counts from `/etc/group` as well as from the connecting process's own groups, so `usermod -aG penna` applies at once, with no new login *(M6)*.
 - **A draft belongs to its connection.** The studio's edits apply live to the fans for preview, and `draft.save` persists them. If the connection closes with a draft open — Esc, a closed overlay, a shell crash — the daemon reverts to the saved configuration. This is Candela's "the revert runs outside the shell", without a countdown: a bad fan curve is audible and caught by §6, not invisible like a dark display.
 
 ### 7.5 Persistence
@@ -470,6 +470,27 @@ failsafe = 100
 ### 7.6 Packaging
 
 `pennad.service` (`Type=notify`, `WatchdogSec=5`, `Restart=on-failure`, `ExecStopPost=/usr/bin/penna restore`, `RuntimeDirectory=penna`, `RuntimeDirectoryPreserve=yes`, `StateDirectory=penna`, `ConfigurationDirectory=penna`, plus the hardening that still allows `/sys` writes). Also `sysusers.d` for the group and a PKGBUILD. The it87 fork is an optional dependency that `doctor` recommends, never a hard one.
+
+**As built in M6** (`packaging/`):
+- **The unit.**
+  - `RestartSec=1`, because the whole-unit kill in §6.2 relies on a quick restart.
+  - `WatchdogSignal=SIGKILL`: the watchdog exists to get the fans back, not to leave a core dump.
+  - `ExecStart=/usr/bin/pennad --quiet`: the journal gets changes (states, faults, emergencies) rather than a line every second.
+  - Hardening: `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `NoNewPrivileges`, `ProtectKernelModules`, `ProtectControlGroups`, the `Restrict*` family, and native syscalls only. `/sys` and `/dev` stay reachable for hwmon and NVML.
+- **The package.**
+  - The PKGBUILD builds from the checkout and runs the whole test suite in `check()`.
+  - It installs the binaries, the unit, the group, the docs, the MIT licence and the plugin (`/usr/share/penna/plugin`).
+  - Its install script restarts `pennad` on upgrade and stops it before removal, which hands every fan back.
+- **First start without a configuration.** `pennad` writes a starter to `/etc/penna/config.toml`: curves for what the machine has (each NVIDIA GPU, and the CPU's Tctl or Package sensor), `[[control]]` entries for NVIDIA fans with *may stop* on so zero-RPM survives adoption, and three profiles that assign nothing. Every fan stays with its firmware until the user adopts it in the studio.
+- **`penna doctor`.** Read-only findings, each with what to do:
+  - the daemon and whether this user can write;
+  - motherboard fan drivers, naming the board and the kernel log's ACPI conflict;
+  - other fan daemons;
+  - NVML, and GPUs passed through to a VM;
+  - contested or faulted fans.
+
+  It exits 1 when something needs attention.
+- **Installed on this desk on 21 Oct 2026** with `tools/install-desk.sh`. `pennad` runs as an enabled service using about 22 MB. Both 3090 fans are on the driver's curve at idle, as M4 showed. The desk's user changes profiles without root.
 
 ## 8. Surfaces
 
@@ -672,7 +693,7 @@ Milestones, each ending in something visible:
   - the hardware test passes all six cases (§9.4);
   - 124 Rust tests.
 - **M5** — Motherboard fans: bind `it87` (stock first, the fork if the IT8688E needs it), `doctor`, pairing, calibration, contested detection on the IT8792E.
-- **M6** — Packaging, README, first release.
+- **M6** — Packaging, README, first release. **Done 21 Oct 2026**, ahead of M5 (motherboard fans need the it87 decision, §13): 0.6.0 is packaged, installed and running as a service on this desk, with 136 Rust tests and 17 plugin logic tests (§7.6, as built). Still to do for a public release: publish the repository and the plugin as its own repo (§11, decision 9), and switch the PKGBUILD to a tagged tarball.
 
 ## 11. Decisions (approved 21 Oct 2026)
 

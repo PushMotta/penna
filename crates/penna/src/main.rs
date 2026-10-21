@@ -3,6 +3,7 @@
 //! Commands that change fans talk to `pennad` over its socket (DESIGN.md §7.3, [`client`]). `watch` uses the daemon when one
 //! answers and otherwise reads the hardware directly, as M0 did; `restore`, `check` and `capture` never need the daemon.
 mod client;
+mod doctor;
 mod render;
 mod waybar;
 
@@ -21,7 +22,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[derive(Parser)]
-#[command(name = "penna", version, about = "Fan control for Linux, made to be understood.")]
+#[command(name = "penna", version = env!("PENNA_VERSION"), about = "Fan control for Linux, made to be understood.")]
 struct Cli {
     /// Read sysfs from here instead of /sys (a `penna capture`). Turns NVML off: a fixture has no live GPU.
     #[arg(long, global = true, value_name = "DIR")]
@@ -99,6 +100,12 @@ enum Command {
     Restore {
         #[arg(long, value_name = "FILE", default_value = "/run/penna/held.json")]
         from: PathBuf,
+    },
+    /// What stands between this machine and Penna running its fans, each with what to do. Read-only. Exits 1 when something
+    /// needs attention.
+    Doctor {
+        #[arg(long)]
+        json: bool,
     },
     /// Check a configuration without applying it, against this machine.
     Check {
@@ -195,6 +202,13 @@ fn run(cli: Cli) -> Result<()> {
         Command::Waybar { follow, sensor } => bar(follow, sensor.as_deref()),
         Command::Restore { from } => restore(&from),
         Command::Check { config, measured } => check(&opts, &config, measured.as_deref()),
+        Command::Doctor { json } => {
+            if doctor::run(json)? > 0 {
+                std::io::stdout().flush()?;
+                std::process::exit(1);
+            }
+            Ok(())
+        }
         Command::Capture { dir } => {
             let report = penna_hw::capture::capture(&opts.sysfs_root, &dir).with_context(|| format!("capturing into {}", dir.display()))?;
             println!(

@@ -35,13 +35,29 @@ function socketCandidates(pennaSocket, runtimeDir) {
 }
 
 function controls(tick) { return tick && Array.isArray(tick.controls) ? tick.controls : [] }
+
+// The fans Penna runs: configured controls a profile adopts and that are present. A configured control on "firmware" folds
+// under Firmware and an absent one under Not reachable (§8.2); neither is a fan Penna runs.
+function adopted(tick) { return controls(tick).filter(function(c) { return c.state !== "firmware" && c.state !== "absent" }) }
+
+function firmwareLines(tick) {
+  var listed = tick && Array.isArray(tick.firmware) ? tick.firmware.map(function(f) { return String(f.label) }) : []
+  return controls(tick).filter(function(c) { return c.state === "firmware" }).map(function(c) { return String(c.label) }).concat(listed)
+}
+
+function unreachableLines(tick) {
+  var absent = controls(tick).filter(function(c) { return c.state === "absent" })
+                             .map(function(c) { return String(c.label) + " · configured, but not on this machine now" })
+  var list = tick && Array.isArray(tick.unreachable) ? tick.unreachable : []
+  return absent.concat(list.map(function(u) { return String(u.label) + " · " + String(u.reason) }))
+}
 function sensors(tick) { return tick && Array.isArray(tick.sensors) ? tick.sensors : [] }
 function isAlert(state) { return ALERT_STATES.indexOf(state) >= 0 }
 function alerts(tick) { return controls(tick).filter(function(c) { return isAlert(c.state) }) }
 function hasEmergency(tick) { return !!(tick && Array.isArray(tick.emergency) && tick.emergency.length) }
 
 function fanCount(tick) {
-  return controls(tick).reduce(function(n, c) { return n + Math.max(1, Number(c.fans) || 0) }, 0)
+  return adopted(tick).reduce(function(n, c) { return n + Math.max(1, Number(c.fans) || 0) }, 0)
 }
 
 // The bar glyph and its colour role: shape first, colour only reinforces (§8.1, review call 1).
@@ -55,7 +71,7 @@ function barState(tick, connected) {
     var timed = held.some(function(c) { return c.override.until !== null && c.override.until !== undefined })
     return { glyph: timed ? GLYPH.timed : GLYPH.full, tone: "accent" }
   }
-  if (!controls(tick).length) return { glyph: GLYPH.auto, tone: "normal" }
+  if (!adopted(tick).length) return { glyph: GLYPH.auto, tone: "normal" }
   return { glyph: GLYPH.fan, tone: "normal" }
 }
 
@@ -107,7 +123,7 @@ function hero(tick, connected, nowSec, lastTickSec) {
   if (a.length > 1) return { title: a.length + " fans need attention", tone: "urgent", glyph: GLYPH.alert, meta: "EACH ONE SAYS WHY BELOW" }
   if (tick.full_speed) return { title: "Full speed", tone: "accent", glyph: GLYPH.full, meta: "EVERY FAN AT 100 % · UNTIL YOU TURN IT OFF" }
   if (tick.draft) return { title: profileLabel(tick), tone: "accent", glyph: GLYPH.fan, meta: "PREVIEWING UNSAVED CHANGES FROM THE STUDIO" }
-  if (!controls(tick).length) return { title: "Firmware runs every fan", tone: "normal", glyph: GLYPH.auto, meta: "NOTHING ADOPTED YET" }
+  if (!adopted(tick).length) return { title: "Firmware runs every fan", tone: "normal", glyph: GLYPH.auto, meta: "NOTHING ADOPTED YET" }
   return { title: profileLabel(tick), tone: "normal", glyph: GLYPH.fan, meta: null }
 }
 
@@ -399,13 +415,13 @@ function curveOptions(body) {
 
 function writeBlockedReason(connected, canWrite) {
   if (!connected || canWrite) return ""
-  return "Changing fans needs the penna group: sudo usermod -aG penna $USER, then log in again."
+  return "Changing fans needs the penna group: sudo usermod -aG penna $USER (it applies at once)."
 }
 
 if (typeof module !== "undefined") {
   module.exports = {
     GLYPH: GLYPH, ALERT_STATES: ALERT_STATES, socketCandidates: socketCandidates, controls: controls, sensors: sensors,
-    isAlert: isAlert, alerts: alerts, hasEmergency: hasEmergency, fanCount: fanCount, barState: barState,
+    isAlert: isAlert, alerts: alerts, adopted: adopted, firmwareLines: firmwareLines, unreachableLines: unreachableLines, hasEmergency: hasEmergency, fanCount: fanCount, barState: barState,
     profileLabel: profileLabel, profileOptions: profileOptions, hero: hero, normalMeta: normalMeta, shortName: shortName,
     tempRows: tempRows, scale: scale, badge: badge, dutyText: dutyText, deadband: deadband, formatNumber: formatNumber,
     ago: ago, clock: clock, writeBlockedReason: writeBlockedReason, keysOf: keysOf, sameKeys: sameKeys, byKey: byKey,

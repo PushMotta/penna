@@ -1,0 +1,41 @@
+# Maintainer: Pedro Motta
+#
+# Builds the package from this checkout: `cd packaging && makepkg -f`. An AUR release would fetch a tagged tarball instead.
+pkgname=penna
+pkgver=0.6.0
+pkgrel=2
+pkgdesc="Fan control that belongs to the shell: a daemon that always hands fans back, a CLI, and an Omarchy plugin"
+arch=('x86_64')
+url="https://github.com/pushmotta/penna"
+license=('MIT')
+depends=('gcc-libs' 'glibc' 'systemd')
+makedepends=('cargo')
+optdepends=('nvidia-utils: NVIDIA GPU fans'
+            'it87-dkms-git: motherboard fans on boards with ITE Super I/O chips the stock it87 does not know'
+            'python: tools/nvml-state.py')
+install=penna.install
+
+_root() { cd "$startdir/.."; }
+
+build() {
+  _root
+  cargo build --release --locked
+}
+
+check() {
+  _root
+  cargo test --workspace --locked
+}
+
+package() {
+  _root
+  install -Dm755 target/release/pennad "$pkgdir/usr/bin/pennad"
+  install -Dm755 target/release/penna "$pkgdir/usr/bin/penna"
+  install -Dm644 packaging/pennad.service "$pkgdir/usr/lib/systemd/system/pennad.service"
+  install -Dm644 packaging/penna.sysusers "$pkgdir/usr/lib/sysusers.d/penna.conf"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/penna/LICENSE"
+  install -Dm644 DESIGN.md README.md -t "$pkgdir/usr/share/doc/penna/"
+  # The Omarchy plugin, to symlink into ~/.config/omarchy/plugins/io.github.pushmotta.penna.
+  install -d "$pkgdir/usr/share/penna/plugin"
+  cp -r --no-preserve=ownership plugin/manifest.json plugin/*.qml plugin/Model.js plugin/components "$pkgdir/usr/share/penna/plugin/"
+}

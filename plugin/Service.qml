@@ -20,6 +20,8 @@ Item {
   property var hello: null
   readonly property bool connected: hello !== null
   readonly property bool canWrite: hello !== null && hello.can_write === true
+  // The daemon's own sentence for why this user can't change fans, when it gives one (§7.3, as built in M2).
+  readonly property string writeWhy: hello !== null && !canWrite && hello.why ? String(hello.why) : ""
   // Remembered past a disconnect, so "start Penna" can name the command that was in use.
   property bool lastMock: false
   readonly property real tickSeconds: hello && Number(hello.tick) > 0 ? Number(hello.tick) : 1.0

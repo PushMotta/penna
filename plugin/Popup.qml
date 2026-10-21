@@ -34,9 +34,9 @@ Panel {
   readonly property var barState: Model.barState(tick, connected)
   readonly property var heroState: Model.hero(tick, connected, nowSec, service ? service.lastTickAt : 0)
   readonly property var tempRows: Model.tempRows(tick)
-  readonly property var controlsList: Model.controls(tick)
-  readonly property var firmwareList: tick && Array.isArray(tick.firmware) ? tick.firmware : []
-  readonly property var unreachableList: tick && Array.isArray(tick.unreachable) ? tick.unreachable : []
+  readonly property var controlsList: Model.adopted(tick)
+  readonly property var firmwareLines: Model.firmwareLines(tick)
+  readonly property var unreachableLines: Model.unreachableLines(tick)
   readonly property var notes: tick && Array.isArray(tick.notes) ? tick.notes : []
   readonly property var profileOptions: Model.profileOptions(tick)
 
@@ -379,8 +379,8 @@ Panel {
           Fold {
             width: parent.width
             title: "Firmware"
-            count: root.firmwareList.length
-            lines: root.firmwareList.map(function(f) { return f.label })
+            count: root.firmwareLines.length
+            lines: root.firmwareLines
             foreground: root.fg
             fontFamily: root.fam
           }
@@ -388,8 +388,8 @@ Panel {
           Fold {
             width: parent.width
             title: "Not reachable"
-            count: root.unreachableList.length
-            lines: root.unreachableList.map(function(u) { return u.label + " · " + u.reason })
+            count: root.unreachableLines.length
+            lines: root.unreachableLines
             expanded: true
             foreground: root.fg
             fontFamily: root.fam
@@ -414,7 +414,7 @@ Panel {
           text: !root.connected
                 ? "The fans are back on firmware control. Start Penna with sudo systemctl start pennad"
                   + (root.service && root.service.lastMock ? ", or pennad --mock render-burst --forever while developing." : ".")
-                : root.flash !== "" ? root.flash : Model.writeBlockedReason(root.connected, root.canWrite)
+                : root.flash !== "" ? root.flash : (root.service && root.service.writeWhy !== "" ? root.service.writeWhy : Model.writeBlockedReason(root.connected, root.canWrite))
           textFormat: Text.PlainText
           wrapMode: Text.Wrap
           color: root.flash !== "" ? root.urgentColor : root.dimColor

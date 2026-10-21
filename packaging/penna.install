@@ -1,0 +1,20 @@
+post_install() {
+  cat <<'EOF'
+Penna is installed. To let it manage your fans:
+  sudo systemctl enable --now pennad          # first start writes /etc/penna/config.toml; nothing is adopted yet
+  sudo usermod -aG penna "$USER"              # change fans from the popup and the studio (applies at once)
+  penna doctor                                # what Penna can and can't reach on this machine
+Until you adopt a fan in the studio, the firmware keeps running every one.
+EOF
+}
+
+post_upgrade() {
+  # Restarting hands every fan back (ExecStopPost) and the new pennad takes them again.
+  systemctl daemon-reload
+  systemctl try-restart pennad.service
+}
+
+pre_remove() {
+  # Stopping hands every fan back to its firmware or driver before the files go.
+  systemctl disable --now pennad.service 2>/dev/null || true
+}

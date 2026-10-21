@@ -1,0 +1,45 @@
+# Penna's daemon (DESIGN.md §6, §7.6). It owns the fans; every way out hands them back:
+#   stop        pennad's own shutdown path
+#   kill -9     ExecStopPost=penna restore, from the write-ahead held.json
+#   whole-unit kill (ExecStopPost killed too)
+#               Restart=on-failure, and a starting pennad restores a leftover held.json first
+#   hang        WatchdogSec: the control loop itself pings, so a stuck loop is killed, then ExecStopPost
+[Unit]
+Description=Penna fan control
+Documentation=file:///usr/share/doc/penna/DESIGN.md
+After=systemd-modules-load.service nvidia-persistenced.service
+
+[Service]
+Type=notify
+# --quiet: the journal gets what changes (states, faults, emergencies), not a line every second.
+ExecStart=/usr/bin/pennad --quiet
+ExecStopPost=/usr/bin/penna restore --from /run/penna/held.json
+Restart=on-failure
+RestartSec=1
+WatchdogSec=5
+# The watchdog is there to get the fans back, not for a post-mortem: no core dump on a hang.
+WatchdogSignal=SIGKILL
+
+RuntimeDirectory=penna
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+StateDirectory=penna
+ConfigurationDirectory=penna
+
+# Hardening that still lets it write hwmon files under /sys (M5) and reach /dev/nvidia* through NVML.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

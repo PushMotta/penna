@@ -13,6 +13,7 @@ pub mod key;
 pub mod model;
 pub mod plan;
 pub mod sanity;
+pub mod starter;
 
 pub use control::{Command, LoopState, Outcome, Request, Scope, State, tick};
 pub use key::Key;
