@@ -82,10 +82,10 @@ impl Trace {
         match sim {
             Some(sim) => {
                 let sc = sim.scenario();
-                eprintln!("pennad (M2, mock): {} · {}", sc.name, sc.cpu_model);
+                eprintln!("pennad {}, mock: {} · {}", env!("PENNA_VERSION"), sc.name, sc.cpu_model);
                 eprintln!("  tree       {}", sim.root().display());
             }
-            None => eprintln!("pennad (M2): {}", machine.inventory.devices.first().map_or("no devices", |d| d.id.as_str())),
+            None => eprintln!("pennad {}: {} devices", env!("PENNA_VERSION"), machine.inventory.devices.len()),
         }
         eprintln!("  held.json  {}", held.display());
         eprintln!("  socket     {}", socket.display());
