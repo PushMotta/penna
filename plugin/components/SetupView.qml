@@ -47,11 +47,11 @@ Item {
     return out
   }
 
-  implicitHeight: Math.max(left.implicitHeight, centre.implicitHeight, right.implicitHeight)
+  implicitHeight: Math.max(fansCol.implicitHeight, centre.implicitHeight, guardsCol.implicitHeight)
 
   // ---------- the fans ----------
   Column {
-    id: left
+    id: fansCol
     width: Style.space(250)
     spacing: Style.spacing.md
     PanelSectionHeader { text: "FANS"; foreground: root.foreground; fontFamily: root.fontFamily }
@@ -59,7 +59,7 @@ Item {
       model: root.rows
       Rectangle {
         required property var modelData
-        width: left.width
+        width: fansCol.width
         implicitHeight: rowCol.implicitHeight + Style.spacing.md * 2
         color: Util.alpha(root.foreground, 0.04)
         border.width: 1
@@ -137,8 +137,8 @@ Item {
   // ---------- the rail and the step ----------
   Column {
     id: centre
-    anchors.left: left.right
-    anchors.right: right.left
+    anchors.left: fansCol.right
+    anchors.right: guardsCol.left
     anchors.leftMargin: Style.space(18)
     anchors.rightMargin: Style.space(18)
     spacing: Style.spacing.lg
@@ -211,7 +211,14 @@ Item {
               Text { width: Style.space(18); text: modelData[0]; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
               Text { width: Style.space(110); text: modelData[1]; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall; font.bold: true }
               Text { width: Style.space(84); text: modelData[2]; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-              Text { text: modelData[3]; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+              Text {
+                width: panel.width - Style.space(18 + 110 + 84) - Style.spacing.lg * 3
+                wrapMode: Text.Wrap
+                text: modelData[3]
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+              }
             }
           }
           Text {
@@ -231,7 +238,14 @@ Item {
             required property var modelData
             width: panel.width
             implicitHeight: sName.implicitHeight
-            Text { id: sName; text: Model.shortName(modelData) + " · " + modelData.label; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+            Text {
+              id: sName
+              readonly property string short: Model.shortName(modelData)
+              text: short + (String(modelData.label).toLowerCase() === short.toLowerCase() ? "" : " · " + modelData.label)
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+            }
             Text {
               anchors.right: parent.right
               text: Number(modelData.celsius).toFixed(1) + " °C"
@@ -409,9 +423,11 @@ Item {
                   readonly property bool waiting: modelData.confirm && root.roleChoice[modelData.key] === undefined
                   text: (Model.ROLE_NAME[role] || role) + (waiting ? "?" : "")
                   bordered: true
-                  selected: !waiting
+                  // The role that still needs a yes is the one that stands out.
+                  active: waiting
                   enabled: root.canWrite && !modelData.nvml
-                  foreground: waiting ? root.accent : root.foreground
+                  foreground: root.foreground
+                  accent: root.accent
                   fontFamily: root.fontFamily
                   fontSize: Style.font.caption
                   onClicked: root.chooseNext(modelData)
@@ -478,7 +494,7 @@ Item {
 
   // ---------- the guards ----------
   Column {
-    id: right
+    id: guardsCol
     anchors.right: parent.right
     width: Style.space(250)
     spacing: Style.spacing.lg
@@ -490,7 +506,7 @@ Item {
         required property var modelData
         readonly property real c: modelData.celsius === null || modelData.celsius === undefined ? NaN : Number(modelData.celsius)
         readonly property bool tripped: !!root.setup && !!root.setup.stopped && !isNaN(c) && c >= Number(modelData.limit)
-        width: right.width
+        width: guardsCol.width
         spacing: Style.spacing.xs
         Item {
           width: parent.width
@@ -510,7 +526,8 @@ Item {
           height: Style.space(6)
           color: Util.alpha(root.foreground, 0.04)
           Rectangle {
-            width: parent.width * Math.max(0, Math.min(1, (guard.c - 30) / Math.max(1, Number(guard.modelData.limit) - 30)))
+            // From 20 °C, where every sparkline starts (§11.1 call 5), to the guard.
+            width: parent.width * Math.max(0, Math.min(1, (guard.c - 20) / Math.max(1, Number(guard.modelData.limit) - 20)))
             Behavior on width { enabled: root.live && !root.reducedMotion; NumberAnimation { duration: root.tickMs; easing.type: Easing.Linear } }
             height: parent.height
             color: guard.tripped ? root.urgent : root.foreground
@@ -519,7 +536,7 @@ Item {
       }
     }
     Text {
-      width: right.width
+      width: guardsCol.width
       wrapMode: Text.Wrap
       text: "If a guard trips, setup stops and every fan goes back to its BIOS or driver, as it was found. The emergency rule stays in force throughout."
       color: root.dim
