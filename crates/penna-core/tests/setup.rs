@@ -308,6 +308,12 @@ struct Rig {
     setup: Setup,
     now: f64,
     load: Option<f64>,
+    /// Seconds between ticks: pennad's `--tick`.
+    dt: f64,
+    /// How late each tick wakes, in seconds. The daemon's clock is the wall clock: each tick runs a little after it was due, by
+    /// a different amount every time.
+    late: Option<u64>,
+    ticks: u64,
 }
 
 impl Rig {
@@ -319,7 +325,19 @@ impl Rig {
         let keys: Vec<Key> = input.targets.iter().map(|t| t.key.clone()).collect();
         plan.carry(&keys, &inv, &Measured::default());
         let state = LoopState::new(&plan);
-        Rig { setup: Setup::new(input, 0.0), desk, plan, state, now: 0.0, load: None }
+        Rig { setup: Setup::new(input, 0.0), desk, plan, state, now: 0.0, load: None, dt: 1.0, late: None, ticks: 0 }
+    }
+
+    /// The rig on the wall clock: each tick wakes up to 2 ms late, by an amount drawn from `seed`.
+    fn late(seed: u64) -> Rig {
+        Rig { late: Some(seed), ..Rig::new() }
+    }
+
+    /// When this tick runs: on time, or late by up to 2 ms.
+    fn clock(&self) -> f64 {
+        let Some(seed) = self.late else { return self.now };
+        let x = (seed ^ self.ticks).wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) >> 33;
+        self.now + (x % 2000) as f64 * 1e-6
     }
 
     fn tick(&mut self) {
@@ -331,8 +349,9 @@ impl Rig {
             }
         }
         let readings = self.desk.readings();
-        self.state.measuring = self.setup.step(&readings, &self.state, self.load, self.now);
-        let (next, cmds) = tick(&self.plan, &self.state, &readings, self.now);
+        let now = self.clock();
+        self.state.measuring = self.setup.step(&readings, &self.state, self.load, now);
+        let (next, cmds) = tick(&self.plan, &self.state, &readings, now);
         self.state = next;
         let mut queue: std::collections::VecDeque<Command> = cmds.into();
         while let Some(cmd) = queue.pop_front() {
@@ -345,8 +364,11 @@ impl Rig {
             self.plan.end_setup();
         }
         self.plan.drop_released(&self.state);
-        self.desk.advance();
-        self.now += 1.0;
+        for _ in 0..self.dt.round() as u32 {
+            self.desk.advance();
+        }
+        self.now += self.dt;
+        self.ticks += 1;
     }
 
     fn until(&mut self, step: Step, max: f64) {
@@ -457,6 +479,34 @@ fn setup_measures_this_desk_and_hands_every_fan_back() {
     assert!(rig.desk.channels.iter().all(|c| c.mode == ControlMode::Automatic(2)), "every header back on its BIOS");
     assert!(!rig.desk.gpu_manual, "the GPU fan back on its driver");
     assert!(rig.plan.carried.is_empty(), "nothing left in the plan that the configuration doesn't name");
+}
+
+/// The write test on the daemon's clock (§5.1): each tick wakes a little late, and the 22 Oct 2026 run on this desk found every
+/// header "reads back other values" when the tick that wrote 60 % woke later than the next. What was written is the loop's to say.
+#[test]
+fn the_write_test_reads_back_what_the_loop_wrote_whenever_the_tick_wakes() {
+    for seed in 0..24 {
+        let mut rig = Rig::late(seed);
+        rig.until(Step::Pairing, 50.0);
+        for n in [1, 2, 3, 4, 5, 7] {
+            let c = rig.progress(&pwm(n));
+            assert_eq!(c.write, Some(WriteResult::Ok), "seed {seed}, pwm{n}: {c:?}");
+        }
+        assert_eq!(rig.progress(&pwm(6)).write, Some(WriteResult::Reverts), "seed {seed}");
+    }
+}
+
+/// And on a tick other than a second: `pennad --tick` takes 0.25 to 5 s.
+#[test]
+fn the_write_test_holds_on_a_two_second_tick() {
+    let mut rig = Rig { dt: 2.0, ..Rig::new() };
+    rig.until(Step::Pairing, 60.0);
+    for n in [1, 2, 3, 4, 5, 7] {
+        let c = rig.progress(&pwm(n));
+        assert_eq!(c.write, Some(WriteResult::Ok), "pwm{n}: {c:?}");
+    }
+    assert_eq!(rig.progress(&pwm(6)).write, Some(WriteResult::Reverts));
+    assert_eq!(rig.progress(&gpu_fan()).write, Some(WriteResult::Ok));
 }
 
 #[test]

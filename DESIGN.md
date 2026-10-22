@@ -1,6 +1,6 @@
 # Penna — design specification
 
-Draft 3 · 21 October 2026 · status: decisions approved (§11), UI quality bar added (§8.6), M0–M6 done, design review 01 approved (milestone D, §11.1), design review 03 approved (milestone D2, §11.3). Penna 0.7.1 runs as a service on this desk and controls the 3090, and setup has measured every fan here (M7). Draft 3 widens Penna from this desk to any workstation or laptop, with automatic setup, generated curves and a Defaults profile: design review 02 (§11.2) was approved the same day. M5 was done on 22 Oct 2026: Penna drives every fan on this desk, and it87 is Verified.
+Draft 3 · 21 October 2026 · status: decisions approved (§11), UI quality bar added (§8.6), M0–M6 done, design review 01 approved (milestone D, §11.1), design review 03 approved (milestone D2, §11.3). Penna 0.7.2 runs as a service on this desk and controls the 3090, and setup has measured every fan here (M7). Draft 3 widens Penna from this desk to any workstation or laptop, with automatic setup, generated curves and a Defaults profile: design review 02 (§11.2) was approved the same day. M5 was done on 22 Oct 2026: Penna drives every fan on this desk, and it87 is Verified.
 
 Companion: design review 01 — mockups in real theme tokens, live motion prototypes, and eight calls before QML — is published as an artifact (https://claude.ai/artifact/DmFftUzWVBd11NNBv4e8aK). Its source is `design/penna-design-review.html`.
 
@@ -310,7 +310,7 @@ What setup measures goes to `/var/lib/penna/measured.toml` (§7.5): measurements
 
 ### 5.1 Write test
 
-The control is taken as in §6.1, with its way back on disk first. Penna writes 60 % and then 80 %, reads back after 1 s each time, and watches for 3 s more. The result is one of:
+The control is taken as in §6.1, with its way back on disk first. Penna writes 60 % and then 80 %, reads back after 1 s each time, and watches for 3 s more. *(22 Oct 2026: each reading is checked against the duty the loop shows it wrote on the tick before, not against the time since the take. The daemon's clock is the wall clock, each tick wakes a little late by a different amount, and `--tick` runs from 0.25 to 5 s: counting whole seconds compared a reading with a duty not yet written, about one run in two.)* The result is one of:
 
 | Result | Means | Then |
 |---|---|---|
@@ -1076,7 +1076,11 @@ Milestones, each ending in something visible:
   - **The 3090's fans stall in manual**: GPU fan 1 below 40 %, GPU fan 2 below 35 % (§0). The balanced GPU curve asks 30–40 % between 51 and 57 °C, and gpu-render asks 30 % at 40 °C. In those ranges a fan stood still while Penna showed a duty. The NVML floor now includes the measured stop (§4.5), so below it the fan goes back to the driver.
   - `x570-desk` now has both quirks, and the IPC test checks them end to end. 162 Rust tests, 24 plugin logic tests.
 
-  Still to do: run setup again on this desk with these fixes, and the simulated drivers when M9 adds them.
+  **The second run (22 Oct 2026, 0.7.1)** measured only the GPU fans. Every motherboard header came out of the write test as `maps`, "204 → 153": 80 % asked, 60 % read. The write test counted whole seconds from the take on the wall clock, and the tick after the 60 % write woke a fraction of a millisecond earlier in its second than the write's own tick: 0.9998 s after it, so the 60 % reading was skipped, and on the next tick the 60 % still showing was taken for the 80 %. The eight headers share a take tick, so one late tick fails them all. The GPU passed, since its read-back checks only who is in charge. The mock never saw it: its clock steps in exact seconds. Pairing offers only `ok` headers, so pairing and calibration measured nothing on the motherboard, and `measured.toml` lost the first run's pairing.
+  - **Fixed in 0.7.2:** each reading is checked against the duty the loop shows it wrote on the tick before (§5.1), and a header the loop finds contested is `reverts`. The rig in `tests/setup.rs` can wake each tick up to 2 ms late and run a 2 s tick: on the old write test 12 of 24 late clocks and the 2 s tick fail as this desk did, and a whole run on 12 late clocks now measures the same as on an exact one. 164 Rust tests.
+  - The GPU fans measured again: GPU fan 1 stops below 40 % as before, GPU fan 2 below 40 % where the first run found 35 %.
+
+  Still to do: run setup again on this desk with 0.7.2, and the simulated drivers when M9 adds them.
 - **M8** — **Generated curves** (§5.5): per role and profile from setup's measurements, the CPU load check, and the review step.
 - **M9** — **Laptops and other drivers:**
   - `levels`, `firmware-curve`, `modes` and `platform` controls, amdgpu included;

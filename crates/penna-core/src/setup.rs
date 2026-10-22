@@ -560,15 +560,26 @@ impl Setup {
                     continue;
                 }
             }
+            if let Some(cs) = cs.filter(|cs| cs.state == State::Contested) {
+                c.write = Some(WriteResult::Reverts);
+                c.write_detail = cs.reason.clone();
+                c.demand = None;
+                c.status = "its firmware writes over it".to_owned();
+                continue;
+            }
             let v = now - c.write_at.unwrap_or(now);
-            // This tick's readings show what was written a tick ago.
-            let asked = if v < 1.0 {
-                None
-            } else if v < 2.0 {
-                Some(WRITE_FIRST)
-            } else {
-                Some(WRITE_SECOND)
-            };
+            // This tick's readings show what the loop wrote a tick ago, and the loop says what that was. The clock can't: a tick
+            // wakes a little late, by a different amount each time, and the daemon's tick isn't always a second.
+            let asked = cs
+                .filter(|cs| cs.state == State::Measuring)
+                .and_then(|cs| [WRITE_FIRST, WRITE_SECOND].into_iter().find(|d| (cs.duty - d).abs() < 0.5));
+            if asked.is_none() && v >= 2.0 * WRITE_SECONDS {
+                c.write = Some(WriteResult::Refused);
+                c.write_detail = Some("Penna's writes never reached it".to_owned());
+                c.demand = None;
+                c.status = "couldn't be written".to_owned();
+                continue;
+            }
             if let Some(duty) = asked {
                 match readback(c.target.kind, readings.controls.get(&c.target.key), duty) {
                     Check::Ok => {}
@@ -600,7 +611,7 @@ impl Setup {
                     }
                 }
             }
-            if v >= 1.0 {
+            if asked.is_some() {
                 c.demand = Some(WRITE_SECOND);
             }
             c.status = match asked {
@@ -608,7 +619,7 @@ impl Setup {
                 Some(WRITE_FIRST) => format!("{WRITE_FIRST:.0} % read back · writing {WRITE_SECOND:.0} %"),
                 Some(_) => format!("{WRITE_SECOND:.0} % read back · watching"),
             };
-            if v >= WRITE_SECONDS {
+            if asked == Some(WRITE_SECOND) && v >= WRITE_SECONDS {
                 let maps = !c.map.is_empty();
                 c.write = Some(if maps { WriteResult::Maps } else { WriteResult::Ok });
                 if maps {
