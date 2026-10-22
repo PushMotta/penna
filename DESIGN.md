@@ -1,6 +1,6 @@
 # Penna — design specification
 
-Draft 3 · 21 October 2026 · status: decisions approved (§11), UI quality bar added (§8.6), M0–M6 done, design review 01 approved (milestone D, §11.1). Penna 0.6.0 runs as a service on this desk and controls the 3090. Draft 3 widens Penna from this desk to any workstation or laptop, with automatic setup, generated curves and a Defaults profile: design review 02 (§11.2) was approved the same day. M5 was done on 22 Oct 2026: Penna drives every fan on this desk, and it87 is Verified.
+Draft 3 · 21 October 2026 · status: decisions approved (§11), UI quality bar added (§8.6), M0–M6 done, design review 01 approved (milestone D, §11.1), design review 03 approved (milestone D2, §11.3). Penna 0.6.0 runs as a service on this desk and controls the 3090. Draft 3 widens Penna from this desk to any workstation or laptop, with automatic setup, generated curves and a Defaults profile: design review 02 (§11.2) was approved the same day. M5 was done on 22 Oct 2026: Penna drives every fan on this desk, and it87 is Verified.
 
 Companion: design review 01 — mockups in real theme tokens, live motion prototypes, and eight calls before QML — is published as an artifact (https://claude.ai/artifact/DmFftUzWVBd11NNBv4e8aK). Its source is `design/penna-design-review.html`.
 
@@ -278,7 +278,7 @@ Each control is in exactly one of these, and every surface renders the same set:
 
 ### 4.7 Profiles
 
-A profile assigns a curve (or `firmware`) to every control. Curves are shared between profiles, and one profile is active. Penna ships three: **Quiet**, **Balanced**, **Render**. Names are editable. Up to five show as pills in the popup; more go into a dropdown. Switching is instant through the popup or the CLI; automatic switching is v2 (§10).
+A profile assigns a curve (or `firmware`) to every control. Curves are shared between profiles, and one profile is active. Penna ships three: **Quiet**, **Balanced**, **Render**. Names are editable. Up to five show as pills in the popup; more go into a dropdown. Switching is instant through the popup or the CLI; automatic switching is v2 (§10). *(D2, §11.3: a profile shows as a pill once it runs at least one fan, so a new install shows Defaults alone. Defaults counts toward the five.)*
 
 **Defaults** *(draft 3)* is a fourth, built-in profile. It assigns `firmware` to every control, can't be edited, renamed or deleted, and always comes first. Choosing it hands every fan back to its BIOS or driver and keeps it there across restarts and reboots (§6.7). Penna goes on showing every temperature and RPM. A new install starts in Defaults, and setup (§5) is what fills the other three.
 
@@ -292,13 +292,15 @@ Setup is one automatic run that takes a machine from Defaults to proposed curves
 |---|---|---|
 | 1. Idle sample | Watch every source for 30 s before any fan is taken. | 30 s |
 | 2. Write test | Take each control, write two values, read back (§5.1). | 5 s per control, all at once |
-| 3. Pairing | Find which tachs each control turns (§5.2). | 12 s per control |
+| 3. Pairing | Find which tachs each control turns (§5.2). | 6 s to settle, then 12 s per control |
 | 4. Roles | Suggest what each fan does (§5.3). | — |
 | 5. Calibration | Measure each fan's duty → RPM (§5.4). | about 90 s, all fans at once |
 | 6. Load check | Optional: run the CPU flat out for 3 minutes on the proposed curve (§5.5). | 3 min |
 | 7. Review | The user confirms roles and reviews the generated curves, which arrive as a draft (§5.5). | — |
 
 Without the load check, a desk with eight controls takes about four minutes.
+
+*(D2, §11.3.)* Setup opens on a start screen that says what will happen, how long it takes and what the guards are. The load check is its only option, on by default on a desktop and off on a laptop running on battery. While setup runs, its controls are `measuring` (§4.6) and the bar shows `fan-clock` (§8.1).
 
 **Guards, for the whole run.** If a CPU source passes 85 °C, a GPU passes 80 °C, or any read fails, setup stops and every fan goes back to its original mode. The emergency rule (§6.3) is in force throughout. Setup wants an idle machine. If the 1-minute load is above a quarter of the CPU's threads, it says so and waits.
 
@@ -322,9 +324,9 @@ The control is taken as in §6.1, with its way back on disk first. Penna writes 
 
 ### 5.2 Pairing (hwmon only)
 
-All taken controls are held at their current duty. One control at a time is raised to 100 % for 6 s, then dropped to 40 % for 6 s. Any tach that follows both moves by more than 25 % is paired with it. A control can end up with several tachs, or none: a header with no tach, or a dead fan. NVML and most laptop drivers pair control *i* with tach *i* and skip this step.
+Every taken control is held at 60 % for 6 s, so each rise is measured from a steady speed; from the write test's 80 % the rises would be smaller. One control at a time is then raised to 100 % for 6 s and dropped to 40 % for 6 s. A tach pairs with the control when its highest reading in the 6 s at 100 % is at least 15 % and 150 RPM above what it read just before the raise. The drop to 40 % confirms: a tach that rose and then didn't fall is reported, not paired, and so is one that two controls move. A control can end up with several tachs, or none: a header with no fan, or a dead one. NVML and most laptop drivers pair control *i* with tach *i* and skip this step. *(D2, §11.3, call 5; draft 3 paired a tach that moved more than 25 % both ways from the controls' current duty.)*
 
-*(M5, 22 Oct 2026: pairing by hand on this desk.)* From a 60 % hold, 100 % raised each fan by 31–59 %; the smallest rise was the PCH fan's, close to the 25 % above. The fans were still speeding up 4 s in. The first version of the by-hand test read each tach once, 5 s in, against RPMs recorded before the fans had come down from full speed, and it paired one control of eight. The version that worked waits for every fan to settle, measures each control from what the tachs read just before it, and keeps each tach's highest reading over 11 s. Setup's pairing (M7) needs the same three things.
+*(M5, 22 Oct 2026: pairing by hand on this desk.)* From a 60 % hold, 100 % raised each fan by 31–59 %; the smallest rise was the PCH fan's, close to the 25 % above. The fans were still speeding up 4 s in. The first version of the by-hand test read each tach once, 5 s in, against RPMs recorded before the fans had come down from full speed, and it paired one control of eight. The version that worked waits for every fan to settle, measures each control from what the tachs read just before it, and keeps each tach's highest reading over 11 s. Setup's pairing (M7) needs the same three things, and the rule above has them.
 
 ### 5.3 Roles
 
@@ -335,17 +337,19 @@ Each fan gets a role, which decides its generated curve and how it is calibrated
 | CPU cooler | The board database names the header `CPU_FAN` or `CPU_OPT`. | Full; stopped for at most 10 s at a time. | — |
 | GPU | NVML or amdgpu. | % → RPM only. | — |
 | Pump | The header is a pump header, **and** the fan turns above 2,000 RPM at 100 %. Never assumed from the header alone: a case fan on a pump header is common. | No stop test. | Stops; goes below 50 %. |
-| Chipset | The board database names it (`PCH_FAN`). | No stop test. | Stops. |
+| Chipset | The board database names it (`PCH_FAN`). | No stop test, unless the idle sample saw its firmware stop it: then full. | Stops, unless the idle sample saw its firmware stop it. |
 | Laptop | The machine is a laptop and the fan is its system fan. | By level. | — |
 | Case | Everything else. | Full. | — |
 
 Until the user confirms the roles, a fan on a pump or chipset header is treated as one that must never stop. *Identify* on any fan card spins that fan to 100 % for 3 s and back, so it can be found by ear or by eye.
 
+*(D2, §11.3.)* Every suggested role carries its reason, in words: "The board calls this header CPU_OPT", "On a pump header, but 1,730 RPM at 100 %: a case fan". A fan on a pump header that is suggested as a case fan is held at 50 % or more, and measured no lower, until the user confirms it; confirming measures it below 50 % (about 30 s). One exception to the rule above: a chipset fan the idle sample saw its firmware stop may stop, because the firmware already does it. On this desk the BIOS stops PCH_FAN with the PCH at 45 °C; a never-stop curve would run it near 2,700 RPM. The review also asks for a name per fan, prefilled with its header.
+
 ### 5.4 Calibration
 
 Per control, with its tach paired. Fans are calibrated all at once, each against its own tach. Air from one fan barely moves another's RPM, and running them together halves the time.
 
-1. Step down from 100 % in 5 % steps. At each step, wait until RPM is stable within 3 % over 2 s (timeout 10 s) and record it. The lowest duty that still turns is the **stop duty**. Pumps and chipset fans stop the descent at 50 % and 30 %.
+1. Step down from 100 % in 5 % steps. At each step, wait until RPM is stable within 3 % over 2 s (timeout 10 s) and record it. The lowest duty that still turns is the **stop duty**. Pumps and chipset fans stop the descent at 50 % and 30 %, and so does an unconfirmed fan on a pump header (50 %), except a chipset fan its firmware was seen stopping (§5.3).
 2. From 0, step up in 2 % steps. The first duty that spins a stopped fan is the **start duty**, usually above the stop duty because of stiction. The time from that write to a steady RPM is the **spin-up time**.
 3. Store the duty→RPM table and make it monotonic, with the **maximum RPM**.
 
@@ -385,7 +389,7 @@ On this desk, Balanced CPU comes out as: floor to 55 °C, 50 % airflow at 70 °C
 
 - **Case fans** follow a Mix (max) of a CPU curve and a GPU curve. They stay at their floor until either source is 15 °C above idle, and their top is capped at 50 % airflow in Quiet, 75 % in Balanced and 100 % in Render.
 - **Pumps** are Flat at 70 %, 85 % and 100 % duty.
-- **Chipset fans** follow the chipset temperature when the board has one: floor to 65 °C, 100 % at 80 °C. Without that sensor they stay with their firmware.
+- **Chipset fans** follow the chipset temperature when the board has one: floor to 65 °C, 100 % at 80 °C. Without that sensor they stay with their firmware. A chipset fan its firmware was seen stopping (§5.3) gets *may stop* and 0 % at 60 °C, so it rests below about 64 °C as it did before.
 - **A laptop's fan** follows the larger of its CPU and GPU curves, rounded to its levels.
 - **Firmware curves** are fitted to the firmware's own points, on its own sensor.
 
@@ -764,7 +768,8 @@ The Material Design fan glyph (U+F0210), drawn through `OpticalGlyph` like the s
 | Timed override | `fan-clock` U+F1A3A | accent |
 | `failsafe`, `emergency`, `contested`, `fault` | `fan-alert` U+F146C | urgent |
 | Daemon unreachable | `fan-off` U+F081D | dim |
-| Nothing adopted | `fan-auto` U+F171D | text |
+| Nothing adopted, or Defaults | `fan-auto` U+F171D | text |
+| Setup running *(D2)* | `fan-clock` U+F1A3A | accent |
 
 Wheel: none, because fans are not a volume.
 
@@ -773,9 +778,9 @@ Wheel: none, because fans are not a volume.
 Same chrome as the audio and bluetooth popups, 380 logical px wide.
 
 - **Hero.** Active profile and one line: `Balanced · 4 fans · CPU 62 °C · GPU 41 °C`. When something is wrong, the line says what instead: `GPU fan 1 contested — the driver is controlling it`.
-- **Profile.** ButtonGroup `Defaults · Quiet · Balanced · Render` *(draft 3: Defaults first, §4.7)*. In Defaults, the hero says so in words: `Defaults · the BIOS and drivers run every fan`. On a new install, which starts in Defaults, it adds `Set up fans…`.
+- **Profile.** ButtonGroup `Defaults · Quiet · Balanced · Render` *(draft 3: Defaults first, §4.7)*. In Defaults, the hero says so in words: `Defaults · the BIOS and drivers run every fan`. On a new install, which starts in Defaults, it adds `Set up fans…`. *(D2, §11.3: Defaults is set apart from the profiles by a wider gap, and choosing it needs no confirmation. A profile shows only once it runs at least one fan, so a new install has no pills, only the hero and `Set up fans…`.)*
 - **Temperatures.** One row per source a curve uses: value plus a 60 s sparkline from the service's ring buffer.
-- **Fans.** One row per adopted control: label, RPM, duty, curve name, and a state badge when not `curve`. Unadopted controls fold under `Firmware (n)`; absent and passed-through devices fold under `Not reachable (n)`, each with its reason.
+- **Fans.** One row per adopted control: label, RPM, duty, curve name, and a state badge when not `curve`. Unadopted controls fold under `Firmware (n)`; absent and passed-through devices fold under `Not reachable (n)`, each with its reason. *(D2, §11.3.)* In Defaults every fan stays listed, with its RPM and who runs it (`BIOS` or `Driver`) in place of the curve, and no duty: on the IT8688E, while the BIOS runs a fan, `pwmN` reads the BIOS curve's start value, not the duty (M5). Before pairing the rows are tachs, named for their headers by the board database; the tick carries them (`tachs`, an additive protocol field). A control that turned no fan in pairing folds under `Empty header (n)`, by header name.
 - **Actions.** `Full speed` (an override until pressed again), `Curves…` (opens the studio).
 
 ### 8.3 Studio (kind: overlay)
@@ -793,9 +798,11 @@ Summoned from the popup's `Curves…` and with `penna open`. A centred card abou
   - `Stop`, which hands everything back at once.
 
   It ends on the review: role chips per fan, with `Identify`, then the generated curves in the editor, marked *Generated*, ready to save or discard.
-- **Each card shows its kind and tier** *(draft 3)*. "8-point firmware curve, on the CPU sensor", "3 steps", "Documented: nobody has verified this driver yet". A fan whose write test came back `reverts` says what writes over it.
 
-The setup view, the Defaults pill, and kind and tier on the cards are new UI. They go through a visual review in real theme tokens before any QML is written (milestone D2, §10), as milestone D did.
+  *(As approved in D2, §11.3.)* The setup view takes the studio over: the editor's place shows a rail of the seven steps and one panel per step, the controls column one row per fan with its live RPM and its step in words, and the sensors column becomes the guards. Pairing shows every tach on one RPM scale with the one that moves in the accent. Calibration draws each fan's duty → RPM table in small multiples, each on its own scale. *Stop and hand back* sits where *Save* does. The review's roles are chips with their reason and a name field per fan; a dashed chip still needs the user's yes. The draft holds all three profiles, and each curve's anchors (idle, target, limit) are drawn on its temperature axis. *Save* keeps the whole draft and switches to Balanced; *Discard* leaves Defaults on and keeps the measurements.
+- **Each card shows its kind and tier** *(draft 3)*. "8-point firmware curve, on the CPU sensor", "3 steps", "Documented: nobody has verified this driver yet". A fan whose write test came back `reverts` says what writes over it. *(D2, §11.3: only where they say something. Cards are grouped under a heading per device, which names the tier once: "IT8688E · motherboard · Verified", with one sentence under it when the tier is below Verified. A card adds a kind line unless it is plain duty or NVML. Drift is a line on the card with* Recalibrate*, not a badge; `stalled` is urgent.)*
+
+The setup view, the Defaults pill, and kind and tier on the cards are new UI. They went through a visual review in real theme tokens before any QML (milestone D2, §10, §11.3), as milestone D did.
 
 ### 8.4 Plugin service (kind: service)
 
@@ -1022,8 +1029,8 @@ Milestones, each ending in something visible:
 
   Moved on: the write test (§5.1) to M7, where setup's procedures run in the loop, with pairing written to `measured.toml`. `firmware.json` arrives with the first kind whose state outlives a reboot (M9); `penna reset` already restores everything there is today. The installed service is still 0.6.0, which leaves the motherboard's fans to the BIOS.
 - **M6** — Packaging, README, first release. **Done 21 Oct 2026**, ahead of M5 (motherboard fans need the it87 decision, §13): 0.6.0 is packaged, installed and running as a service on this desk, with 136 Rust tests and 17 plugin logic tests (§7.6, as built). Still to do for a public release: publish the repository and the plugin as its own repo (§11, decision 9), and switch the PKGBUILD to a tagged tarball (now M10).
-- **D2** *(draft 3)* — Visual review of the new UI: the setup view, the Defaults pill, and kind, tier and drift on fan cards. Mockups in real theme tokens across the four review themes, before their QML. **Proposed 22 Oct 2026:** design review 03, published as an artifact (https://claude.ai/artifact/5Vq9APfnNHVnuNiY9mKevm), source `design/penna-design-review-03.html`. It mocks the three on this desk's measured fans, with a live simulated setup run, and asks for ten calls (its section G). Approved calls become §11.3.
-- **M7** — **Setup** (§5.1–5.4, §5.6): write test, pairing, roles with *Identify*, calibration and drift, in the studio and `penna setup`. Run on this desk and on every simulated driver.
+- **D2** *(draft 3)* — Visual review of the new UI: the setup view, the Defaults pill, and kind, tier and drift on fan cards. Mockups in real theme tokens across the four review themes, before their QML. **Approved 22 Oct 2026** (§11.3): design review 03, published as an artifact (https://claude.ai/artifact/5Vq9APfnNHVnuNiY9mKevm), source `design/penna-design-review-03.html`. It mocks the three on this desk's measured fans, with a live simulated setup run, and asked for ten calls (its section G).
+- **M7** — **Setup** (§5.1–5.4, §5.6): write test, pairing, roles with *Identify*, calibration and drift, in the studio and `penna setup`. Run on this desk and on every simulated driver. With D2 (§11.3): the start screen, the setup view and `fan-clock`, roles with reasons and names, the chipset and pump-header exceptions, the Defaults popup with tachs in the tick, and device headings with tiers on the cards.
 - **M8** — **Generated curves** (§5.5): per role and profile from setup's measurements, the CPU load check, and the review step.
 - **M9** — **Laptops and other drivers:**
   - `levels`, `firmware-curve`, `modes` and `platform` controls, amdgpu included;
@@ -1076,6 +1083,23 @@ Asked for on 21 Oct 2026, in the user's words: "control all the systems fans wit
 10. **Order:** M5 (this desk, the kinds) → D2 (visual review) → M7 (setup) → M8 (generated curves) → M9 (laptops and other drivers) → M10 (public release).
 
 The user approved all ten recommendations on 21 Oct 2026 ("go ahead with your reccos").
+
+### 11.3 Design review 03: setup, Defaults and fan cards (approved 22 Oct 2026)
+
+Milestone D2. The review (companion artifact, section G) asked for ten calls. Three come from measurements on this desk (calls 3, 7 and 8), and two change draft 3's rules (calls 5 and 8):
+
+1. **Defaults is the first pill, set apart by a wider gap.** It counts toward the five pills. Choosing it needs no confirmation (§8.2).
+2. **A profile shows as a pill once it runs at least one fan.** A new install shows Defaults and `Set up fans…` only (§4.7, §8.2).
+3. **In Defaults, every fan stays listed** with its RPM and who runs it, named for its header, and its duty left blank: the IT8688E's PWM register reads the BIOS curve's start value while the BIOS runs a fan. Before pairing the rows are tachs, which the tick carries as an additive protocol field (§8.2).
+4. **Setup takes the studio over,** opens on a start screen with the load check as its only option, and puts *Stop and hand back* where *Save* sits. The bar shows `fan-clock` while it runs (§5, §8.1, §8.3).
+5. **Pairing settles every fan at 60 % first, and pairs on the rise:** 15 % and 150 RPM above the tach's reading just before, at its highest in the 6 s at 100 %. The drop to 40 % confirms. This paired all seven fans by hand in M5 (§5.2).
+6. **Calibration draws each fan's table on its own scale,** in small multiples, as it measures (§8.3).
+7. **Roles are chips with their reason, and each fan can be named in the review.** A fan on a pump header that turns out to be a case fan is held at 50 % or more until confirmed, then measured below (§5.3).
+8. **A chipset fan may stop when the idle sample saw its firmware stop it.** Calibration then measures it to a stop, and its curve rests below about 64 °C. Otherwise chipset fans never stop (§5.3–5.5).
+9. **Generated curves arrive as one draft** holding all three profiles, each curve marked *Generated*, with its anchors drawn on the axis. *Save* keeps everything and switches to Balanced; *Discard* leaves Defaults on and keeps the measurements (§8.3).
+10. **Cards carry kind and tier only when they say something.** The tier goes on the device heading; a card adds a kind line unless it is plain duty or NVML. Drift is a line with *Recalibrate*; `stalled` is urgent; an empty header folds away (§8.2, §8.3).
+
+The user approved all ten recommendations on 22 Oct 2026 ("go ahead with your reccos").
 
 ## 12. Prior art, read but not copied
 
