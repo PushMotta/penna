@@ -57,8 +57,49 @@ fn hysteresis_holds_a_falling_output() {
     rig.set(&cpu(), 72.0);
     rig.run(40);
     let d = rig.duty(&pwm());
-    // falls once past the band, in steps of the band: held at f(≈75 °C) ≈ 59 %, above f(72 °C) = 53.5 %
-    assert!((53.5..60.0).contains(&d) && d < at_78 - 5.0, "{d}");
+    // falls once past the band, and then the band's width behind the curve: f(75 °C) ≈ 59.2 %, above f(72 °C) = 53.5 %
+    assert!((d - 59.2).abs() < 0.2, "{d}");
+}
+
+/// Both ways (an option), the output moves in steps: only once the temperature has moved the band's width, and then to the curve.
+#[test]
+fn two_way_hysteresis_moves_in_steps_of_the_band() {
+    let both = CONFIG.replace("response = \"5s\"\nhysteresis = 3.0", "response = 0\nhysteresis = 3.0\nhysteresis_direction = \"both\"");
+    assert_ne!(both, CONFIG);
+    let mut rig = Rig::new(plan(&both, &measured(20.0, 30.0)));
+    let f = |t: f64| penna_core::control::graph(&[[45.0, 30.0], [65.0, 40.0], [78.0, 65.0], [88.0, 100.0]], t);
+    rig.run(3);
+    for (t, want) in [(72.0, f(72.0)), (74.0, f(72.0)), (77.0, f(77.0)), (75.0, f(77.0)), (70.0, f(70.0))] {
+        rig.set(&cpu(), t);
+        rig.run(3);
+        let out = rig.st.curves["cpu"].out.unwrap();
+        assert!((out - want).abs() < 0.01, "at {t} °C: {out}, where {want} was due");
+    }
+}
+
+/// The load check on the development desk (§5.5): under a steady full load, with a steep CPU curve and Tctl's jitter, the fan
+/// settles. Dropping the band's worth at once when the band let go made it hunt between 45 and 57 % every 30 s.
+#[test]
+fn a_steady_load_settles_the_fan_instead_of_hunting() {
+    let steep = CONFIG.replace("[[45, 30], [65, 40], [78, 65], [88, 100]]", "[[60, 15], [65, 40], [70, 59], [76, 79], [82, 100]]");
+    let mut rig = Rig::new(plan(&steep, &measured(20.0, 30.0)));
+    // The desk under full load: Tctl heads for 119 °C less 0.96 °C per % of airflow, with a 5 s lag; the fan follows its duty
+    // with a 2 s lag; every reading jitters by up to 1.5 °C either way.
+    let (mut t, mut air, mut seed) = (45.0_f64, 30.0_f64, 1_u64);
+    let mut settled = Vec::new();
+    for i in 0..900 {
+        seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+        let jitter = ((seed >> 33) as f64 / (1_u64 << 31) as f64 - 0.5) * 3.0;
+        t += (119.0 - 0.96 * air - t) * (1.0 - (-1.0_f64 / 5.0).exp());
+        rig.set(&cpu(), t + jitter);
+        rig.step();
+        air += (rig.duty(&pwm()) - air) * (1.0 - (-1.0_f64 / 2.0).exp());
+        if i >= 300 {
+            settled.push(rig.duty(&pwm()));
+        }
+    }
+    let (lo, hi) = settled.iter().fold((f64::MAX, f64::MIN), |(lo, hi), d| (lo.min(*d), hi.max(*d)));
+    assert!(hi - lo < 3.0, "the fan hunts between {lo:.1} and {hi:.1} %");
 }
 
 #[test]

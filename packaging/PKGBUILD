@@ -2,7 +2,7 @@
 #
 # Builds the package from this checkout: `cd packaging && makepkg -f`. An AUR release would fetch a tagged tarball instead.
 pkgname=penna
-pkgver=0.8.0
+pkgver=0.8.1
 pkgrel=1
 pkgdesc="Fan control that belongs to the shell: a daemon that always hands fans back, a CLI, and an Omarchy plugin"
 arch=('x86_64')

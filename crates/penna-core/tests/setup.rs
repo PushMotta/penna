@@ -483,6 +483,8 @@ fn setup_measures_this_desk_and_hands_every_fan_back() {
 
     rig.until(Step::Review, 400.0);
     assert!(rig.now < 330.0, "about five minutes without the load check; took {} s", rig.now);
+    let pump = rig.progress(&pwm(4)).suggestion.unwrap();
+    assert!(pump.reason.starts_with("On a pump header, but 1,73"), "calibration's speed at 100 % replaces pairing's: {pump:?}");
     let m = rig.setup.measured(1.0e9);
     let cal = |n: u32| m.get(&pwm(n)).unwrap().clone();
     // The stop duty is the lowest 5 % step that still turns the fan; the start is the first 2 % step up that spins it.
@@ -635,7 +637,7 @@ fn a_case_fan_confirmed_on_a_pump_header_is_measured_on_below_50_percent() {
     assert!((now - was).abs() < was * 0.03, "50 %: {now} RPM, where the first run read {was}");
     assert_eq!((after.stop, after.start, after.lowest), (Some(20.0), Some(26.0), None), "{after:?}");
     assert_eq!(after.role, Some(Role::Case));
-    assert!(after.reason.as_deref().is_some_and(|r| r.starts_with("On a pump header, but 1,6")), "its reason stays: {after:?}");
+    assert!(after.reason.as_deref().is_some_and(|r| r.starts_with("On a pump header, but 1,73")), "its reason stays: {after:?}");
     for _ in 0..3 {
         rig.tick();
     }
@@ -683,6 +685,26 @@ fn a_busy_machine_waits_and_stop_is_at_once() {
     rig.tick();
     assert!(rig.desk.channels.iter().all(|c| c.mode == ControlMode::Automatic(2)));
     assert_eq!(rig.setup.progress().stopped.as_deref(), Some("You stopped setup."));
+}
+
+/// Something that starts during the idle sample doesn't lift the idle temperature (§5, step 1). These are the readings of the
+/// fifth run on the development desk: a CPU resting at 41 °C, then busy. Their mean, 50 °C, moved every CPU curve 9 °C later.
+#[test]
+fn the_idle_sample_finds_where_the_cpu_rests_when_something_starts() {
+    let mut rig = Rig::new();
+    let seen = [
+        40.8, 40.4, 40.2, 40.0, 41.2, 41.8, 41.2, 41.1, 41.2, 47.9, 48.0, 48.8, 47.6, 46.5, 46.6, 45.8, 49.9, 53.8, 55.1, 53.8, 55.1,
+        55.0, 58.9, 59.6, 58.6, 56.9, 57.4, 56.4, 57.4, 61.0,
+    ];
+    for t in seen.iter().chain(std::iter::repeat(&61.0)) {
+        if rig.setup.step_now() > Step::Idle {
+            break;
+        }
+        rig.desk.cpu_temp = *t;
+        rig.tick();
+    }
+    let idle = rig.setup.measured(0.0).idle[&cpu()];
+    assert!((idle - 41.2).abs() < 0.05, "{idle}");
 }
 
 #[test]

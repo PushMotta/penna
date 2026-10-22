@@ -469,17 +469,25 @@ fn eval_curve(c: &CurvePlan, st: &mut LoopState, now: f64) -> Result<f64, String
                     cs.held = false;
                 }
                 Some(out) => {
+                    // Falling, past the band the output follows the curve H °C behind the temperature, not the curve itself:
+                    // dropping the band's worth at once overcools, the temperature climbs back, and under a steady load the fans
+                    // hunt (§4.4). Both ways, it moves in steps of the band.
                     let h = c.hysteresis;
-                    let moved = match c.direction {
-                        HysteresisDirection::Falling => f >= out || s <= cs.anchor - h,
-                        HysteresisDirection::Both => (f > out && s >= cs.anchor + h) || (f < out && s <= cs.anchor - h) || f == out,
+                    let next = match c.direction {
+                        HysteresisDirection::Falling if f >= out => Some((f, s)),
+                        HysteresisDirection::Falling if s <= cs.anchor - h => Some((graph(points, s + h).clamp(f, out), s + h)),
+                        HysteresisDirection::Both if (f > out && s >= cs.anchor + h) || (f < out && s <= cs.anchor - h) || f == out => {
+                            Some((f, s))
+                        }
+                        _ => None,
                     };
-                    if moved {
-                        cs.out = Some(f);
-                        cs.anchor = s;
-                        cs.held = false;
-                    } else {
-                        cs.held = true;
+                    match next {
+                        Some((o, anchor)) => {
+                            cs.out = Some(o);
+                            cs.anchor = anchor;
+                            cs.held = false;
+                        }
+                        None => cs.held = true,
                     }
                 }
             }

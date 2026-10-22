@@ -251,8 +251,9 @@ pub fn handle(live: &mut Live, inventory: &Inventory, out: &mut Trace, op: Op, u
                 None => live.saved.clone(),
             };
             let g = penna_core::generate::generate(&base, inventory, &live.measured, live.cpu_model.as_deref());
+            let what = g.draft_words();
             if run_draft(live, inventory, conn, g.config)? {
-                note(out, None, format!("Generated {} curves, as a draft: nothing changes until it is saved", g.curves.len()));
+                note(out, None, format!("Generated {} curves, as a draft: {what}", g.curves.len()));
             }
             if let Some(d) = live.draft.as_mut() {
                 d.generated = Some(base);

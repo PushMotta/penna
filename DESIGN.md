@@ -1,6 +1,6 @@
 # Penna — design specification
 
-Draft 3 · 21 October 2026 · status: decisions approved (§11), UI quality bar added (§8.6), M0–M6 done, design review 01 approved (milestone D, §11.1), design review 03 approved (milestone D2, §11.3). Penna 0.8.0 runs as a service on this desk and controls the 3090, and setup has measured every fan here (M7). Draft 3 widens Penna from this desk to any workstation or laptop, with automatic setup, generated curves and a Defaults profile: design review 02 (§11.2) was approved the same day. M5 was done on 22 Oct 2026: Penna drives every fan on this desk, and it87 is Verified.
+Draft 3 · 21 October 2026 · status: decisions approved (§11), UI quality bar added (§8.6), M0–M6 done, design review 01 approved (milestone D, §11.1), design review 03 approved (milestone D2, §11.3). Penna 0.8.1 runs as a service on this desk, and since setup's generated curves were saved there it runs every fan on Balanced (M8). Draft 3 widens Penna from this desk to any workstation or laptop, with automatic setup, generated curves and a Defaults profile: design review 02 (§11.2) was approved the same day. M5 was done on 22 Oct 2026: Penna drives every fan on this desk, and it87 is Verified.
 
 Companion: design review 01 — mockups in real theme tokens, live motion prototypes, and eight calls before QML — is published as an artifact (https://claude.ai/artifact/DmFftUzWVBd11NNBv4e8aK). Its source is `design/penna-design-review.html`.
 
@@ -249,7 +249,7 @@ source  ─► curve ─► response ─► limits ─► output map ─► writ
 ### 4.4 Response (on the curve)
 
 - **Response time** — exponential smoothing of the source with time constant τ. Zen's `Tctl` jumps several degrees on every boost; τ is how a CPU curve stops revving. The default is 5 s for CPU sources and 0 s for the rest.
-- **Hysteresis** — the output rises at once and falls only after the temperature drops H °C below the point where it last rose. Default 3 °C, on Graph curves only. Option: both directions. A Trigger's hysteresis is its on/off gap. Flat and Mix curves take neither setting; a configuration that gives them one is refused.
+- **Hysteresis** — the output rises at once and falls only after the temperature drops H °C below the point where it last rose. Then it follows the curve H °C behind the temperature, so it eases down instead of dropping H °C's worth at once. Default 3 °C, on Graph curves only. Option: both directions, where it moves in steps: only after the temperature has moved H °C either way, and then to the curve. A Trigger's hysteresis is its on/off gap. Flat and Mix curves take neither setting; a configuration that gives them one is refused. *(M8, 22 Oct 2026: dropping to the curve at once made the load check on this desk hunt. Balanced held CPU_FAN at 57 % while Tctl fell from 70.6 to 65.4 °C, then dropped it to 45 %, and Tctl was back at 70.5 °C 8 s later. That repeated every 31 s for 3 minutes, with the case fans swinging between 16 and 40 %. A plant fitted to those readings hunts the same way in a test, 45–57 %, and settles at 54 % with the output trailing.)*
 
 ### 4.5 Limits (on the control)
 
@@ -290,7 +290,7 @@ Setup is one automatic run that takes a machine from Defaults to proposed curves
 
 | Step | What happens | Time on this desk |
 |---|---|---|
-| 1. Idle sample | Watch every source for 30 s before any fan is taken. | 30 s |
+| 1. Idle sample | Watch every source for 30 s before any fan is taken. A source's idle is the lowest fifth of its readings, so something that starts during the 30 s doesn't count. | 30 s |
 | 2. Write test | Take each control, write two values, read back (§5.1). | 5 s per control, all at once |
 | 3. Pairing | Find which tachs each control turns (§5.2). | 6 s to settle, then 12 s per control |
 | 4. Roles | Suggest what each fan does (§5.3). | — |
@@ -343,7 +343,7 @@ Each fan gets a role, which decides its generated curve and how it is calibrated
 
 Until the user confirms the roles, a fan on a pump or chipset header is treated as one that must never stop. *(22 Oct 2026: so is any fan on CPU_OPT, the board database's `cpu-opt` hint, and any fan on a CPU header that turns above 2,000 RPM: each may be a pump, and is held at 50 % or more until confirmed.)* *Identify* on any fan card spins that fan to 100 % for 3 s and back, so it can be found by ear or by eye.
 
-*(D2, §11.3.)* Every suggested role carries its reason, in words: "The board calls this header CPU_OPT", "On a pump header, but 1,730 RPM at 100 %: a case fan". A fan on a pump header that is suggested as a case fan is held at 50 % or more, and measured no lower, until the user confirms it; confirming measures it below 50 % (about 30 s). One exception to the rule above: a chipset fan the idle sample saw its firmware stop may stop, because the firmware already does it. On this desk the BIOS stops PCH_FAN with the PCH at 45 °C; a never-stop curve would run it near 2,700 RPM. The review also asks for a name per fan, prefilled with its header.
+*(D2, §11.3.)* Every suggested role carries its reason, in words: "The board calls this header CPU_OPT", "On a pump header, but 1,730 RPM at 100 %: a case fan". *(M8: the speed a reason quotes is calibration's at 100 % once there is one. Pairing's 6 s at 100 % can end before a fan is up to speed: SYS_FAN5_PUMP read 1,450 RPM there and 1,819 calibrated.)* A fan on a pump header that is suggested as a case fan is held at 50 % or more, and measured no lower, until the user confirms it; confirming measures it below 50 % (about 30 s). One exception to the rule above: a chipset fan the idle sample saw its firmware stop may stop, because the firmware already does it. On this desk the BIOS stops PCH_FAN with the PCH at 45 °C; a never-stop curve would run it near 2,700 RPM. The review also asks for a name per fan, prefilled with its header.
 
 ### 5.4 Calibration
 
@@ -411,7 +411,7 @@ On this desk, Balanced CPU comes out as: floor to 55 °C, 50 % airflow at 70 °C
 - **The chipset curve is one curve for all three profiles.** Its only anchor is idle: its temperatures are fixed.
 - **The GPU's target is NVML's acoustic threshold:** 83 °C on the 3090, which `nvidia-smi` calls its "Target Temperature Specification". Without one, the target is the limit less 10 °C.
 - **Ids and labels:** `cpu-quiet`, "CPU · Quiet"; `case-balanced` mixes `case-balanced-cpu` and `case-balanced-gpu`. Generating replaces curves with these ids, the starter's `cpu-quiet` included, and leaves every other curve alone.
-- **The draft keeps the profile that was on,** so it runs nothing until it is saved, and remembers what it was generated from. Confirmed roles generate it again from there, so a role given up leaves no curve behind. `draft.generate` makes the same draft from measurements already saved (§7.3).
+- **The draft keeps the profile that was on,** so it runs nothing until it is saved, and remembers what it was generated from. Run again, setup finds a profile it writes already on, Balanced as a rule: then the fans run the draft's curves while it is reviewed, and `penna setup` and the journal say so. Not saving puts back what was saved. Confirmed roles generate it again from there, so a role given up leaves no curve behind. `draft.generate` makes the same draft from measurements already saved (§7.3).
 - **The load check** saves what setup measured before it starts. During it the Balanced profile runs on the draft; the review switches back to the profile that was on, and stopping setup takes the draft back. Passing the limit less 5 °C ends a pass in place of setup's 85 °C guard: the emergency rule (§6.3) stands behind it. A second pass waits until the CPU is within 10 °C of idle, or 2 minutes. Only Balanced's CPU curve moves. The plateau is the mean of the last 30 s. pennad loads its own threads, each at nice 19; the mock desk loads its simulated CPU. It is off for a run that measures only some fans again.
 - Not yet: firmware curves fitted to a firmware's own points, and laptop fans (M9).
 
@@ -1115,13 +1115,31 @@ Milestones, each ending in something visible:
   Still to do: the simulated drivers when M9 adds them.
 - **M8** — **Generated curves** (§5.5): per role and profile from setup's measurements, the CPU load check, and the review step.
 
-  **In progress since 22 Oct 2026.** Built and tested on the mock desk and against this desk's own measurements, now a fixture (`test/fixtures/measured/x570-desk.toml`): 175 Rust tests, 24 plugin logic tests.
+  **In progress since 22 Oct 2026.** Built and tested on the mock desk and against this desk's own measurements, now a fixture (`test/fixtures/measured/x570-desk.toml`).
   - **The generator** (`penna-core/src/generate.rs`): every curve of §5.5 but firmware and laptop curves, every fan's limits, all three profiles. Calibration tables are made monotonic here (§5.4, step 3, moved from M7).
   - **The daemon** proposes the draft when measuring is over and again for confirmed roles. It runs the load check, and saving switches to Balanced. `draft.generate` is in the protocol.
   - **`penna setup`** keeps one connection from start to save. It shows the load check's result, describes the proposed curves per group of fans and profile, and asks to save them. `--no-load-check` skips the check.
   - **Two fixes on the way:** a client given `$PENNA_SOCKET` no longer falls back to this machine's daemon, and the GPU's limits line and inspector name its measured floor.
 
-  Still to do: the plugin's review of the proposed curves, the *Generated* marks and the anchors on the axis (§8.3, §11.3 call 9), and a run on this desk with the load check.
+  **The fifth run on this desk, the first of M8 (22 Oct 2026, 0.8.0).** `penna setup` took 8:30 for ten controls with the load check: idle 30 s, write test 6 s, pairing 1:31, calibration 3:11, load check 3:00. Confirming the roles re-measured SYS_FAN5_PUMP below 50 % in 1:31. The proposal was saved: 19 curves, every fan on Balanced.
+  - **The load check passed in one pass:** "Under 3 minutes of full load the CPU levelled at 68 °C, with its fans at 56 %." The peak was 70.9 °C, the limit 90.
+  - **But the fans hunted under the load** (§4.4): CPU_FAN between 45 and 57 % every 31 s, the case fans between 16 and 40 %.
+  - **The idle sample wasn't idle.** Tctl climbed from 40 to 61 °C during its 30 s, and the mean, 50.3 °C, became the CPU's idle. Over the 75 minutes of review Tctl's median was 40.8 °C. Every CPU curve came out about 9 °C late: Balanced holds CPU_FAN at its floor to 60 °C. A steeper curve from 60 to 70 °C is half of why the fans hunted.
+  - **Balanced was already on,** from the M5 test's GPU-only configuration. So for the whole review all nine fans ran the proposal, while `penna setup` said nothing would change until it was saved. At idle every fan sat at its floor: CPU_FAN 15 %, SYS_FAN1 5 % (840 RPM, its lowest), SYS_FAN2 and SYS_FAN5_PUMP 15 %, SYS_FAN4 30 %, PCH_FAN stopped, both GPU fans on the driver's curve at 0 RPM, the pump at 85 %. Tctl stayed between 39 and 43 °C (10th to 90th percentile).
+  - **GPU fan 1's floor came out at 35 %**, where the fourth run found 45 % for both fans. The M5 test's `gpu` curve stays in the file, unused.
+
+  **Fixed in 0.8.1:**
+  - Hysteresis trails the curve on the way down instead of dropping to it (§4.4). It is tested on a plant fitted to the load check's readings.
+  - The idle sample takes the lowest fifth of its readings (§5).
+  - `penna setup` and the journal say when the fans run the proposal during the review.
+  - A role's reason quotes the calibrated speed at 100 % (§5.3).
+  - "1 fans" now reads "1 fan".
+
+  178 Rust tests, 24 plugin logic tests.
+
+  Still to do:
+  - the plugin's review of the proposed curves, the *Generated* marks and the anchors on the axis (§8.3, §11.3 call 9);
+  - a run on this desk with 0.8.1, for an idle sample that is idle and a load check without hunting.
 - **M9** — **Laptops and other drivers:**
   - `levels`, `firmware-curve`, `modes` and `platform` controls, amdgpu included;
   - a Documented fixture per driver;

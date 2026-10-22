@@ -298,7 +298,12 @@ fn curves(c: &mut Client, proposed: Option<Proposal>, style: Style) -> Result<()
         return Ok(());
     }
     let studio: Studio = serde_json::from_value(c.call(Op::Studio)?.unwrap_or_default()).context("the studio's reply")?;
-    println!("\nProposed curves, a draft: nothing changes until you save it.");
+    // Running setup again, a profile it writes is on already, and the fans run the proposal while it is shown.
+    let on = PROFILES.iter().find(|(id, _)| *id == studio.profile).map(|(_, name)| *name);
+    match on {
+        Some(name) => println!("\nProposed curves, a draft. {name} is on, so the fans run them now; not saving puts back what was saved."),
+        None => println!("\nProposed curves, a draft: nothing changes until you save it."),
+    }
     print!("{}", curve_lines(&studio, &p));
     for n in &p.notes {
         println!("{}", style.dim(&format!("  {n}")));
@@ -307,7 +312,7 @@ fn curves(c: &mut Client, proposed: Option<Proposal>, style: Style) -> Result<()
         println!("The draft goes when this command ends: run penna setup in a terminal to save it.");
         return Ok(());
     }
-    print!("Save these curves and switch to Balanced? [y/N] ");
+    print!("{} [y/N] ", if on == Some("Balanced") { "Save these curves?" } else { "Save these curves and switch to Balanced?" });
     std::io::stdout().flush()?;
     let mut line = String::new();
     std::io::stdin().lock().read_line(&mut line)?;
@@ -316,7 +321,7 @@ fn curves(c: &mut Client, proposed: Option<Proposal>, style: Style) -> Result<()
         println!("Saved. Penna runs every fan on Balanced; switch profiles in the popup, or with penna profile.");
     } else {
         c.call(Op::DraftDiscard)?;
-        println!("Not saved: every fan stays with its BIOS or driver. What setup measured is kept; run penna setup again for curves.");
+        println!("Not saved: every fan runs as it did before setup. What setup measured is kept; run penna setup again for curves.");
     }
     Ok(())
 }

@@ -193,8 +193,8 @@ pub fn step(live: &mut Live, inventory: &Inventory, readings: &Readings, out: &m
         let n = results.controls.iter().filter(|c| !c.calibration.is_empty()).count();
         live.measured.merge(results);
         match save(live) {
-            Ok(where_) => out.note(now, Level::Info, None, format!("Setup measured {n} fans; saved to {where_}")),
-            Err(e) => out.note(now, Level::Alert, None, format!("Setup measured {n} fans, but saving failed: {e}")),
+            Ok(where_) => out.note(now, Level::Info, None, format!("Setup measured {n} fan{}; saved to {where_}", plural(n))),
+            Err(e) => out.note(now, Level::Alert, None, format!("Setup measured {n} fan{}, but saving failed: {e}", plural(n))),
         }
     }
     live.identify.retain(|_, until| now < *until);
@@ -249,8 +249,9 @@ pub fn roles(live: &mut Live, inventory: &Inventory, out: &mut Trace, conn: u64,
     Ok(text)
 }
 
-/// Measuring is over: curves for every fan, as a draft on setup's connection (§5.5, §11.3 call 9). The draft runs at once, but in
-/// the profile already active, so nothing changes until it is saved; saving it switches to Balanced.
+/// Measuring is over: curves for every fan, as a draft on setup's connection (§5.5, §11.3 call 9). The draft runs at once, in the
+/// profile already active: nothing changes until it is saved, unless setup ran before and that profile is one it writes. Saving
+/// it switches to Balanced.
 pub fn propose(live: &mut Live, inventory: &Inventory, out: &mut Trace) {
     let Some(owner) = live.setup.as_ref().filter(|s| s.run.measured_all()).map(|s| s.owner) else { return };
     let checking = live.setup.as_ref().is_some_and(|s| s.run.step_now() == Step::LoadCheck);
@@ -274,6 +275,7 @@ pub fn propose(live: &mut Live, inventory: &Inventory, out: &mut Trace) {
     }
     let proposal = Proposal::from(&g);
     let profile = g.config.profile.clone();
+    let what = g.draft_words();
     match crate::requests::run_draft(live, inventory, owner, g.config) {
         Ok(_) => {
             if let Some(d) = live.draft.as_mut() {
@@ -282,7 +284,7 @@ pub fn propose(live: &mut Live, inventory: &Inventory, out: &mut Trace) {
             switch(live, &profile);
             if !checking {
                 let n = proposal.curves.len();
-                out.note(live.now, Level::Info, None, format!("Setup proposes {n} curves, as a draft: nothing changes until it is saved"));
+                out.note(live.now, Level::Info, None, format!("Setup proposes {n} curves, as a draft: {what}"));
             }
             set_proposed(live, proposal);
         }

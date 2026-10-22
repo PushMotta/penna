@@ -62,6 +62,19 @@ pub struct Proposal {
     pub refused: Option<String>,
 }
 
+impl Generated {
+    /// What keeping the draft changes, for the note that proposes it. Run again, setup finds a profile it writes already on, and
+    /// the fans run the draft's curves as soon as it is made.
+    pub fn draft_words(&self) -> String {
+        let on = &self.config.profile;
+        let running = self.config.profiles.get(on).is_some_and(|a| a.values().any(|c| self.curves.contains(c)));
+        match PROFILES.iter().position(|p| p == on).filter(|_| running) {
+            Some(p) => format!("{} is on, so the fans run them until the draft is saved or left", title(p)),
+            None => "nothing changes until it is saved".to_owned(),
+        }
+    }
+}
+
 impl From<&Generated> for Proposal {
     fn from(g: &Generated) -> Proposal {
         Proposal { curves: g.curves.clone(), anchors: g.anchors.clone(), notes: g.notes.clone(), refused: None }

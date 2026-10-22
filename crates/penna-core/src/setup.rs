@@ -14,6 +14,9 @@ use std::collections::BTreeMap;
 
 /// The idle sample (§5, step 1).
 pub const IDLE_SECONDS: f64 = 30.0;
+/// A sensor's idle temperature is this quantile of its readings, not their mean: something that starts during the 30 s lifts the
+/// mean and every curve's start with it. On the development desk a mean of 50 °C came from a CPU that rests at 41 °C.
+pub const IDLE_QUANTILE: f64 = 0.2;
 /// The write test writes these, reading each back a tick later, then watches (§5.1).
 pub const WRITE_FIRST: f64 = 60.0;
 pub const WRITE_SECOND: f64 = 80.0;
@@ -308,6 +311,16 @@ impl Ctl {
     fn role(&self) -> Option<Role> {
         self.confirmed.or(self.suggestion.as_ref().map(|s| s.role))
     }
+
+    /// Its suggestion, quoting calibration's speed at 100 % once there is one: pairing's 6 s at 100 % can end before a fan is up
+    /// to speed. SYS_FAN5_PUMP on the development desk read 1,450 RPM in pairing and 1,819 calibrated.
+    fn suggested(&self) -> Option<Suggestion> {
+        let mut s = self.suggestion.clone()?;
+        if let (Some([_, paired, _]), Some([_, top])) = (self.rise, self.table.iter().find(|p| p[0] == 100.0)) {
+            s.reason = s.reason.replace(&rpm(paired), &rpm(*top));
+        }
+        Some(s)
+    }
 }
 
 /// One control's progress, for the setup view and `penna setup` (§8.3).
@@ -388,7 +401,7 @@ pub struct Setup {
     stopped: Option<String>,
     waiting: Option<String>,
     ctls: Vec<Ctl>,
-    idle_sum: BTreeMap<Key, (f64, u32)>,
+    idle_temps: BTreeMap<Key, Vec<f64>>,
     idle_stopped: BTreeMap<Key, f64>,
     last_idle: Option<f64>,
     /// Pairing: which control's window, and the tachs' readings at its start, highest and lowest.
@@ -441,7 +454,7 @@ impl Setup {
             stopped: None,
             waiting: None,
             ctls,
-            idle_sum: BTreeMap::new(),
+            idle_temps: BTreeMap::new(),
             idle_stopped: BTreeMap::new(),
             last_idle: None,
             window: None,
@@ -580,7 +593,7 @@ impl Setup {
                 Some(format!("The 1-minute load is {l:.1}; setup starts once it is under {limit:.0}, a quarter of the threads."));
             self.say = "Waiting for the machine to idle.".to_owned();
             self.step_at = self.now;
-            self.idle_sum.clear();
+            self.idle_temps.clear();
             self.idle_stopped.clear();
             self.last_idle = None;
             return;
@@ -590,9 +603,7 @@ impl Setup {
         self.last_idle = Some(self.now);
         for (k, s) in &readings.temps {
             if let Sample::Value(v) = s {
-                let e = self.idle_sum.entry(k.clone()).or_insert((0.0, 0));
-                e.0 += v;
-                e.1 += 1;
+                self.idle_temps.entry(k.clone()).or_default().push(*v);
             }
         }
         for t in &self.input.tachs {
@@ -1177,7 +1188,7 @@ impl Setup {
     fn load_check(&mut self, readings: &Readings, state: &LoopState) {
         let Some(input) = self.input.load_check.clone() else { return self.review() };
         let now = self.now;
-        let idle = self.idle_sum.get(&input.key).map(|(sum, n)| sum / f64::from(*n));
+        let idle = self.idle_of(&input.key);
         let cpu_fans: Vec<f64> = self
             .ctls
             .iter()
@@ -1259,15 +1270,17 @@ impl Setup {
         self.stopped.is_none() && self.step >= Step::LoadCheck
     }
 
+    /// Where a sensor rests: [`IDLE_QUANTILE`] of the idle sample's readings.
+    fn idle_of(&self, key: &Key) -> Option<f64> {
+        let mut v = self.idle_temps.get(key).filter(|v| !v.is_empty())?.clone();
+        v.sort_by(f64::total_cmp);
+        Some(v[((v.len() - 1) as f64 * IDLE_QUANTILE).round() as usize])
+    }
+
     /// The results, for `measured.toml`. The idle sample, the write test, pairing and calibration; roles stay suggestions until
     /// the user confirms them.
     pub fn measured(&self, unix: f64) -> Measured {
-        let idle = self
-            .idle_sum
-            .iter()
-            .filter(|(_, (_, n))| *n > 0)
-            .map(|(k, (s, n))| (k.clone(), (s / *n as f64 * 10.0).round() / 10.0))
-            .collect();
+        let idle = self.idle_temps.keys().filter_map(|k| self.idle_of(k).map(|t| (k.clone(), (t * 10.0).round() / 10.0))).collect();
         let controls = self
             .ctls
             .iter()
@@ -1286,7 +1299,7 @@ impl Setup {
                 m.calibration = c.table.clone();
                 m.firmware_stops = c.firmware_stops;
                 m.suggested = c.suggestion.as_ref().map(|s| s.role);
-                m.reason = c.suggestion.as_ref().map(|s| s.reason.clone());
+                m.reason = c.suggested().map(|s| s.reason);
                 m.role = c.confirmed;
                 m
             })
@@ -1346,7 +1359,7 @@ impl Setup {
                     paired: c.paired,
                     tachs: c.tachs.clone(),
                     rise: c.rise,
-                    suggestion: c.suggestion.clone(),
+                    suggestion: c.suggested(),
                     table: c.table.clone(),
                     stop: c.stop,
                     start: c.start,
