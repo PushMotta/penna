@@ -78,9 +78,10 @@ pub const DRIVERS: &[Driver] = &[
         class: Class::Motherboard,
         label: "Motherboard",
         offers: Offers::Duty { scale: 255 },
-        tier: Tier::Documented,
+        tier: Tier::Verified,
         needs: None,
-        source: "drivers/hwmon/it87.c, Documentation/hwmon/it87.rst; github.com/frankcrawford/it87 at bd7a566",
+        source: "drivers/hwmon/it87.c, Documentation/hwmon/it87.rst; github.com/frankcrawford/it87 at bd7a566; the §9.4 test on \
+                 this desk's IT8688E and IT8792E with that fork, 22 Oct 2026",
     },
     Driver {
         name: "nct6775",
@@ -267,8 +268,8 @@ pub fn lookup(hwmon_name: &str) -> Option<&'static Driver> {
     })
 }
 
-/// How far a device's driver has been checked. NVIDIA's NVML was verified on the 3090 in M4 (§9.4). A driver Penna doesn't know
-/// is at best Documented: the generic hwmon ABI is all it has to go on.
+/// How far a device's driver has been checked. NVIDIA's NVML was verified on the 3090 in M4 (§9.4), and it87 on this desk's
+/// IT8688E and IT8792E in M5. A driver Penna doesn't know is at best Documented: the generic hwmon ABI is all it has to go on.
 pub fn tier(driver: &str) -> Tier {
     if driver == "nvml" {
         return Tier::Verified;
@@ -298,6 +299,7 @@ mod tests {
     #[test]
     fn tiers() {
         assert_eq!(tier("nvml"), Tier::Verified);
+        assert_eq!(tier("it8688_4008090b"), Tier::Verified, "the fork's name, with Gigabyte's SIV id");
         assert_eq!(tier("thinkpad"), Tier::Documented);
         assert_eq!(tier("mystery"), Tier::Documented);
     }

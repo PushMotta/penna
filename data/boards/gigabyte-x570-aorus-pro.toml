@@ -1,18 +1,20 @@
-# Gigabyte X570 AORUS PRO (DESIGN.md §3.6). Header and sensor names are the board's own, from the sources below; pairing on
-# this desk (§5.2) confirms which PWM drives which header before any control is named after one.
+# Gigabyte X570 AORUS PRO (DESIGN.md §3.6). Header and sensor names are the board's own, from the sources below. Pairing by
+# hand on this desk (§5.2, 22 Oct 2026) found each pwmN driving fanN on both chips; SYS_FAN6_PUMP has nothing plugged in.
 vendor = "Gigabyte Technology Co., Ltd."
 board = "X570 AORUS PRO"
 sources = [
   "github.com/frankcrawford/it87 at bd7a566 (2 Oct 2026): Sensors configs/old configs/GA-X570-AORUS-PRO.conf",
+  "github.com/frankcrawford/it87 at bd7a566: it87.c, whose DMI table gives this board it87_acpi_ignore and is the module's alias list",
   "This desk, 21 Oct 2026: DMI board fields, BIOS F36d; the stock it87 in Linux 7.2 lacks the IT8688E; the boot log's ACPI resource conflict",
+  "This desk, 22 Oct 2026: after a reboot the fork loaded by itself and logged \"Ignoring expected ACPI resource conflict\"; pairing by hand (tools/m5-hardware-test.sh pairing)",
 ]
 
 [driver]
 module = "it87"
 package = "it87-dkms-git"
-options = "ignore_resource_conflict=1"
-why = "The stock it87 in Linux 7.2 doesn't know the IT8688E, and the firmware claims the chips' ports (the ACPI resource conflict), so neither driver binds without this option."
-risk = "The driver's README calls ignore_resource_conflict \"inherently risky\": ACPI and the driver may use the chip at the same time, which can cause unexpected reboots."
+loads_at_boot = true
+why = "The stock it87 in Linux 7.2 doesn't know the IT8688E. The fork knows this board: it ignores the firmware's claim on the chips' ports (the ACPI resource conflict) by itself, as ignore_resource_conflict=1 would."
+risk = "The driver's README calls ignoring that conflict \"inherently risky\": ACPI and the driver may use the chip at the same time, which can cause unexpected reboots. Installing the package is that decision, at every boot."
 
 [[chip]]
 hwmon = "it8688"

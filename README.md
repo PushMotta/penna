@@ -1,7 +1,7 @@
 # Penna
 
 Fan control for Linux, made to be understood. The design is in [DESIGN.md](DESIGN.md). Penna drives NVIDIA fans (M4) and every
-hwmon fan of a kind it knows (M5, in progress: DESIGN.md §3.5), runs as a service (M6), and is meant for any workstation or
+hwmon fan of a kind it knows (M5: DESIGN.md §3.5), runs as a service (M6), and is meant for any workstation or
 laptop: it builds on the kernel's own drivers and says plainly what a machine can't do.
 
 ```
@@ -74,6 +74,7 @@ sudo ./target/debug/pennad --config test/fixtures/desk-3090.config.toml   # this
 python3 -I tools/nvml-state.py                                            # what NVML says about every fan, no root
 pkexec tools/m4-hardware-test.sh                                          # every way out hands the fans back (§9.4)
 pkexec tools/m5-hardware-test.sh                                          # the same for every it87 channel, plus contests and pairing
+pkexec tools/m5-hardware-test.sh pairing                                  # which header each control drives, alone
 PENNA_BOARDS=data/boards cargo run -p penna -- doctor                     # with this checkout's board database
 ```
 

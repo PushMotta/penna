@@ -31,6 +31,9 @@ pub struct DriverAdvice {
     /// Module options, as `modprobe` takes them.
     #[serde(default)]
     pub options: Option<String>,
+    /// Once installed, the module loads at every boot by itself: its own aliases name this board.
+    #[serde(default)]
+    pub loads_at_boot: bool,
     pub why: String,
     #[serde(default)]
     pub risk: Option<String>,
@@ -136,7 +139,8 @@ mod tests {
         let b = Board::parse(DESK).unwrap();
         assert!(b.matches("Gigabyte Technology Co., Ltd.", "X570 AORUS PRO"));
         assert!(!b.matches("Gigabyte Technology Co., Ltd.", "X570 AORUS ELITE"));
-        assert_eq!(b.driver.as_ref().unwrap().options.as_deref(), Some("ignore_resource_conflict=1"));
+        let driver = b.driver.as_ref().unwrap();
+        assert!(driver.loads_at_boot && driver.options.is_none(), "the fork knows this board and ignores the conflict itself");
         let main = b.chip("it8688").unwrap();
         assert_eq!(main.fans["1"], "CPU_FAN");
         assert_eq!(main.fans["4"], "PCH_FAN");

@@ -1,6 +1,6 @@
 # Penna — design specification
 
-Draft 3 · 21 October 2026 · status: decisions approved (§11), UI quality bar added (§8.6), M0–M4 and M6 done, design review 01 approved (milestone D, §11.1). Penna 0.6.0 runs as a service on this desk and controls the 3090. Draft 3 widens Penna from this desk to any workstation or laptop, with automatic setup, generated curves and a Defaults profile: design review 02 (§11.2) was approved the same day, and M5 is under way.
+Draft 3 · 21 October 2026 · status: decisions approved (§11), UI quality bar added (§8.6), M0–M6 done, design review 01 approved (milestone D, §11.1). Penna 0.6.0 runs as a service on this desk and controls the 3090. Draft 3 widens Penna from this desk to any workstation or laptop, with automatic setup, generated curves and a Defaults profile: design review 02 (§11.2) was approved the same day. M5 was done on 22 Oct 2026: Penna drives every fan on this desk, and it87 is Verified.
 
 Companion: design review 01 — mockups in real theme tokens, live motion prototypes, and eight calls before QML — is published as an artifact (https://claude.ai/artifact/DmFftUzWVBd11NNBv4e8aK). Its source is `design/penna-design-review.html`.
 
@@ -180,7 +180,7 @@ Penna will run on machines nobody working on it has touched. Four things make th
 - **When the database doesn't know the board,** `penna doctor --probe` (root) reads the Super I/O chip ID the way `sensors-detect` does: the vendor's entry sequence at `0x2E`/`0x4E`, then the ID registers. It is the only time Penna touches a port, and only when asked.
 
 **The board database is data.** It lives in `/usr/share/penna/boards/*.toml`, one file per board, keyed by DMI vendor and board name. Each file holds:
-- the driver and options known to work;
+- the driver and options known to work, and whether the driver loads at boot by itself;
 - each header's name per channel, with a role hint (CPU cooler, pump, chipset fan, case fan);
 - quirks;
 - where every fact came from.
@@ -191,6 +191,8 @@ No entry is written from memory. Entries come from captures and setup runs on re
 |---|---|---|---|---|---|
 | IT8688E | `CPU_FAN` | `SYS_FAN1` | `SYS_FAN2` | `PCH_FAN` (chipset) | `CPU_OPT` |
 | IT8792E | `SYS_FAN5_PUMP` | `SYS_FAN6_PUMP` | `SYS_FAN4` | | |
+
+*(M5, 22 Oct 2026: pairing by hand confirmed the table. On both chips `pwmN` drives `fanN` and nothing else, and nothing is plugged into `SYS_FAN6_PUMP`.)*
 
 The same file names `VRM MOS`, `PCH`, `PCIEX16` and `PCIEX8` temperatures. It also explains the cold `acpitz`: the firmware returns a fixed 290 K.
 
@@ -271,7 +273,7 @@ Each control is in exactly one of these, and every surface renders the same set:
 | `failsafe` | A source failed or went stale. Running at the control's failsafe value. |
 | `emergency` | A sensor crossed its emergency limit. 100 %. |
 | `contested` | Something else keeps changing the control (§6.4). We have stopped writing to it, except in an emergency (§6.3). |
-| `stalled` | Its paired tach reads 0 RPM while the duty should spin it (§6.3). Lands with pairing in M5; M1 only warns. |
+| `stalled` | Its paired tach reads 0 RPM while the duty should spin it (§6.3). Lands with pairing in M7; M1 only warns. |
 | `absent` / `fault` | Not present, or a write failed and was handed back. |
 
 ### 4.7 Profiles
@@ -321,6 +323,8 @@ The control is taken as in §6.1, with its way back on disk first. Penna writes 
 ### 5.2 Pairing (hwmon only)
 
 All taken controls are held at their current duty. One control at a time is raised to 100 % for 6 s, then dropped to 40 % for 6 s. Any tach that follows both moves by more than 25 % is paired with it. A control can end up with several tachs, or none: a header with no tach, or a dead fan. NVML and most laptop drivers pair control *i* with tach *i* and skip this step.
+
+*(M5, 22 Oct 2026: pairing by hand on this desk.)* From a 60 % hold, 100 % raised each fan by 31–59 %; the smallest rise was the PCH fan's, close to the 25 % above. The fans were still speeding up 4 s in. The first version of the by-hand test read each tach once, 5 s in, against RPMs recorded before the fans had come down from full speed, and it paired one control of eight. The version that worked waits for every fan to settle, measures each control from what the tachs read just before it, and keeps each tach's highest reading over 11 s. Setup's pairing (M7) needs the same three things.
 
 ### 5.3 Roles
 
@@ -423,7 +427,7 @@ Before a control leaves `firmware`, the daemon writes its key and **original mod
   Not every sensor is watched: a Super I/O chip's unconnected inputs commonly read 127 °C and would hold every fan at 100 % for ever.
 - **An emergency outranks a contest.** A `contested` control is taken back and written at 100 % every tick while the emergency lasts, then returns to `contested`.
 - **Adopted mid-emergency.** A control adopted during an emergency or a failed source gets 100 %, or its failsafe value, on the same tick.
-- **A stalled fan.** A paired tach that reads 0 RPM for 3 s while the duty is at or above the stop duty plus 5 % gets one start kick at 100 % for 2 s. If it still reads 0, the control is `stalled`: urgent, the `fan-alert` glyph, and "isn't turning at 35 %". Penna keeps commanding the curve, and the emergency rule still protects. *(M1 only warns; the state needs pairing, M5.)*
+- **A stalled fan.** A paired tach that reads 0 RPM for 3 s while the duty is at or above the stop duty plus 5 % gets one start kick at 100 % for 2 s. If it still reads 0, the control is `stalled`: urgent, the `fan-alert` glyph, and "isn't turning at 35 %". Penna keeps commanding the curve, and the emergency rule still protects. *(M1 only warns; the state needs pairing, M7.)*
 - A write fails → the control is handed back to its original mode, enters `fault`, and is reported.
 - Writes happen only when the value changes, at most once per control per tick.
 
@@ -439,7 +443,7 @@ The daemon subscribes to logind `PrepareForSleep(false)`. On resume it re-reads 
 
 ### 6.6 What we do to the chip
 
-With `ignore_resource_conflict` the it87 README warns that "both ACPI and this driver may access the chip at the same time", which can cause "unexpected system reboots". Our part of that risk is the number of accesses: a 1 s tick for hwmon, no write when nothing changed, and one read pass per tick. Loading the driver that way stays the user's decision, explained by `penna doctor`.
+With `ignore_resource_conflict` the it87 README warns that "both ACPI and this driver may access the chip at the same time", which can cause "unexpected system reboots". Our part of that risk is the number of accesses: a 1 s tick for hwmon, no write when nothing changed, and one read pass per tick. Loading the driver that way stays the user's decision, explained by `penna doctor`. *(M5, 22 Oct 2026: on boards in the fork's DMI table, this desk's among them, the fork ignores the conflict by itself and loads at every boot. There, installing `it87-dkms-git` is the decision, and the doctor says so.)*
 
 Windows has no equivalent of this check. LibreHardwareMonitor, and so Fan Control, reaches the chip through its own kernel driver whether ACPI uses it or not. On Gigabyte boards it also switches off Gigabyte's fan firmware on the second ITE chip before driving those fans: it writes 0 to a byte at offset `0x947` of that controller's memory, and restores the byte on exit. That firmware is why IT8792E writes revert on Linux (§6.4). Penna does not copy the trick into userspace (§11.2, call 1). If the it87 fork's own Gigabyte workarounds don't cover a board, the fix belongs in the driver.
 
@@ -559,7 +563,7 @@ Errors are sentences a person can act on, in the voice of §8.
 | ✎ `release` | `control` | Unassigns it in the active profile, handing it back to firmware; persisted |
 | ✎ `label` | `key`, `label` | Renames a sensor or control; persisted |
 
-`pair` and `calibrate` arrive with pairing (M5).
+`pair` and `calibrate` arrive with pairing (M7).
 
 **Operations added in M3 (the studio).**
 
@@ -936,7 +940,7 @@ Also seen on the card:
 There is one desk to test on, and Penna has to run on many machines. Coverage comes in the three tiers of §3.6:
 - **Documented.** For every driver Penna knows, a fixture tree is written from that driver's kernel documentation, with its quirks: levels, read-back maps, enable values, firmware curves and their sensor. The simulator models each kind of §3.5, so setup, generated curves and every exit path run against each driver's tree in `cargo test`.
 - **Captured.** Real captures go to `test/fixtures/machines/<board>/`, with the board entry they produced. Each one runs the same tests.
-- **Verified.** A driver is Verified when the §9.4 hardware test has passed on real hardware with it. This desk verifies `nvidia` (done) and `it87` (M5).
+- **Verified.** A driver is Verified when the §9.4 hardware test has passed on real hardware with it. This desk verifies `nvidia` (M4) and `it87` (M5: the fork, on the IT8688E and IT8792E).
 
 ## 10. Scope and milestones
 
@@ -978,7 +982,7 @@ Milestones, each ending in something visible:
   - The doctor with the board database (this desk's entry first) and support tiers.
   - Draft 2's M5 named pairing and calibration as well; they move to M7 as steps of setup.
 
-  **In progress since 21 Oct 2026.** Built and tested against the simulator (147 Rust tests, 18 plugin logic tests):
+  **Done 22 Oct 2026.** Built and tested against the simulator (147 Rust tests, 18 plugin logic tests), then on this desk in two hardware runs:
   - **The kinds.** `ControlKind` is `Duty { scale }`, `Nvml`, `Levels`, `Speed`, `FirmwareCurve`, `Modes` or `ReadOnly`, and the protocol reports it with a tier for every control. hwmon gives each channel its driver's kind (§3.5), and a duty channel needs a `pwmN` whose mode bits allow writes plus a `pwmN_enable`. Undrivable kinds are listed with the reason and never written; adopting one is refused with that reason.
   - **Real control.** Production `pennad` opens hwmon for writing; the M4 guards are gone. Full speed read back as `pwm_enable` 0 is not a contest. Read-back tolerance is 2 % of the control's own scale.
   - **`held.json` names real paths.** Entries name the device's real path, not `class/hwmon/hwmonN`, so a renumbered device can't receive another's restore.
@@ -988,7 +992,7 @@ Milestones, each ending in something visible:
   - **`penna reset`** goes through `pennad` when it runs. Without it, as root, `penna reset` restores `held.json` and saves Defaults. Removing the package runs it first.
   - **The board database** loads from `/usr/share/penna/boards` by DMI (`PENNA_BOARDS` or `pennad --boards` for another directory). This desk's entry names its tachs and temperatures, drops the unconnected `EC_TEMP` inputs and the fixed-290 K `acpitz`, and gives the doctor the driver to load and its risk. Until pairing names them, hwmon controls are called by chip and channel ("IT8688E pwm1"), because two chips both have a `pwm1`.
   - **The doctor** reports each fan driver's tier, says why a driver's fans can't be driven, checks Secure Boot when a DKMS module is the answer, and doesn't ask a laptop for a Super I/O chip.
-  - `tools/m5-hardware-test.sh` holds every it87 channel at 60 %. It ends `pennad` in the five ways of §9.4 and checks every `pwm_enable` comes back exactly. It also watches 40 s for channels that revert (the IT8792E question), checks full speed, and spins one control at a time to see which header it drives.
+  - `tools/m5-hardware-test.sh` holds every it87 channel at 60 %. It ends `pennad` in the five ways of §9.4 and checks every `pwm_enable` comes back exactly. It also watches 40 s for channels that revert (the IT8792E question), checks full speed, and spins one control at a time to see which header it drives (`pairing` runs that step alone).
 
   **The hardware test, first run (22 Oct 2026).** `it87-dkms-git` 358.bd7a566 loaded with `ignore_resource_conflict=1`: the IT8688E at 0xa40 and the IT8792E at 0xa60, the second through Gigabyte's EC (H2RAM, SmartFan G2). Rebuilt from the journal, because the run's output stayed in another terminal:
   - **All five exit paths handed every channel back:** stop, `kill -9`, a whole-unit kill (`ExecStopPost` was killed too, and the restarted `pennad` restored what was left), panic, and the watchdog.
@@ -997,7 +1001,26 @@ Milestones, each ending in something visible:
   - **A hand-back bug: the mode went back, but not the duty.** On the IT8688E that duty is the BIOS curve's start PWM. Fixed: the duty goes back first (§6.1). The test now checks every `pwmN_auto_*` and the start PWM read as `pwm`, and writes `target/m5-hardware-test.log`.
   - **The fork's hwmon names carry Gigabyte's SIV id** (`it8688_4008090b`, since c8d2038 in Sep 2026), so the board database didn't match. Fixed: an entry's chip matches its name with or without the id. Keys carry the full name, as sysfs does.
 
-  Still to do: a reboot (it puts the BIOS's start PWMs back), then the test again to confirm the fix and record pairing. The write test (§5.1) moves to M7, where setup's procedures run in the loop. `firmware.json` arrives with the first kind whose state outlives a reboot (M9); `penna reset` already restores everything there is today.
+  **The second run, after a reboot (22 Oct 2026).** The reboot put the BIOS's start PWMs back (70 of 255, 27 %). From `target/m5-hardware-test.log` and `target/m5-pairing.log`:
+  - **The fork now loads at every boot by itself.** Its DMI table is the module's alias list, and it gives this board `it87_acpi_ignore`, which has the same effect as `ignore_resource_conflict=1`. The kernel logged "Ignoring expected ACPI resource conflict". The board entry no longer names the option, and the doctor says that installing the package is the decision, and that it holds at every boot (§6.6).
+  - **All five exit paths handed back every `pwm_enable` and all 33 automatic-curve settings**, the start PWMs among them, so the duty fix holds.
+  - **Every channel held for 40 s again**, the IT8792E's included, with no contest, and full speed raised no false contest.
+  - **Pairing confirms the fork's labels (§3.6).** The first version of the step measured too early and paired one control (§5.2). With that fixed, from the 60 % hold to 100 %:
+
+    | Control | Tach | Header | RPM |
+    |---|---|---|---|
+    | IT8688E `pwm1` | `fan1` | `CPU_FAN` | 1048 → 1662 |
+    | IT8688E `pwm2` | `fan2` | `SYS_FAN1` | 1562 → 2191 |
+    | IT8688E `pwm3` | `fan3` | `SYS_FAN2` | 1044 → 1658 |
+    | IT8688E `pwm4` | `fan4` | `PCH_FAN` | 4299 → 5625 |
+    | IT8688E `pwm5` | `fan5` | `CPU_OPT` | 1374 → 2184 |
+    | IT8792E `pwm1` | `fan1` | `SYS_FAN5_PUMP` | 1106 → 1726 |
+    | IT8792E `pwm2` | — | `SYS_FAN6_PUMP` | nothing plugged in |
+    | IT8792E `pwm3` | `fan3` | `SYS_FAN4` | 1544 → 2142 |
+
+  - **it87 is Verified** (§3.6, §9.6): the doctor and the protocol say so. The cards show it once tiers reach the UI (D2).
+
+  Moved on: the write test (§5.1) to M7, where setup's procedures run in the loop, with pairing written to `measured.toml`. `firmware.json` arrives with the first kind whose state outlives a reboot (M9); `penna reset` already restores everything there is today. The installed service is still 0.6.0, which leaves the motherboard's fans to the BIOS.
 - **M6** — Packaging, README, first release. **Done 21 Oct 2026**, ahead of M5 (motherboard fans need the it87 decision, §13): 0.6.0 is packaged, installed and running as a service on this desk, with 136 Rust tests and 17 plugin logic tests (§7.6, as built). Still to do for a public release: publish the repository and the plugin as its own repo (§11, decision 9), and switch the PKGBUILD to a tagged tarball (now M10).
 - **D2** *(draft 3)* — Visual review of the new UI: the setup view, the Defaults pill, and kind, tier and drift on fan cards. Mockups in real theme tokens across the four review themes, before their QML.
 - **M7** — **Setup** (§5.1–5.4, §5.6): write test, pairing, roles with *Identify*, calibration and drift, in the studio and `penna setup`. Run on this desk and on every simulated driver.
@@ -1072,9 +1095,9 @@ The user approved all ten recommendations on 21 Oct 2026 ("go ahead with your re
 
 These need root or a shell restart, and were not run for this draft.
 
-1. ~~**Which chips.**~~ *Loaded 22 Oct 2026:* `it87-dkms-git` 358.bd7a566 with `ignore_resource_conflict=1` (not persisted; a reboot unloads it). The IT8688E is at 0xa40 (`it8688_4008090b`, five controls) and the IT8792E at 0xa60 (`it8792_4008090b`, three, through Gigabyte's EC). The kernel logged the expected ACPI resource conflict and nothing else.
-2. **Which headers each chip drives**, through pairing, against the fork's labels (§3.6). ~~Whether IT8792E writes hold~~: they held for 40 s in the first M5 hardware test, with no contest (M5 status, §10).
-3. **BIOS Smart Fan settings** that manual control may need. The fork notes some Gigabyte boards need a BIOS curve workaround.
+1. ~~**Which chips.**~~ *Loaded 22 Oct 2026:* `it87-dkms-git` 358.bd7a566, first by hand with `ignore_resource_conflict=1`. It now loads at every boot by itself: the fork's DMI table names this board and ignores the conflict for it, as the option would (M5 status, §10). The IT8688E is at 0xa40 (`it8688_4008090b`, five controls) and the IT8792E at 0xa60 (`it8792_4008090b`, three, through Gigabyte's EC). The kernel logged the expected ACPI resource conflict and nothing else.
+2. ~~**Which headers each chip drives.**~~ Paired by hand in M5: each `pwmN` drives `fanN`, as the fork's labels say (§3.6). ~~Whether IT8792E writes hold~~: they held for 40 s in both M5 hardware runs, with no contest (M5 status, §10).
+3. ~~**BIOS Smart Fan settings** that manual control may need.~~ None on this desk: all eight channels held in both M5 runs with the BIOS settings as they are (F36d). The fork notes some Gigabyte boards need a BIOS curve workaround.
 4. ~~**NVML on the 3090 as root.**~~ Verified in M4 (§9.4): manual speeds hold and read back as manual, `SetDefaultFanSpeed_v2` hands the fans back, and zero RPM returns at idle.
 5. **`pwm_enable` after suspend and after hibernate.**
 6. **Cost of a tick** (`strace -c` on the daemon). Goal: under 1 ms.

@@ -6,12 +6,13 @@
 # see which header each control drives (pairing, done by hand, §5.2). "As it was found" covers each channel's pwm_enable and
 # every pwmN_auto_* setting the driver shows: on the IT8688E the manual duty register is also the curve's start PWM (§6.1).
 #
-#   pkexec tools/m5-hardware-test.sh
+#   pkexec tools/m5-hardware-test.sh            everything, about eight minutes
+#   pkexec tools/m5-hardware-test.sh pairing    pairing alone, about five
 #
-# Takes about six minutes, and you will hear the fans. The installed pennad is stopped first (which hands the GPU's fans back)
-# and started again at the end. Whatever happens, the cleanup puts every channel's pwm_enable back as it was found, first
-# through penna restore and then by writing the recorded value directly. Everything printed also goes to
-# target/m5-hardware-test.log.
+# You will hear the fans. The installed pennad is stopped first (which hands the GPU's fans back) and started again at the end.
+# Whatever happens, the cleanup puts every channel's pwm_enable back as it was found, first through penna restore and then by
+# writing the recorded value directly. Everything printed also goes to target/m5-hardware-test.log (target/m5-pairing.log for
+# pairing alone).
 set -uo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -24,7 +25,12 @@ sock=/run/penna/penna.sock
 held=/run/penna/held.json
 hold_pct=60
 hold_raw=$(( (hold_pct * 255 + 99) / 100 ))
-log=$repo/target/m5-hardware-test.log
+mode=${1:-all}
+case "$mode" in
+  all) log=$repo/target/m5-hardware-test.log ;;
+  pairing) log=$repo/target/m5-pairing.log ;;
+  *) echo "usage: pkexec $0 [pairing]"; exit 2 ;;
+esac
 export PENNA_SOCKET=$sock
 fails=0
 service_was_active=0
@@ -33,7 +39,7 @@ say() { printf '\n== %s\n' "$*"; }
 
 # ------------------------------------------------------------------ the channels
 declare -a dirs=() keys=() names=()
-declare -A orig_enable=() orig_pwm=() orig_auto=() auto_label=() has_curve=()
+declare -A orig_enable=() orig_pwm=() orig_auto=() auto_label=() has_curve=() moved=()
 for h in /sys/class/hwmon/hwmon*; do
   name=$(cat "$h/name" 2>/dev/null) || continue
   case "$name" in it8*) ;; *) continue ;; esac
@@ -135,6 +141,38 @@ penna_state() {
   "$bin/penna" state --json | python3 -I -c 'import json,sys; t=json.load(sys.stdin); print(next((c["state"] for c in t["controls"] if c["key"]==sys.argv[1]), "?"))' "$1"
 }
 
+# pair: which header does each control drive? One control at a time goes to 100 % while every other fan holds (pairing by
+# hand, §5.2). Each rise is measured from what the tachs read just before it, once every fan has settled at the hold.
+pair() {
+  say "7 · which header does each control drive? One at a time to 100 % for 12 s (pairing by hand, §5.2)"
+  # Fans come down to the hold at 5 %/s, and their RPM lags the duty by seconds.
+  sleep 15
+  local tachs=(/sys/class/hwmon/hwmon*/fan[0-9]_input) i f b pk now rose
+  for i in "${!dirs[@]}"; do
+    [ -n "${moved[${dirs[$i]}]:-}" ] && { echo "  ${names[$i]}: skipped, it reverts"; continue; }
+    local -A base=() peak=()
+    for f in "${tachs[@]}"; do base[$f]=$(cat "$f"); peak[$f]=0; done
+    "$bin/penna" set "${keys[$i]}" 100 --for 12s >/dev/null
+    # A fan takes seconds to spin up, and it87 reads the chip at most every 1.5 s: keep each tach's highest reading.
+    sleep 3
+    for _ in $(seq 1 8); do
+      for f in "${tachs[@]}"; do now=$(cat "$f"); [ "$now" -gt "${peak[$f]}" ] && peak[$f]=$now; done
+      sleep 1
+    done
+    rose=""
+    for f in "${tachs[@]}"; do
+      b=${base[$f]} pk=${peak[$f]}
+      # 15 % and 150 RPM: well above a tach's jitter at the hold.
+      if [ $((pk - b)) -ge 150 ] && [ $((pk * 100)) -ge $((b * 115)) ]; then
+        rose+="$(cat "$(dirname "$f")/name") $(basename "$f" _input) $b→$pk RPM; "
+      fi
+    done
+    echo "  ${names[$i]} → ${rose:-no tach moved (no fan on this header, or one without a tach)}"
+    # Back down to the hold before the next one, so its rise is its own.
+    sleep 16
+  done
+}
+
 cleanup() {
   systemctl stop "$unit" 2>/dev/null
   systemctl reset-failed "$unit" 2>/dev/null
@@ -207,6 +245,16 @@ starts=""
 for f in "${!orig_auto[@]}"; do [[ $f == *_auto_start ]] && starts+="${auto_label[$f]}=${orig_auto[$f]} "; done
 echo "  ${#orig_auto[@]} automatic-curve settings recorded. Start PWMs: ${starts:-none shown}"
 
+if [ "$mode" = pairing ]; then
+  if start; then
+    pair
+    systemctl stop "$unit"
+    wait_inactive 15
+    expect_original "after the last stop"
+  fi
+  exit
+fi
+
 say "1 · systemctl stop (SIGTERM): pennad hands every channel back itself"
 if start; then
   sleep 6
@@ -263,7 +311,6 @@ say "5 · does each channel keep what Penna writes? (the IT8792E question, §6.4
 if start; then
   # A fan the firmware ran fast comes down at the step-down rate (5 %/s): let every channel reach the hold first.
   sleep 15
-  declare -A moved=()
   for _ in $(seq 1 40); do
     for i in "${!dirs[@]}"; do
       p=${dirs[$i]} e=$(cat "${dirs[$i]}_enable") v=$(cat "${dirs[$i]}")
@@ -295,28 +342,8 @@ if start; then
   table
   if [ ${#bad[@]} -eq 0 ]; then echo "PASS  full speed, with no false contest"; else echo "FAIL  full speed: ${bad[*]}"; fails=$((fails + 1)); fi
   "$bin/penna" full-speed off >/dev/null
-  sleep 4
 
-  say "7 · which header does each control drive? One at a time to 100 % for 6 s (pairing by hand, §5.2)"
-  declare -A base=()
-  for f in /sys/class/hwmon/hwmon*/fan[0-9]_input; do base[$f]=$(cat "$f"); done
-  for i in "${!dirs[@]}"; do
-    [ -n "${moved[${dirs[$i]}]:-}" ] && { echo "  ${names[$i]}: skipped, it reverts"; continue; }
-    "$bin/penna" set "${keys[$i]}" 100 --for 6s >/dev/null
-    sleep 5
-    rose=""
-    for f in "${!base[@]}"; do
-      now=$(cat "$f")
-      if [ "${base[$f]}" -gt 0 ] && [ $((now * 100 / base[$f])) -ge 125 ]; then
-        rose+="$(cat "$(dirname "$f")/name") $(basename "$f" _input) ${base[$f]}→$now RPM; "
-      elif [ "${base[$f]}" -eq 0 ] && [ "$now" -gt 300 ]; then
-        rose+="$(cat "$(dirname "$f")/name") $(basename "$f" _input) 0→$now RPM; "
-      fi
-    done
-    echo "  ${names[$i]} → ${rose:-no tach moved (no fan on this header, or one without a tach)}"
-    # Back down to the hold at 5 %/s before the next one, so its rise is its own.
-    sleep 10
-  done
+  pair
   systemctl stop "$unit"
   wait_inactive 15
   expect_original "after the last stop"

@@ -320,10 +320,14 @@ pub fn findings(f: &Facts) -> Vec<Finding> {
         }
         let vendor = f.board.as_ref().map(|(v, _)| v.to_ascii_lowercase()).unwrap_or_default();
         let mut todo = if let Some(a) = &f.advice {
-            let install = a.package.as_ref().map(|p| format!("Install {p}, then load it")).unwrap_or_else(|| "Load it".into());
+            let install = match (&a.package, a.loads_at_boot) {
+                (Some(p), true) => format!("Install {p}: it loads at every boot from then on, and now with"),
+                (Some(p), false) => format!("Install {p}, then load it:"),
+                (None, _) => "Load it:".into(),
+            };
             let options = a.options.as_ref().map(|o| format!(" {o}")).unwrap_or_default();
             let risk = a.risk.as_ref().map(|r| format!(" {r}")).unwrap_or_default();
-            format!("From Penna's board database: {} {install}: sudo modprobe {}{options}.{risk}", a.why, a.module)
+            format!("From Penna's board database: {} {install} sudo modprobe {}{options}.{risk}", a.why, a.module)
         } else if vendor.contains("gigabyte") {
             let known = f
                 .it87_chips
@@ -331,9 +335,10 @@ pub fn findings(f: &Facts) -> Vec<Finding> {
                 .map(|c| format!(" The stock it87 module knows {}.", c.join(", ")))
                 .unwrap_or_else(|| " The stock it87 module isn't installed.".to_owned());
             format!(
-                "Gigabyte boards use ITE chips, driven by it87.{known} Newer ITE chips need the out-of-tree it87-dkms-git (AUR), loaded \
-                 with ignore_resource_conflict=1. Its README calls that inherently risky: ACPI and the driver may use the chip at the \
-                 same time, which can cause unexpected reboots."
+                "Gigabyte boards use ITE chips, driven by it87.{known} Newer ITE chips need the out-of-tree it87-dkms-git (AUR). On \
+                 boards it knows, it loads at boot and ignores the ACPI resource conflict by itself; on others, load it with sudo \
+                 modprobe it87 ignore_resource_conflict=1. Its README calls ignoring the conflict inherently risky: ACPI and the \
+                 driver may use the chip at the same time, which can cause unexpected reboots."
             )
         } else if ["asus", "micro-star", "msi", "asrock"].iter().any(|v| vendor.contains(v)) {
             "Most ASUS, MSI and ASRock boards use a Nuvoton chip: try sudo modprobe nct6775 (or nct6683). sudo sensors-detect, from \
@@ -528,7 +533,7 @@ mod tests {
             controls: 5,
             drivable: 5,
             why: None,
-            tier: Tier::Documented,
+            tier: drivers::tier("it8688"),
         }];
         f.board_known = true;
         let mut tick: Tick = serde_json::from_str(include_str!("../../penna-proto/tests/fixtures/tick.json")).unwrap();
@@ -546,8 +551,8 @@ mod tests {
         assert!(all.iter().all(|x| x.status != Status::Attention), "{all:?}");
         assert_eq!(
             by_area(&all, "motherboard")[0].text,
-            "IT8688E (it8688) is bound, with 5 fan controls Penna can drive. Its driver is Documented: nobody has run Penna's \
-             hardware test with it yet."
+            "IT8688E (it8688) is bound, with 5 fan controls Penna can drive. Its driver is Verified: Penna's hardware test has \
+             passed with it."
         );
         assert_eq!(
             by_area(&all, "board")[0].text,
@@ -577,7 +582,10 @@ mod tests {
         let all = findings(&f);
         let todo = by_area(&all, "motherboard")[0].todo.clone().unwrap();
         assert!(todo.starts_with("From Penna's board database: The stock it87 in Linux 7.2 doesn't know the IT8688E"), "{todo}");
-        assert!(todo.contains("Install it87-dkms-git, then load it: sudo modprobe it87 ignore_resource_conflict=1."), "{todo}");
+        assert!(
+            todo.contains("Install it87-dkms-git: it loads at every boot from then on, and now with sudo modprobe it87. "),
+            "the fork knows this board, so no option is needed: {todo}"
+        );
         assert!(todo.contains("inherently risky") && todo.ends_with("signed with a key you have enrolled."), "{todo}");
     }
 
