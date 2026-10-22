@@ -109,6 +109,18 @@ Item {
     })
   }
 
+  // A drifting fan's Recalibrate: setup for that fan alone, on this connection (§5.6).
+  function recalibrate(key) {
+    client.request("setup.start", { controls: [key] }, function(reply) {
+      if (reply.ok) {
+        root.setupScreen = false
+        root.setupDismissed = false
+      } else {
+        root.say(reply.error)
+      }
+    })
+  }
+
   function leaveSetup() {
     setupScreen = false
     setupDismissed = true
@@ -572,6 +584,7 @@ Item {
                         root.focusArea = "controls"
                         root.selectControl(String(modelData))
                       }
+                      onRecalibrateRequested: function(key) { root.recalibrate(key) }
                     }
                   }
                 }

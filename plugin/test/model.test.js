@@ -206,3 +206,9 @@ test("the setup view's rail, rows, bars and review come from the run's progress 
   assert.equal(M.nextRole("case"), "pump")
   assert.equal(M.nextRole("chipset"), "cpu")
 })
+
+test("a drifting fan says how much slower, and nothing when it turns as calibrated (§5.6)", () => {
+  assert.equal(M.driftLine(control({ drift: 0.3 })), "Turns 30 % slower than when it was set up: dust, or a tired bearing.")
+  assert.equal(M.driftLine(control({ drift: null })), "")
+  assert.equal(M.driftLine(control()), "")
+})

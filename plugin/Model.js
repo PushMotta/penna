@@ -213,6 +213,12 @@ function deviceOf(control, tick) {
   return { id: id, name: name, kind: kind, tier: control.tier ? String(control.tier) : "" }
 }
 
+// A drifting fan's line on its card (§5.6): how much slower than when it was set up, and why that might be.
+function driftLine(control) {
+  if (!control || control.drift === null || control.drift === undefined) return ""
+  return "Turns " + Math.round(Number(control.drift) * 100) + " % slower than when it was set up: dust, or a tired bearing."
+}
+
 function tierWord(tier) { return tier ? capitalise(String(tier)) : "" }
 
 // One sentence under a heading whose tier is below Verified.
@@ -616,7 +622,7 @@ if (typeof module !== "undefined") {
     setupMeta: setupMeta, paired: paired, defaultsRows: defaultsRows, emptyHeaders: emptyHeaders, deviceOf: deviceOf,
     deviceGroups: deviceGroups, tierNote: tierNote, kindLine: kindLine, setupRail: setupRail, setupRows: setupRows, pairBars: pairBars,
     pairFound: pairFound, calCells: calCells, reviewRows: reviewRows, nextRole: nextRole, ROLES: ROLES, ROLE_NAME: ROLE_NAME,
-    isNvmlKey: isNvmlKey, normalMeta: normalMeta, shortName: shortName,
+    isNvmlKey: isNvmlKey, driftLine: driftLine, normalMeta: normalMeta, shortName: shortName,
     tempRows: tempRows, scale: scale, badge: badge, dutyText: dutyText, deadband: deadband, formatNumber: formatNumber,
     ago: ago, clock: clock, writeBlockedReason: writeBlockedReason, keysOf: keysOf, sameKeys: sameKeys, byKey: byKey,
     T_MIN: T_MIN, T_MAX: T_MAX, clamp: clamp, copyPoints: copyPoints, pointsEqual: pointsEqual, evalPoints: evalPoints,

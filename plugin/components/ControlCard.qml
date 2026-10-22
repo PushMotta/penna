@@ -22,6 +22,7 @@ Rectangle {
 
   signal clicked()
   signal hovered(bool isHovered)
+  signal recalibrateRequested(string key)
 
   readonly property color dim: Qt.darker(foreground, 1.4)
   readonly property bool hot: mouse.containsMouse || hasCursor
@@ -141,6 +142,35 @@ Rectangle {
         color: root.dim
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
+      }
+    }
+
+    // Drift is a line with Recalibrate, not a badge: a reason to look, not an alarm (§5.6, design review 03 call 10).
+    Column {
+      width: parent.width
+      visible: Model.driftLine(root.control) !== ""
+      spacing: Style.spacing.xs
+      Rectangle { width: parent.width; height: 1; color: Util.alpha(root.foreground, 0.12) }
+      Text {
+        width: parent.width
+        wrapMode: Text.Wrap
+        text: Model.driftLine(root.control)
+        textFormat: Text.PlainText
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+      }
+      Text {
+        text: "Recalibrate"
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        font.underline: true
+        MouseArea {
+          anchors.fill: parent
+          cursorShape: Qt.PointingHandCursor
+          onClicked: root.recalibrateRequested(String(root.control.key))
+        }
       }
     }
 
