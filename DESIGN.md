@@ -315,7 +315,7 @@ The control is taken as in §6.1, with its way back on disk first. Penna writes 
 | Result | Means | Then |
 |---|---|---|
 | `ok` | Reads back what was written, and stays manual. | Offered for curves. |
-| `maps` | Reads back a different value, but the same one every time (fan2go's `setPwmToGetPwmMap`). | Offered; read-back compares against the map. |
+| `maps` | Reads back a different value, but the same one every time (fan2go's `setPwmToGetPwmMap`). | Offered; read-back compares against the map. *(M7: recorded, but not offered until the loop's read-back follows a map, with the drivers that need one, M9.)* |
 | `steps` | Only some values stick: the hardware has levels. | Offered as `levels` (§3.5). |
 | `reverts` | Back to the old value or mode within 3 s: firmware is driving it. This is the IT8792E report on Gigabyte X570 boards (§6.4). | Not offered. The card says what wrote over it, and the doctor says what can be done. |
 | `refused` | The write fails. | Not offered, with the error. |
@@ -350,7 +350,7 @@ Until the user confirms the roles, a fan on a pump or chipset header is treated 
 Per control, with its tach paired. Fans are calibrated all at once, each against its own tach. Air from one fan barely moves another's RPM, and running them together halves the time.
 
 1. Step down from 100 % in 5 % steps. At each step, wait until RPM is stable within 3 % over 2 s (timeout 10 s) and record it. The lowest duty that still turns is the **stop duty**. Pumps and chipset fans stop the descent at 50 % and 30 %, and so does an unconfirmed fan on a pump header (50 %), except a chipset fan its firmware was seen stopping (§5.3).
-2. From 0, step up in 2 % steps. The first duty that spins a stopped fan is the **start duty**, usually above the stop duty because of stiction. The time from that write to a steady RPM is the **spin-up time**.
+2. From 0, step up in 2 % steps. The first duty that spins a stopped fan is the **start duty**, usually above the stop duty because of stiction. The time from that write to a steady RPM is the **spin-up time**. *(M7, as built: the climb starts at the stop duty, since a stopped fan never starts below it; from 0 it kept a CPU fan stopped past its 10 s. Steps are 2 s apart. "Stable" also needs the last two readings within 1.5 %: a fan still closing on its speed passed the 3 % reading low.)*
 3. Store the duty→RPM table and make it monotonic, with the **maximum RPM**.
 
 NVML fans skip steps 1–2: Penna records % → RPM over 30–100 % for the axis only. `levels` controls record the RPM at each level.
@@ -1033,6 +1033,18 @@ Milestones, each ending in something visible:
 - **M6** — Packaging, README, first release. **Done 21 Oct 2026**, ahead of M5 (motherboard fans need the it87 decision, §13): 0.6.0 is packaged, installed and running as a service on this desk, with 136 Rust tests and 17 plugin logic tests (§7.6, as built). Still to do for a public release: publish the repository and the plugin as its own repo (§11, decision 9), and switch the PKGBUILD to a tagged tarball (now M10).
 - **D2** *(draft 3)* — Visual review of the new UI: the setup view, the Defaults pill, and kind, tier and drift on fan cards. Mockups in real theme tokens across the four review themes, before their QML. **Approved 22 Oct 2026** (§11.3): design review 03, published as an artifact (https://claude.ai/artifact/5Vq9APfnNHVnuNiY9mKevm), source `design/penna-design-review-03.html`. It mocks the three on this desk's measured fans, with a live simulated setup run, and asked for ten calls (its section G).
 - **M7** — **Setup** (§5.1–5.4, §5.6): write test, pairing, roles with *Identify*, calibration and drift, in the studio and `penna setup`. Run on this desk and on every simulated driver. With D2 (§11.3): the start screen, the setup view and `fan-clock`, roles with reasons and names, the chipset and pump-header exceptions, the Defaults popup with tachs in the tick, and device headings with tiers on the cards.
+
+  **In progress since 22 Oct 2026.** Built and tested against a mock of this desk (161 Rust tests, 24 plugin logic tests):
+  - **Setup is pure, like the loop** (`penna-core/src/setup.rs`): one tick's readings in, the duty each measured control runs at out. The daemon puts that in `measuring`, a new state (§4.6) the loop runs exactly, with no floor, step rate or kick, and that only an emergency outranks. `tests/setup.rs` runs it through tick, carry-out and record against a modelled desk: pairing, roles, stop and start duties, every fan back as it was found, the guards, a busy machine, Stop, and an emergency.
+  - **Controls the configuration doesn't name** come into the plan for setup (`Plan::carry`) and stay until they are given back. A new plan keeps every control Penna still holds until it is released (§6.1): before this, a fan only a studio's draft had adopted stayed manual when the draft was discarded.
+  - **As built:** the write test runs from each control's own first write, since the loop takes on one tick and writes on the next; NVML pairs control *i* with its own tach; the climb back from a stop starts at the stop duty (§5.4); a tach an earlier control turns, still recovering from its 40 %, isn't reported; a confirmed case fan on a pump header is measured below 50 % at once, on the confirming connection (`Setup::calibrate`).
+  - **The daemon** runs setup on the connection that started it, saves `measured.toml` when measuring is over, names each paired control for its header, and plans again with the new floors. `setup.start`, `setup.stop`, `setup.roles` and `identify` are in the protocol (§7.3), with `tachs`, `setup`, `profiles[].fans`, `firmware[].rpm` and `controls[].drift` in the tick. A change is published before its reply goes out.
+  - **`penna setup`** and **`penna identify`** (§8.5). On the mock desk a run takes 3:41 for ten controls.
+  - **Drift** (`penna-core/src/drift.rs`): 25 % slower than calibrated, steadily for ten minutes, on its curve at a steady duty; a warn event, the card's line and *Recalibrate*.
+  - **The simulator** has `x570-desk`: this desk as M5 measured it, from a fresh install, with its board's DMI fields so the board database applies.
+  - **The plugin** (§11.3 calls 1–10): Defaults set apart and pills only for profiles that run a fan, *Set up fans…* on a new install, every fan listed in Defaults, `fan-clock` while setup runs, the setup view with its review, device headings with tiers, kind lines and drift on the cards. `tools/setup-preview` renders the setup view offscreen at each step of a run on the mock desk.
+
+  Still to do: the plugin in the live shell, then setup on this desk's hardware.
 - **M8** — **Generated curves** (§5.5): per role and profile from setup's measurements, the CPU load check, and the review step.
 - **M9** — **Laptops and other drivers:**
   - `levels`, `firmware-curve`, `modes` and `platform` controls, amdgpu included;
