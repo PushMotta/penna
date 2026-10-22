@@ -34,11 +34,16 @@ Panel {
   readonly property var barState: Model.barState(tick, connected)
   readonly property var heroState: Model.hero(tick, connected, nowSec, service ? service.lastTickAt : 0)
   readonly property var tempRows: Model.tempRows(tick)
-  readonly property var controlsList: Model.adopted(tick)
-  readonly property var firmwareLines: Model.firmwareLines(tick)
+  // In Defaults every fan stays listed, with who runs it (design review 03, call 3); otherwise the fans Penna runs.
+  readonly property bool inDefaults: tick ? tick.profile === "defaults" : false
+  readonly property var controlsList: inDefaults ? Model.defaultsRows(tick) : Model.adopted(tick)
+  readonly property var firmwareLines: inDefaults ? [] : Model.firmwareLines(tick)
+  readonly property var emptyLines: Model.emptyHeaders(tick)
   readonly property var unreachableLines: Model.unreachableLines(tick)
   readonly property var notes: tick && Array.isArray(tick.notes) ? tick.notes : []
-  readonly property var profileOptions: Model.profileOptions(tick)
+  // A new install has no profile to choose yet, so no pills: Set up fans… instead (call 2).
+  readonly property bool needsSetup: connected && Model.needsSetup(tick) && !Model.setupRunning(tick)
+  readonly property var profileOptions: needsSetup ? [] : Model.profileOptions(tick)
 
   // Repeater keys: replaced only when the set of rows changes, so rows survive ticks and keep their glides.
   property var tempKeys: []
@@ -145,6 +150,7 @@ Panel {
                                                .map(function(c) { return c.key })
   readonly property var sections: {
     var list = []
+    if (canWrite && needsSetup) list.push("setup")
     if (canWrite && profileOptions.length) list.push("profiles")
     if (retryKeys.length) list.push("retry")
     list.push("actions")
@@ -152,6 +158,7 @@ Panel {
   }
 
   function sectionCount(section) {
+    if (section === "setup") return 1
     if (section === "profiles") return profileOptions.length
     if (section === "retry") return retryKeys.length
     if (section === "actions") return 2
@@ -180,7 +187,8 @@ Panel {
   }
 
   function activateCursor() {
-    if (focusSection === "profiles" && profileOptions[selectedIndex]) chooseProfile(profileOptions[selectedIndex].value)
+    if (focusSection === "setup") openSetup()
+    else if (focusSection === "profiles" && profileOptions[selectedIndex]) chooseProfile(profileOptions[selectedIndex].value)
     else if (focusSection === "retry" && retryKeys[selectedIndex]) retryControl(retryKeys[selectedIndex])
     else if (focusSection === "actions" && selectedIndex === 0) toggleFullSpeed()
     else if (focusSection === "actions" && selectedIndex === 1) openStudio()
@@ -189,6 +197,12 @@ Panel {
   function openStudio() {
     close()
     if (bar && bar.shell) bar.shell.summon(root.moduleName, "{}")
+  }
+
+  // The studio opens on setup's start screen (§5, design review 03 call 4).
+  function openSetup() {
+    close()
+    if (bar && bar.shell) bar.shell.summon(root.moduleName, JSON.stringify({ setup: true }))
   }
 
   function hoverInto(section, index) {
@@ -295,8 +309,38 @@ Panel {
           }
         }
 
-        // ---------- Profiles ----------
-        ButtonGroup {
+        // ---------- Set up fans, on a new install ----------
+        Row {
+          visible: root.needsSetup
+          width: parent.width
+          spacing: Style.spacing.lg
+          Button {
+            id: setupButton
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Set up fans…"
+            bordered: true
+            active: true
+            enabled: root.canWrite
+            opacity: root.canWrite ? 1 : 0.5
+            foreground: root.fg
+            fontFamily: root.fam
+            hasCursor: root.cursorActive && root.focusSection === "setup"
+            onClicked: root.openSetup()
+            onHovered: function(h) { if (h) root.hoverInto("setup", 0) }
+          }
+          Text {
+            anchors.verticalCenter: parent.verticalCenter
+            width: parent.width - setupButton.width - parent.spacing
+            text: "Measures every fan in about four minutes. Nothing changes until you save."
+            wrapMode: Text.Wrap
+            color: root.dimColor
+            font.family: root.fam
+            font.pixelSize: Style.font.caption
+          }
+        }
+
+        // ---------- Profiles: Defaults set apart ----------
+        ProfilePills {
           visible: root.profileOptions.length > 0
           enabled: root.canWrite
           opacity: root.canWrite ? 1 : 0.5
@@ -381,6 +425,16 @@ Panel {
             title: "Firmware"
             count: root.firmwareLines.length
             lines: root.firmwareLines
+            foreground: root.fg
+            fontFamily: root.fam
+          }
+
+          Fold {
+            width: parent.width
+            title: "Empty header"
+            count: root.emptyLines.length
+            lines: root.emptyLines
+            expanded: true
             foreground: root.fg
             fontFamily: root.fam
           }
