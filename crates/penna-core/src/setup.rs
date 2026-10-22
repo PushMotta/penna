@@ -279,6 +279,9 @@ pub struct Progress {
     pub waiting: Option<String>,
     /// Why it stopped, when it did: every fan went back as it was found.
     pub stopped: Option<String>,
+    /// Pairing: the control whose window it is, and the tach moving most with it.
+    pub current: Option<Key>,
+    pub mover: Option<Key>,
     pub controls: Vec<ControlProgress>,
     pub guards: Vec<GuardProgress>,
 }
@@ -302,6 +305,7 @@ pub struct Setup {
     peak: BTreeMap<Key, f64>,
     low: BTreeMap<Key, f64>,
     claims: BTreeMap<Key, Vec<usize>>,
+    mover: Option<Key>,
     say: String,
     guards: BTreeMap<Key, Option<f64>>,
 }
@@ -350,6 +354,7 @@ impl Setup {
             peak: BTreeMap::new(),
             low: BTreeMap::new(),
             claims: BTreeMap::new(),
+            mover: None,
             say: String::new(),
             guards: BTreeMap::new(),
         }
@@ -680,6 +685,7 @@ impl Setup {
                 Some((t, *b, now))
             })
             .max_by(|a, b| (a.2 - a.1).abs().total_cmp(&(b.2 - b.1).abs()));
+        self.mover = mover.filter(|(_, b, now)| (now - b).abs() >= PAIR_RISE_RPM).map(|(t, ..)| t.key.clone());
         self.say = match mover {
             Some((t, b, now)) if (now - b).abs() >= PAIR_RISE_RPM => {
                 if high {
@@ -1018,6 +1024,11 @@ impl Setup {
             say: self.say.clone(),
             waiting: self.waiting.clone(),
             stopped: self.stopped.clone(),
+            current: match (self.step, self.window) {
+                (Step::Pairing, Some(w)) => self.pair_order().get(w).map(|&i| self.ctls[i].target.key.clone()),
+                _ => None,
+            },
+            mover: if self.step == Step::Pairing { self.mover.clone() } else { None },
             controls: self
                 .ctls
                 .iter()
