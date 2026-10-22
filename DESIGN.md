@@ -316,6 +316,8 @@ The control is taken as in §6.1, with its way back on disk first. Penna writes 
 | `reverts` | Back to the old value or mode within 3 s: firmware is driving it. This is the IT8792E report on Gigabyte X570 boards (§6.4). | Not offered. The card says what wrote over it, and the doctor says what can be done. |
 | `refused` | The write fails. | Not offered, with the error. |
 
+*(M5, 22 Oct 2026.)* After handing back, the test also reads every `pwmN_auto_*` file the driver shows and compares it with how it was found, 2 s later because it87 caches the chip for 1.5 s. It87's shared start-PWM register is covered by writing the duty back (§6.1). Any other difference means a manual write changes the firmware's own curve. The result is `ok` with a warning on the card, and Penna does not offer a generated curve for that control until the cause is in the driver table.
+
 ### 5.2 Pairing (hwmon only)
 
 All taken controls are held at their current duty. One control at a time is raised to 100 % for 6 s, then dropped to 40 % for 6 s. Any tach that follows both moves by more than 25 % is paired with it. A control can end up with several tachs, or none: a header with no tach, or a dead fan. NVML and most laptop drivers pair control *i* with tach *i* and skip this step.
@@ -397,7 +399,7 @@ The guarantees, in order of what they protect against.
 
 ### 6.1 Write-ahead hand-back
 
-Before a control leaves `firmware`, the daemon writes its key and **original mode** to `/run/penna/held.json` (temporary file, `fsync`, atomic rename). Original mode is the exact `pwmN_enable` value — "automatic" varies by chip, so it is never assumed to be 2 — and, for NVML, the policy. *(Draft 3: the one exception is a driver that can't report its mode, such as `dell_smm`; its driver-table entry names the mode to restore, with a source, §3.5.)* Only then does it switch the control to manual. Adoption is bumpless: read the duty the firmware was running and start the curve's ramp from there. Taking an NVML fan records its policy and changes nothing else: manual mode starts with the first write, so a fan the driver has stopped is not spun up for a tick. Restoring a control whose original `pwm_enable` was 1 (manual) also writes back its original duty. The order is the guarantee, as in Candela: **a control is never manual without its way back already on disk.**
+Before a control leaves `firmware`, the daemon writes its key and **original mode** to `/run/penna/held.json` (temporary file, `fsync`, atomic rename). Original mode is the exact `pwmN_enable` value — "automatic" varies by chip, so it is never assumed to be 2 — and, for NVML, the policy. *(Draft 3: the one exception is a driver that can't report its mode, such as `dell_smm`; its driver-table entry names the mode to restore, with a source, §3.5.)* Only then does it switch the control to manual. Adoption is bumpless: read the duty the firmware was running and start the curve's ramp from there. Taking an NVML fan records its policy and changes nothing else: manual mode starts with the first write, so a fan the driver has stopped is not spun up for a tick. Restoring a control writes back the duty it was found at, in manual mode, and only then its original mode. *(M5, 22 Oct 2026: draft 3 wrote the duty back only for a control found manual. On it87's newer chips, the IT8688E here, the manual duty register is also the automatic curve's start PWM, `pwmN_auto_start`, so the first hardware test left the BIOS curves starting at Penna's last duty, 60 % where the BIOS had 27 %. Had Penna last held a fan lower than the BIOS start, the curve would have started lower too. On every other driver an automatic mode takes over at once and the duty is a moment's value.)* The order is the guarantee, as in Candela: **a control is never manual without its way back already on disk.**
 
 ### 6.2 Every exit path restores
 
@@ -447,7 +449,7 @@ The Defaults profile (§4.7) is the one action. It is the popup's first pill, an
 
 | Kind | Back to defaults |
 |---|---|
-| `duty` | The exact original `pwmN_enable`, and the original duty if that was manual (§6.1). Penna never writes a chip's own curve registers, so the BIOS curve is exactly as the BIOS left it. |
+| `duty` | The original duty, then the exact original `pwmN_enable` (§6.1). Penna never writes a chip's curve files (`pwmN_auto_*`). Where the duty register doubles as the curve's start, as on it87's newer chips, writing the duty back is what leaves the BIOS curve as the BIOS set it. |
 | `nvml` | The driver's policy (`SetDefaultFanSpeed_v2`). |
 | `speed` | Automatic: the original enable value, or a target of 0 where 0 means automatic (`lenovo_wmi_other`). |
 | `levels` | The embedded controller's automatic mode. |
@@ -988,7 +990,14 @@ Milestones, each ending in something visible:
   - **The doctor** reports each fan driver's tier, says why a driver's fans can't be driven, checks Secure Boot when a DKMS module is the answer, and doesn't ask a laptop for a Super I/O chip.
   - `tools/m5-hardware-test.sh` holds every it87 channel at 60 %. It ends `pennad` in the five ways of §9.4 and checks every `pwm_enable` comes back exactly. It also watches 40 s for channels that revert (the IT8792E question), checks full speed, and spins one control at a time to see which header it drives.
 
-  Still to do: the hardware test on this desk, with the driver loaded. The write test (§5.1) moves to M7, where setup's procedures run in the loop. `firmware.json` arrives with the first kind whose state outlives a reboot (M9); `penna reset` already restores everything there is today.
+  **The hardware test, first run (22 Oct 2026).** `it87-dkms-git` 358.bd7a566 loaded with `ignore_resource_conflict=1`: the IT8688E at 0xa40 and the IT8792E at 0xa60, the second through Gigabyte's EC (H2RAM, SmartFan G2). Rebuilt from the journal, because the run's output stayed in another terminal:
+  - **All five exit paths handed every channel back:** stop, `kill -9`, a whole-unit kill (`ExecStopPost` was killed too, and the restarted `pennad` restored what was left), panic, and the watchdog.
+  - **Every channel held for 40 s, the IT8792E's three included.** None was marked contested, so with this fork the second chip's firmware does not write over Penna (the §6.4 report predates its Gigabyte workarounds).
+  - **Full speed raised no false contest.**
+  - **A hand-back bug: the mode went back, but not the duty.** On the IT8688E that duty is the BIOS curve's start PWM. Fixed: the duty goes back first (§6.1). The test now checks every `pwmN_auto_*` and the start PWM read as `pwm`, and writes `target/m5-hardware-test.log`.
+  - **The fork's hwmon names carry Gigabyte's SIV id** (`it8688_4008090b`, since c8d2038 in Sep 2026), so the board database didn't match. Fixed: an entry's chip matches its name with or without the id. Keys carry the full name, as sysfs does.
+
+  Still to do: a reboot (it puts the BIOS's start PWMs back), then the test again to confirm the fix and record pairing. The write test (§5.1) moves to M7, where setup's procedures run in the loop. `firmware.json` arrives with the first kind whose state outlives a reboot (M9); `penna reset` already restores everything there is today.
 - **M6** — Packaging, README, first release. **Done 21 Oct 2026**, ahead of M5 (motherboard fans need the it87 decision, §13): 0.6.0 is packaged, installed and running as a service on this desk, with 136 Rust tests and 17 plugin logic tests (§7.6, as built). Still to do for a public release: publish the repository and the plugin as its own repo (§11, decision 9), and switch the PKGBUILD to a tagged tarball (now M10).
 - **D2** *(draft 3)* — Visual review of the new UI: the setup view, the Defaults pill, and kind, tier and drift on fan cards. Mockups in real theme tokens across the four review themes, before their QML.
 - **M7** — **Setup** (§5.1–5.4, §5.6): write test, pairing, roles with *Identify*, calibration and drift, in the studio and `penna setup`. Run on this desk and on every simulated driver.
@@ -1063,8 +1072,8 @@ The user approved all ten recommendations on 21 Oct 2026 ("go ahead with your re
 
 These need root or a shell restart, and were not run for this draft.
 
-1. **Which chips.** *Draft 3:* the stock 7.2 driver lacks the IT8688E, so this goes straight to the fork. `it87-dkms-git` 358.bd7a566 (driver source of 2 Oct 2026) is built. Secure Boot is off and lockdown is `none` here, so the unsigned module loads. Next: install it, `modprobe it87 ignore_resource_conflict=1` once (not persisted, so a reboot undoes it), and read the kernel log.
-2. **Which headers each chip drives**, through pairing, against the fork's labels (§3.6), and whether IT8792E writes hold or come back `reverts` (§5.1).
+1. ~~**Which chips.**~~ *Loaded 22 Oct 2026:* `it87-dkms-git` 358.bd7a566 with `ignore_resource_conflict=1` (not persisted; a reboot unloads it). The IT8688E is at 0xa40 (`it8688_4008090b`, five controls) and the IT8792E at 0xa60 (`it8792_4008090b`, three, through Gigabyte's EC). The kernel logged the expected ACPI resource conflict and nothing else.
+2. **Which headers each chip drives**, through pairing, against the fork's labels (§3.6). ~~Whether IT8792E writes hold~~: they held for 40 s in the first M5 hardware test, with no contest (M5 status, §10).
 3. **BIOS Smart Fan settings** that manual control may need. The fork notes some Gigabyte boards need a BIOS curve workaround.
 4. ~~**NVML on the 3090 as root.**~~ Verified in M4 (§9.4): manual speeds hold and read back as manual, `SetDefaultFanSpeed_v2` hands the fans back, and zero RPM returns at idle.
 5. **`pwm_enable` after suspend and after hibernate.**

@@ -76,6 +76,8 @@ fn take_is_bumpless_and_the_way_back_is_exact() {
     assert_eq!((rb.raw, rb.mode), (Some(128), ControlMode::Manual));
     held::restore(&entry).unwrap();
     assert_eq!(read(&dir.join("pwm3_enable")), "5", "the exact original, not an assumed 2");
+    // On the IT8688E the manual duty register is also `pwm3_auto_start`: the firmware's curve would start at 128 (§6.1).
+    assert_eq!(read(&dir.join("pwm3")), before, "the duty it was found at, too");
 }
 
 /// Adds an hwmon device to a mock tree the way a driver loaded later would: its directory under `devices`, then the class link.

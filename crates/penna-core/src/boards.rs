@@ -39,7 +39,8 @@ pub struct DriverAdvice {
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Chip {
-    /// The hwmon `name` it registers.
+    /// The hwmon `name` it registers. The it87 fork appends Gigabyte's SIV id to it on Gigabyte boards (`it8688_4008090b`,
+    /// since c8d2038, Sep 2026); an entry names the chip without it and matches either.
     pub hwmon: String,
     /// What the chip is called: "IT8688E".
     #[serde(default)]
@@ -70,7 +71,7 @@ impl Board {
     }
 
     pub fn chip(&self, hwmon: &str) -> Option<&Chip> {
-        self.chips.iter().find(|c| c.hwmon == hwmon)
+        self.chips.iter().find(|c| c.names(hwmon))
     }
 
     /// Names, drops and describes what the board says about each device (§3.6). A person's own labels, kept in the
@@ -90,6 +91,15 @@ impl Board {
 }
 
 impl Chip {
+    /// This chip's hwmon name, with or without the fork's `_` and eight hex digits of SIV id.
+    fn names(&self, hwmon: &str) -> bool {
+        hwmon == self.hwmon
+            || hwmon
+                .strip_prefix(self.hwmon.as_str())
+                .and_then(|rest| rest.strip_prefix('_'))
+                .is_some_and(|siv| siv.len() == 8 && siv.chars().all(|c| c.is_ascii_hexdigit()))
+    }
+
     fn apply(&self, d: &mut Device) {
         if let Some(name) = &self.chip {
             d.model = Some(name.clone());
@@ -131,6 +141,8 @@ mod tests {
         assert_eq!(main.fans["1"], "CPU_FAN");
         assert_eq!(main.fans["4"], "PCH_FAN");
         assert_eq!(b.chip("it8792").unwrap().fans["3"], "SYS_FAN4");
+        assert_eq!(b.chip("it8688_4008090b"), Some(main), "the fork's name on this desk, with Gigabyte's SIV id");
+        assert!(b.chip("it8688_40080").is_none() && b.chip("it86880").is_none());
         assert!(b.sources.iter().any(|s| s.contains("frankcrawford/it87")));
     }
 

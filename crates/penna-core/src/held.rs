@@ -18,7 +18,8 @@ pub struct HeldFile {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum HeldEntry {
-    /// The exact `pwmN_enable` value found, never an assumed "automatic" (§6.1), and the duty it was running.
+    /// The exact `pwmN_enable` value found, never an assumed "automatic" (§6.1), and the duty it was running. Both go back, the
+    /// duty first: on some chips it is also the automatic curve's start.
     Hwmon { key: Key, enable: PathBuf, original_enable: i64, pwm: PathBuf, original_pwm: u32 },
     /// The simulator's file-backed NVML (§9.1).
     MockNvml { key: Key, policy: PathBuf, original_policy: String },

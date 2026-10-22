@@ -91,12 +91,19 @@ pub fn load(path: &Path) -> Result<HeldFile> {
 pub fn restore(entry: &HeldEntry) -> Result<String> {
     match entry {
         HeldEntry::Hwmon { key, enable, original_enable, pwm, original_pwm } => {
-            if *original_enable == 1 {
-                // It was already manual when we found it: the duty is part of what it was.
-                write_number(pwm, *original_pwm as i64)?;
-            }
+            // The duty it was found at, in manual mode, and only then the mode. On it87's newer chips the manual duty register
+            // is also the automatic curve's start PWM (`pwmN_auto_start`): putting back only the mode left the firmware's curve
+            // starting wherever Penna last held the fan (§6.1; the M5 hardware test, IT8688E). Elsewhere an automatic mode takes
+            // over at once and the duty is a moment's value. Manual first, as in take: a channel someone else switched back to
+            // automatic refuses the duty.
+            let _ = write_number(enable, 1);
+            let duty = write_number(pwm, *original_pwm as i64);
             write_number(enable, *original_enable)?;
-            Ok(format!("{key}: pwm_enable {original_enable}"))
+            match duty {
+                Ok(()) => Ok(format!("{key}: pwm_enable {original_enable}, pwm {original_pwm}")),
+                // The mode is what hands the fan back; a duty the driver refused is reported, not retried on every start.
+                Err(e) => Ok(format!("{key}: pwm_enable {original_enable}, but not pwm {original_pwm}: {e:#}")),
+            }
         }
         HeldEntry::MockNvml { key, policy, original_policy } => {
             if policy.parent().is_some_and(|d| d.join("lost").exists()) {
@@ -198,7 +205,7 @@ mod tests {
         let r = restore_file(&d.join(FILE)).unwrap();
         assert_eq!(r.failed, Vec::<String>::new());
         assert_eq!(fs::read_to_string(&enable).unwrap().trim(), "5");
-        assert_eq!(fs::read_to_string(&pwm).unwrap().trim(), "200", "an automatic mode ignores the duty: left alone");
+        assert_eq!(fs::read_to_string(&pwm).unwrap().trim(), "90", "on it87 the duty is also the automatic curve's start");
         assert!(!d.join(FILE).exists());
     }
 

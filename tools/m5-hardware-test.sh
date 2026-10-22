@@ -3,13 +3,15 @@
 # on every way out. Like the M4 test, it runs pennad as a transient systemd service (Type=notify, WatchdogSec=5,
 # ExecStopPost=penna restore), here with a configuration it writes that holds every motherboard fan at 60 %. It also watches
 # whether each channel keeps what Penna wrote (the IT8792E question, §6.4), checks full speed, and spins one fan at a time to
-# see which header each control drives (pairing, done by hand, §5.2).
+# see which header each control drives (pairing, done by hand, §5.2). "As it was found" covers each channel's pwm_enable and
+# every pwmN_auto_* setting the driver shows: on the IT8688E the manual duty register is also the curve's start PWM (§6.1).
 #
 #   pkexec tools/m5-hardware-test.sh
 #
 # Takes about six minutes, and you will hear the fans. The installed pennad is stopped first (which hands the GPU's fans back)
 # and started again at the end. Whatever happens, the cleanup puts every channel's pwm_enable back as it was found, first
-# through penna restore and then by writing the recorded value directly.
+# through penna restore and then by writing the recorded value directly. Everything printed also goes to
+# target/m5-hardware-test.log.
 set -uo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -22,6 +24,7 @@ sock=/run/penna/penna.sock
 held=/run/penna/held.json
 hold_pct=60
 hold_raw=$(( (hold_pct * 255 + 99) / 100 ))
+log=$repo/target/m5-hardware-test.log
 export PENNA_SOCKET=$sock
 fails=0
 service_was_active=0
@@ -30,7 +33,7 @@ say() { printf '\n== %s\n' "$*"; }
 
 # ------------------------------------------------------------------ the channels
 declare -a dirs=() keys=() names=()
-declare -A orig_enable=() orig_pwm=()
+declare -A orig_enable=() orig_pwm=() orig_auto=() auto_label=() has_curve=()
 for h in /sys/class/hwmon/hwmon*; do
   name=$(cat "$h/name" 2>/dev/null) || continue
   case "$name" in it8*) ;; *) continue ;; esac
@@ -66,15 +69,35 @@ expect_held() {
   if [ ${#bad[@]} -eq 0 ]; then echo "PASS  $1"; else echo "FAIL  $1: ${bad[*]}"; fails=$((fails + 1)); fi
 }
 
-# expect_original <what>: every channel's pwm_enable exactly as it was found.
+# The automatic-curve settings of one channel that no longer read as they were found. On it87 a channel that shows its curve
+# (pwmN_auto_*) reads its start PWM back as pwm while automatic, pwm4 and pwm5 of the IT8688E included, which hide
+# pwmN_auto_start; the IT8792E's firmware shows no curve, and its pwm is the live duty.
+auto_drift() {
+  local f now
+  if [ -n "${has_curve[$1]:-}" ]; then
+    now=$(cat "$1")
+    [ "$now" = "${orig_pwm[$1]}" ] || printf "%s (its start) %s, was %s; " "$(cat "$(dirname "$1")/name") ${1##*/}" "$now" "${orig_pwm[$1]}"
+  fi
+  for f in "${!orig_auto[@]}"; do
+    [ "${f%_auto_*}" = "$1" ] || continue
+    now=$(cat "$f" 2>/dev/null)
+    [ "$now" = "${orig_auto[$f]}" ] || printf '%s %s, was %s; ' "${auto_label[$f]}" "$now" "${orig_auto[$f]}"
+  done
+}
+
+# expect_original <what>: every channel's pwm_enable and automatic curve exactly as they were found.
 expect_original() {
   local bad=()
+  sleep 2 # it87 caches what it reads from the chip for 1.5 s
   for i in "${!dirs[@]}"; do
-    local p=${dirs[$i]} e
+    local p=${dirs[$i]} e drift
     e=$(cat "${p}_enable")
-    [ "$e" = "${orig_enable[$p]}" ] || bad+=("${names[$i]} enable=$e, was ${orig_enable[$p]}")
+    [ "$e" = "${orig_enable[$p]}" ] || bad+=("${names[$i]} enable=$e, was ${orig_enable[$p]};")
+    drift=$(auto_drift "$p")
+    [ -z "$drift" ] || bad+=("$drift")
   done
-  if [ ${#bad[@]} -eq 0 ]; then echo "PASS  $1 (every pwm_enable as found)"; else echo "FAIL  $1: ${bad[*]}"; fails=$((fails + 1)); fi
+  if [ ${#bad[@]} -eq 0 ]; then echo "PASS  $1 (every pwm_enable and automatic curve as found)"
+  else echo "FAIL  $1: ${bad[*]}"; fails=$((fails + 1)); fi
 }
 
 props=()
@@ -116,10 +139,13 @@ cleanup() {
   systemctl stop "$unit" 2>/dev/null
   systemctl reset-failed "$unit" 2>/dev/null
   [ -f "$held" ] && "$bin/penna" restore --from "$held"
+  sleep 2
   for p in "${dirs[@]}"; do
-    if [ "$(cat "${p}_enable")" != "${orig_enable[$p]}" ]; then
-      echo "cleanup: $p was left at $(cat "${p}_enable"); writing back ${orig_enable[$p]}"
-      [ "${orig_enable[$p]}" = 1 ] && echo "${orig_pwm[$p]}" >"$p"
+    drift=$(auto_drift "$p")
+    if [ "$(cat "${p}_enable")" != "${orig_enable[$p]}" ] || [ -n "$drift" ]; then
+      echo "cleanup: $p was left at pwm_enable $(cat "${p}_enable") ${drift:+($drift)}; writing back pwm ${orig_pwm[$p]}, pwm_enable ${orig_enable[$p]}"
+      echo 1 >"${p}_enable"
+      echo "${orig_pwm[$p]}" >"$p"
       echo "${orig_enable[$p]}" >"${p}_enable"
     fi
   done
@@ -131,6 +157,7 @@ cleanup() {
   say "After the test"
   table
   if [ "$fails" -eq 0 ]; then echo "M5 hardware test: PASS"; else echo "M5 hardware test: $fails FAILED"; fi
+  chown --reference="$repo" "$log" 2>/dev/null
 }
 
 # ------------------------------------------------------------------ preflight
@@ -139,9 +166,17 @@ cleanup() {
 [ ${#dirs[@]} -gt 0 ] || { echo "No it87 fan controls under /sys/class/hwmon. Load the driver first: modprobe it87 ignore_resource_conflict=1"; exit 2; }
 tctl=$(for h in /sys/class/hwmon/hwmon*; do [ "$(cat "$h/name")" = k10temp ] && cat "$h/temp1_input"; done | head -1)
 [ -n "$tctl" ] && [ "$tctl" -lt 70000 ] || { echo "The CPU is at $((tctl / 1000)) °C. Run this while the machine is idle."; exit 2; }
+exec > >(tee "$log") 2>&1
 for i in "${!dirs[@]}"; do
-  orig_enable[${dirs[$i]}]=$(cat "${dirs[$i]}_enable")
-  orig_pwm[${dirs[$i]}]=$(cat "${dirs[$i]}")
+  p=${dirs[$i]}
+  orig_enable[$p]=$(cat "${p}_enable")
+  orig_pwm[$p]=$(cat "$p")
+  for f in "$p"_auto_*; do
+    [ -r "$f" ] || continue
+    orig_auto[$f]=$(cat "$f" 2>/dev/null)
+    auto_label[$f]="${names[$i]%% *} ${f##*/}"
+    has_curve[$p]=1
+  done
 done
 trap cleanup EXIT
 if systemctl is-active --quiet pennad.service; then
@@ -168,6 +203,9 @@ mkdir -p "$work"
 
 say "Before: ${#dirs[@]} channels, as the firmware runs them"
 table
+starts=""
+for f in "${!orig_auto[@]}"; do [[ $f == *_auto_start ]] && starts+="${auto_label[$f]}=${orig_auto[$f]} "; done
+echo "  ${#orig_auto[@]} automatic-curve settings recorded. Start PWMs: ${starts:-none shown}"
 
 say "1 · systemctl stop (SIGTERM): pennad hands every channel back itself"
 if start; then
