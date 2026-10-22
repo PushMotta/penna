@@ -67,6 +67,14 @@ pub const GUARD_CPU: f64 = 85.0;
 pub const GUARD_GPU: f64 = 80.0;
 /// What the last step of calibration usually takes on a desk: for the time left.
 const CAL_ESTIMATE: f64 = 180.0;
+/// The load check (§5.5): every CPU thread busy at the lowest priority for 3 minutes, on the proposed Balanced curves. Passing
+/// the CPU's limit less 5 °C ends the pass: the 100 % point moves 5 °C earlier and the check runs once more, after the CPU has
+/// cooled to 10 °C above idle, or for 2 minutes. The plateau is the mean of the last 30 s.
+pub const LOAD_SECONDS: f64 = 180.0;
+pub const LOAD_MARGIN: f64 = 5.0;
+pub const LOAD_PLATEAU: f64 = 30.0;
+pub const LOAD_COOL_ABOVE_IDLE: f64 = 10.0;
+pub const LOAD_COOL_MAX: f64 = 120.0;
 /// Read-back tolerance, as in the control loop (§6.4).
 const READBACK_TOLERANCE: f64 = 0.02;
 
@@ -78,6 +86,8 @@ pub enum Step {
     Pairing,
     Roles,
     Calibration,
+    /// Optional: the CPU under full load on the proposed curves (§5.5, step 6). What was measured is saved before it starts.
+    LoadCheck,
     /// Measuring is over; the roles wait for the user (§5, step 7).
     Review,
 }
@@ -90,6 +100,7 @@ impl Step {
             Step::Pairing => "Pairing",
             Step::Roles => "Roles",
             Step::Calibration => "Calibration",
+            Step::LoadCheck => "Load check",
             Step::Review => "Review",
         }
     }
@@ -186,6 +197,58 @@ pub struct Input {
     pub guards: Vec<Guard>,
     /// The CPU's threads: setup waits while the 1-minute load is above a quarter of them.
     pub threads: u32,
+    /// Run the load check on this CPU source after calibration (§5.5).
+    pub load_check: Option<LoadInput>,
+}
+
+/// The CPU source the load check watches, and its limit: TjMax, or its own critical temperature.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LoadInput {
+    pub key: Key,
+    pub limit: f64,
+}
+
+/// Where the load check is (§5.5).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LoadProgress {
+    /// The pass, 1 or 2, and whether the CPU is loaded now or cooling before the second.
+    pub pass: u8,
+    pub loading: bool,
+    /// Seconds into this pass, or into the cooling.
+    pub seconds: f64,
+    pub celsius: Option<f64>,
+    /// The CPU fans' duty now.
+    pub fans: Option<f64>,
+    pub limit: f64,
+    pub result: Option<LoadResult>,
+}
+
+/// What the load check found.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LoadResult {
+    /// The CPU's temperature and its fans' duty over the last 30 s of the last pass, and its hottest reading.
+    pub plateau: f64,
+    pub fans: Option<f64>,
+    pub peak: f64,
+    /// The 100 % point moved this many °C earlier.
+    pub earlier: f64,
+    /// The last pass passed the limit less 5 °C too: the cooler is at its limit.
+    pub hot: bool,
+}
+
+/// The load check while it runs.
+#[derive(Clone, Debug, PartialEq)]
+struct Load {
+    pass: u8,
+    loading: bool,
+    since: f64,
+    /// (seconds, °C) and (seconds, CPU fans' duty) in this pass.
+    temps: Vec<(f64, f64)>,
+    duties: Vec<(f64, f64)>,
+    earlier: f64,
+    /// The daemon has yet to move the 100 % point.
+    adjust: bool,
+    result: Option<LoadResult>,
 }
 
 /// What setup suggests a fan is, and why (§5.3, §11.3 call 7).
@@ -308,6 +371,8 @@ pub struct Progress {
     pub mover: Option<Key>,
     pub controls: Vec<ControlProgress>,
     pub guards: Vec<GuardProgress>,
+    #[serde(default)]
+    pub load: Option<LoadProgress>,
     /// Once measuring is over: the curves the daemon proposes, as a draft on setup's connection (§5.5).
     #[serde(default)]
     pub proposed: Option<crate::generate::Proposal>,
@@ -335,6 +400,7 @@ pub struct Setup {
     mover: Option<Key>,
     say: String,
     guards: BTreeMap<Key, Option<f64>>,
+    load: Option<Load>,
 }
 
 impl Setup {
@@ -386,6 +452,7 @@ impl Setup {
             mover: None,
             say: String::new(),
             guards: BTreeMap::new(),
+            load: None,
         }
     }
 
@@ -462,6 +529,7 @@ impl Setup {
                 Step::Pairing => self.pairing(readings),
                 Step::Roles => self.roles(),
                 Step::Calibration => self.calibration(readings, state),
+                Step::LoadCheck => self.load_check(readings, state),
                 Step::Review => {}
             }
         }
@@ -474,11 +542,14 @@ impl Setup {
     }
 
     fn check_guards(&mut self, readings: &Readings) {
+        // Under the load check the CPU is meant to get hot: its limit less 5 °C ends a pass instead (§5.5), and the emergency rule
+        // (§6.3) still stands behind it.
+        let loaded = self.input.load_check.as_ref().filter(|_| self.step == Step::LoadCheck).map(|l| l.key.clone());
         for g in self.input.guards.clone() {
             match readings.temps.get(&g.key) {
                 Some(Sample::Value(v)) => {
                     self.guards.insert(g.key.clone(), Some(*v));
-                    if *v >= g.limit {
+                    if *v >= g.limit && loaded.as_ref() != Some(&g.key) {
                         self.stop(format!("{} reached {:.0} °C, past setup's guard of {:.0} °C.", g.label, v, g.limit));
                         return;
                     }
@@ -1071,12 +1142,121 @@ impl Setup {
             ),
         };
         if done == measuring.len() {
-            self.enter(Step::Review);
             for c in &mut self.ctls {
                 c.demand = None;
             }
-            self.say = format!("Done in {}. Confirm the roles.", mmss(self.now - self.started));
+            if self.input.load_check.is_some() {
+                self.enter(Step::LoadCheck);
+                self.load = Some(Load {
+                    pass: 1,
+                    loading: true,
+                    since: self.now,
+                    temps: Vec::new(),
+                    duties: Vec::new(),
+                    earlier: 0.0,
+                    adjust: false,
+                    result: None,
+                });
+                self.say =
+                    format!("Every CPU thread busy at the lowest priority for {}, on the proposed Balanced curves.", mmss(LOAD_SECONDS));
+            } else {
+                self.review();
+            }
         }
+    }
+
+    fn review(&mut self) {
+        self.enter(Step::Review);
+        let load = self.load.as_ref().and_then(|l| l.result.as_ref()).map(|r| format!(" {}", load_words(r))).unwrap_or_default();
+        self.say = format!("Done in {}.{load} Confirm the roles.", mmss(self.now - self.started));
+    }
+
+    /// The load check (§5.5): the daemon loads the CPU while [`Setup::load_wanted`] says so, with the proposed Balanced curves
+    /// live. A pass ends after 3 minutes, or when the CPU passes its limit less 5 °C: then once [`Setup::take_adjust`] has moved
+    /// the 100 % point, a second pass runs after the CPU has cooled.
+    fn load_check(&mut self, readings: &Readings, state: &LoopState) {
+        let Some(input) = self.input.load_check.clone() else { return self.review() };
+        let now = self.now;
+        let idle = self.idle_sum.get(&input.key).map(|(sum, n)| sum / f64::from(*n));
+        let cpu_fans: Vec<f64> = self
+            .ctls
+            .iter()
+            .filter(|c| c.role() == Some(Role::Cpu))
+            .filter_map(|c| state.controls.get(&c.target.key).filter(|cs| cs.held).map(|cs| cs.duty))
+            .collect();
+        let duty = (!cpu_fans.is_empty()).then(|| cpu_fans.iter().sum::<f64>() / cpu_fans.len() as f64);
+        let t = readings.temps.get(&input.key).and_then(Sample::value);
+        let Some(l) = self.load.as_mut() else { return self.review() };
+        let near = input.limit - LOAD_MARGIN;
+        if !l.loading {
+            let cool = t.zip(idle).is_some_and(|(t, i)| t <= i + LOAD_COOL_ABOVE_IDLE);
+            if cool || now - l.since >= LOAD_COOL_MAX {
+                *l = Load { pass: 2, loading: true, since: now, temps: Vec::new(), duties: Vec::new(), result: None, adjust: false, ..*l };
+                self.say = format!("Second pass: {}, with the 100 % point {:.0} °C earlier.", mmss(LOAD_SECONDS), l.earlier);
+            } else {
+                self.say = format!("Cooling before the second pass · {}", t.map_or("—".into(), |t| format!("{t:.0} °C")));
+            }
+            return;
+        }
+        if let Some(t) = t {
+            l.temps.push((now, t));
+        }
+        if let Some(d) = duty {
+            l.duties.push((now, d));
+        }
+        let hot = t.is_some_and(|t| t >= near);
+        if hot && l.pass == 1 {
+            l.loading = false;
+            l.since = now;
+            l.adjust = true;
+            l.earlier += LOAD_MARGIN;
+            self.say = format!(
+                "The CPU reached {:.0} °C, within {LOAD_MARGIN:.0} °C of its limit: the 100 % point moves {LOAD_MARGIN:.0} °C earlier, \
+                 and the check runs again once it has cooled.",
+                t.unwrap_or(near)
+            );
+            return;
+        }
+        if hot || now - l.since >= LOAD_SECONDS {
+            let last = |v: &[(f64, f64)]| {
+                let tail: Vec<f64> = v.iter().filter(|(at, _)| now - at <= LOAD_PLATEAU).map(|(_, x)| *x).collect();
+                (!tail.is_empty()).then(|| tail.iter().sum::<f64>() / tail.len() as f64)
+            };
+            let peak = l.temps.iter().map(|(_, t)| *t).fold(f64::NEG_INFINITY, f64::max);
+            l.result = Some(LoadResult { plateau: last(&l.temps).unwrap_or(peak), fans: last(&l.duties), peak, earlier: l.earlier, hot });
+            l.loading = false;
+            return self.review();
+        }
+        self.say = format!(
+            "Full CPU load, pass {} · {} · fans at {} · {} left",
+            l.pass,
+            t.map_or("—".into(), |t| format!("{t:.0} °C")),
+            duty.map_or("—".into(), |d| format!("{d:.0} %")),
+            mmss(LOAD_SECONDS - (now - l.since))
+        );
+    }
+
+    /// The load check wants every CPU thread busy now.
+    pub fn load_wanted(&self) -> bool {
+        self.stopped.is_none() && self.step == Step::LoadCheck && self.load.as_ref().is_some_and(|l| l.loading)
+    }
+
+    /// Once, after a pass passed the limit less 5 °C: the proposed CPU curves' 100 % point should move this many °C earlier in
+    /// all, before the second pass.
+    pub fn take_adjust(&mut self) -> Option<f64> {
+        let l = self.load.as_mut().filter(|l| l.adjust)?;
+        l.adjust = false;
+        Some(l.earlier)
+    }
+
+    /// How many °C earlier the load check moved the 100 % point.
+    pub fn earlier(&self) -> f64 {
+        self.load.as_ref().map_or(0.0, |l| l.earlier)
+    }
+
+    /// Measuring is over: what setup measured can be saved, and curves proposed (§5.5).
+    pub fn measured_all(&self) -> bool {
+        self.stopped.is_none() && self.step >= Step::LoadCheck
     }
 
     /// The results, for `measured.toml`. The idle sample, the write test, pairing and calibration; roles stay suggestions until
@@ -1122,8 +1302,12 @@ impl Setup {
             StepProgress { step: Step::Pairing, seconds: PAIR_SETTLE + order as f64 * (PAIR_HIGH_SECONDS + PAIR_LOW_SECONDS) },
             StepProgress { step: Step::Roles, seconds: 0.0 },
             StepProgress { step: Step::Calibration, seconds: CAL_ESTIMATE },
-            StepProgress { step: Step::Review, seconds: 0.0 },
         ];
+        let mut steps = steps;
+        if self.input.load_check.is_some() {
+            steps.push(StepProgress { step: Step::LoadCheck, seconds: LOAD_SECONDS });
+        }
+        steps.push(StepProgress { step: Step::Review, seconds: 0.0 });
         let mut left = 0.0;
         for s in &steps {
             if s.step > self.step {
@@ -1182,9 +1366,34 @@ impl Setup {
                     limit: g.limit,
                 })
                 .collect(),
+            load: self.load.as_ref().zip(self.input.load_check.as_ref()).map(|(l, input)| LoadProgress {
+                pass: l.pass,
+                loading: l.loading,
+                seconds: self.now - l.since,
+                celsius: l.temps.last().map(|(_, t)| *t),
+                fans: l.duties.last().map(|(_, d)| *d),
+                limit: input.limit,
+                result: l.result.clone(),
+            }),
             proposed: None,
         }
     }
+}
+
+/// A load check's result in words (§5.5): "Under 3 minutes of full load the CPU levelled at 78 °C, with its fans at 64 %."
+pub fn load_words(r: &LoadResult) -> String {
+    let fans = r.fans.map_or(String::new(), |f| format!(", with its fans at {f:.0} %"));
+    let earlier = if r.earlier > 0.0 { format!(" The 100 % point moved {:.0} °C earlier.", r.earlier) } else { String::new() };
+    if r.hot {
+        format!("Under full load the CPU reached {:.0} °C{fans}: its cooler is at its limit.{earlier}", r.peak)
+    } else {
+        format!("Under {} of full load the CPU levelled at {:.0} °C{fans}.{earlier}", minutes(LOAD_SECONDS), r.plateau)
+    }
+}
+
+fn minutes(s: f64) -> String {
+    let m = (s / 60.0).round() as u64;
+    if m == 1 { "a minute".into() } else { format!("{m} minutes") }
 }
 
 fn is_nvml(kind: ControlKind) -> bool {

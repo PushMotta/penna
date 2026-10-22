@@ -9,6 +9,7 @@
 //! Every way out hands the fans back: a clean stop restores each held control; a panic restores from `held.json` in the panic
 //! hook; anything that kills the process outright leaves `held.json` for `penna restore` (the unit's `ExecStopPost`).
 mod auth;
+mod burn;
 mod history;
 mod ipc;
 mod requests;
@@ -317,6 +318,8 @@ pub struct Live {
     pub real: bool,
     /// Calibrated fans that turn too slowly (§5.6).
     pub drift: penna_core::drift::DriftWatch,
+    /// Setup's load check wants every CPU thread busy (§5.5).
+    pub load_wanted: bool,
 }
 
 /// A draft belongs to the connection that made it: when that connection closes, the daemon goes back to `saved`.
@@ -436,8 +439,10 @@ fn run(args: Args) -> Result<()> {
         board: machine.board.clone(),
         real,
         drift: penna_core::drift::DriftWatch::default(),
+        load_wanted: false,
     };
     let mut ring = history::Ring::default();
+    let mut burn = burn::Burn::default();
 
     // The socket comes up before any fan is taken: if it cannot, nothing has changed.
     let first = ipc::Published::new(&live.tick_body(&machine.inventory), ring.snapshot(0, args.tick), &live.plan.config);
@@ -508,10 +513,14 @@ fn run(args: Args) -> Result<()> {
             rediscovered(&mut live, &mut machine, &mut held, &mut out, now);
         }
         let readings = machine.read();
-        if setup::step(&mut live, &readings, &mut out, now, unix_now()) {
+        if setup::step(&mut live, &machine.inventory, &readings, &mut out, now, unix_now()) {
             machine.set_pairing(&live.measured);
             setup::replan(&mut live, &machine.inventory, &mut out, now);
             setup::propose(&mut live, &machine.inventory, &mut out);
+        }
+        match sim.as_mut() {
+            Some(sim) => sim.full_cpu(live.load_wanted),
+            None => burn.set(live.load_wanted),
         }
         let (next, cmds) = tick(&live.plan, &live.state, &readings, now);
         live.state = next;

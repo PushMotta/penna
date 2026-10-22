@@ -350,6 +350,8 @@ pub struct Sim {
     fans: BTreeMap<String, FanState>,
     /// When each chip with a cache last read its tachs.
     read_at: BTreeMap<usize, f64>,
+    /// Every CPU thread busy, whatever the scenario says: setup's load check (§5.5).
+    full_cpu: bool,
     gpu_on: Vec<bool>,
     boosts: BTreeMap<(usize, u32), f64>,
     active: BTreeSet<usize>,
@@ -378,6 +380,7 @@ impl Sim {
             temps,
             fans: BTreeMap::new(),
             read_at: BTreeMap::new(),
+            full_cpu: false,
             boosts: BTreeMap::new(),
             active: BTreeSet::new(),
             fired: BTreeSet::new(),
@@ -526,6 +529,11 @@ impl Sim {
         self.read_cached()?;
         self.write_sensors(dt)?;
         Ok(events)
+    }
+
+    /// Loads every CPU thread, as setup's load check does on a real machine (§5.5), until told to stop.
+    pub fn full_cpu(&mut self, on: bool) {
+        self.full_cpu = on;
     }
 
     /// A chip with a cache reads its tachs when the daemon does, if its last reading is old enough; otherwise it shows that.
@@ -707,7 +715,10 @@ impl Sim {
             }
         }
         // Heat.
-        let load = self.sc.load_at(self.t);
+        let mut load = self.sc.load_at(self.t);
+        if self.full_cpu {
+            load.cpu = 1.0;
+        }
         for b in self.sc.bodies.clone() {
             let l = if b.load == "gpu" { load.gpu } else { load.cpu };
             let extra: f64 = self.active(FaultKind::Heat).filter(|f| f.target.as_deref() == Some(&b.id)).filter_map(|f| f.watts).sum();

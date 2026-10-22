@@ -5,7 +5,7 @@
 use penna_core::config::Measured;
 use penna_core::control::{Command, LoopState, Outcome, tick};
 use penna_core::plan::Plan;
-use penna_core::setup::{Guard, Input, Role, Setup, Step, TachHint, Target, WriteResult};
+use penna_core::setup::{Guard, Input, LoadInput, Role, Setup, Step, TachHint, Target, WriteResult};
 use penna_core::{
     ControlInfo, ControlKind, ControlMode, ControlReading, Device, Inventory, Key, Readings, Sample, SensorInfo, Source, TachInfo,
 };
@@ -231,6 +231,7 @@ impl Desk {
                 Guard { key: gpu_temp(), label: "GPU".into(), limit: 80.0 },
             ],
             threads: 32,
+            load_check: None,
         }
     }
 
@@ -348,6 +349,8 @@ struct Rig {
     setup: Setup,
     now: f64,
     load: Option<f64>,
+    /// Where the CPU levels under the load check's full load; idle, it goes back to 45 °C.
+    heat: f64,
     /// Seconds between ticks: pennad's `--tick`.
     dt: f64,
     /// How late each tick wakes, in seconds. The daemon's clock is the wall clock: each tick runs a little after it was due, by
@@ -365,7 +368,14 @@ impl Rig {
         let keys: Vec<Key> = input.targets.iter().map(|t| t.key.clone()).collect();
         plan.carry(&keys, &inv, &Measured::default());
         let state = LoopState::new(&plan);
-        Rig { setup: Setup::new(input, 0.0), desk, plan, state, now: 0.0, load: None, dt: 1.0, late: None, ticks: 0 }
+        Rig { setup: Setup::new(input, 0.0), desk, plan, state, now: 0.0, load: None, heat: 45.0, dt: 1.0, late: None, ticks: 0 }
+    }
+
+    /// With the load check on (§5.5), on a CPU that levels at `heat` under full load: the 5950X's limit is 90 °C.
+    fn loaded(heat: f64) -> Rig {
+        let mut input = Desk::new().input();
+        input.load_check = Some(LoadInput { key: cpu(), limit: 90.0 });
+        Rig { setup: Setup::new(input, 0.0), heat, ..Rig::new() }
     }
 
     /// The rig on the wall clock: each tick wakes up to 2 ms late, by an amount drawn from `seed`.
@@ -406,6 +416,8 @@ impl Rig {
         self.plan.drop_released(&self.state);
         for _ in 0..self.dt.round() as u32 {
             self.desk.advance();
+            let to = if self.setup.load_wanted() { self.heat } else { 45.0 };
+            self.desk.cpu_temp += (to - self.desk.cpu_temp) * 0.08;
         }
         self.now += self.dt;
         self.ticks += 1;
@@ -551,6 +563,48 @@ fn the_write_test_holds_on_a_two_second_tick() {
     }
     assert_eq!(rig.progress(&pwm(6)).write, Some(WriteResult::Reverts));
     assert_eq!(rig.progress(&gpu_fan()).write, Some(WriteResult::Ok));
+}
+
+/// The load check (§5.5): 3 minutes of full CPU load after calibration, measured before it starts, then the plateau.
+#[test]
+fn the_load_check_reports_where_the_cpu_levels() {
+    let mut rig = Rig::loaded(76.0);
+    rig.until(Step::LoadCheck, 400.0);
+    assert!(rig.setup.measured_all() && !rig.setup.finished(), "what was measured can be saved before the load");
+    assert!(rig.setup.load_wanted());
+    let start = rig.now;
+    rig.until(Step::Review, start + 200.0);
+    assert!((rig.now - start - 180.0).abs() <= 2.0, "three minutes; took {} s", rig.now - start);
+    assert!(!rig.setup.load_wanted(), "the load stops with the check");
+    let r = rig.setup.progress().load.unwrap().result.unwrap();
+    assert!((r.plateau - 76.0).abs() < 1.5 && !r.hot && r.earlier == 0.0, "{r:?}");
+    assert!(rig.setup.progress().say.contains("Under 3 minutes of full load the CPU levelled at 7"), "{}", rig.setup.progress().say);
+}
+
+/// A CPU that passes its limit less 5 °C ends the pass, not setup: past the 85 °C guard, the 100 % point moves 5 °C earlier and
+/// a second pass runs once it has cooled.
+#[test]
+fn a_hot_cpu_moves_the_100_percent_point_and_runs_once_more() {
+    let mut rig = Rig::loaded(89.0);
+    rig.until(Step::LoadCheck, 400.0);
+    while rig.setup.load_wanted() {
+        assert!(rig.now < 800.0);
+        rig.tick();
+    }
+    assert!(rig.setup.stopped().is_none(), "past setup's 85 °C guard, the check goes on: {:?}", rig.setup.stopped());
+    assert_eq!(rig.setup.take_adjust(), Some(5.0));
+    assert_eq!(rig.setup.take_adjust(), None, "once");
+    assert!(rig.setup.progress().say.contains("moves 5 °C earlier"), "{}", rig.setup.progress().say);
+    let cooled = rig.now;
+    while !rig.setup.load_wanted() {
+        assert!(rig.now - cooled <= 121.0, "cooling is at most 2 minutes");
+        rig.tick();
+    }
+    assert_eq!(rig.setup.progress().load.unwrap().pass, 2);
+    rig.until(Step::Review, rig.now + 400.0);
+    let r = rig.setup.progress().load.unwrap().result.unwrap();
+    assert!(r.hot && r.earlier == 5.0 && r.peak >= 85.0, "{r:?}");
+    assert!(rig.setup.progress().say.contains("its cooler is at its limit"), "{}", rig.setup.progress().say);
 }
 
 #[test]

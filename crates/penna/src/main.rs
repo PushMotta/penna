@@ -84,6 +84,9 @@ enum Command {
     Setup {
         /// Only these controls (names or keys), to measure one fan again.
         controls: Vec<String>,
+        /// Skip the load check: 3 minutes of full CPU load on the proposed curves (on by default, but not on battery).
+        #[arg(long)]
+        no_load_check: bool,
     },
     /// Spin a fan to 100 % for 3 s, then back, to find it by ear or by eye.
     Identify { control: String },
@@ -214,7 +217,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::Adopt { control, curve } => say(Op::Adopt { control, curve }),
         Command::Release { control } => say(Op::Release { control }),
         Command::Label { key, label } => say(Op::Label { key, label }),
-        Command::Setup { controls } => setup::run(controls, style()),
+        Command::Setup { controls, no_load_check } => setup::run(controls, no_load_check.then_some(false), style()),
         Command::Identify { control } => say(Op::Identify { control }),
         Command::Open => open_studio(),
         Command::Events { json } => events(json),

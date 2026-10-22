@@ -213,3 +213,14 @@ fn a_table_is_made_monotonic() {
     let t = [[65.0, 1642.0], [70.0, 1717.0], [75.0, 1670.0], [80.0, 1713.0], [100.0, 1726.0]];
     assert_eq!(monotonic(&t), [[65.0, 1642.0], [70.0, 1717.0], [75.0, 1717.0], [80.0, 1717.0], [100.0, 1726.0]]);
 }
+
+#[test]
+fn the_load_check_moves_the_100_percent_point_earlier() {
+    let mut g = generate(&starter(), &desk(), &measured(), Some(CPU_MODEL)).config;
+    penna_core::generate::earlier(&mut g, "cpu-balanced", 5.0);
+    let p = points(&g, "cpu-balanced");
+    assert_eq!(p.last().unwrap(), &[77.0, 100.0], "82 °C less 5");
+    penna_core::generate::earlier(&mut g, "cpu-balanced", 50.0);
+    let q = points(&g, "cpu-balanced");
+    assert_eq!(q.last().unwrap()[0], q[q.len() - 2][0] + 1.0, "never at or before the point below");
+}

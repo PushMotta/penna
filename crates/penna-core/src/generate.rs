@@ -68,6 +68,14 @@ impl From<&Generated> for Proposal {
     }
 }
 
+/// The CPU source curves follow, and its limit: its own critical temperature, the model's TjMax, or 95 °C.
+pub fn cpu_source(inventory: &Inventory, cpu_model: Option<&str>) -> Option<(Key, f64)> {
+    let key = cpu_control_temperature(inventory)?;
+    let own = sensor(inventory, &key)?.limits.iter().find(|l| matches!(l.kind, LimitKind::Crit | LimitKind::GpuMax)).map(|l| l.celsius);
+    let limit = own.or_else(|| cpu_model.and_then(tjmax)).unwrap_or(DEFAULT_EMERGENCY);
+    Some((key, limit))
+}
+
 /// Curves for every measured fan with a role, in all three profiles, starting from `base` (§5.5). A curve that already exists
 /// under a generated id is replaced: running setup again proposes new curves, and saving the draft is what keeps them.
 pub fn generate(base: &Config, inventory: &Inventory, measured: &Measured, cpu_model: Option<&str>) -> Generated {
@@ -85,7 +93,7 @@ pub fn generate(base: &Config, inventory: &Inventory, measured: &Measured, cpu_m
             None => g.notes.push(format!("{label}: no role, so it stays with its firmware")),
         }
     }
-    let cpu = cpu_control_temperature(inventory).and_then(|key| g.cpu_anchors(inventory, measured, cpu_model, key));
+    let cpu = cpu_source(inventory, cpu_model).and_then(|(key, limit)| g.cpu_anchors(measured, key, limit));
     let gpus = g.gpu_anchors(inventory, measured);
     for (role, fans) in &roles {
         let fans: Vec<Fan> = fans.iter().map(|(m, kind, label)| g.fan(m, *kind, label, *role, measured)).collect();
@@ -224,10 +232,7 @@ struct Builder {
 }
 
 impl Builder {
-    fn cpu_anchors(&mut self, inventory: &Inventory, measured: &Measured, cpu_model: Option<&str>, key: Key) -> Option<Src> {
-        let s = sensor(inventory, &key)?;
-        let own = s.limits.iter().find(|l| matches!(l.kind, LimitKind::Crit | LimitKind::GpuMax)).map(|l| l.celsius);
-        let limit = own.or_else(|| cpu_model.and_then(tjmax)).unwrap_or(DEFAULT_EMERGENCY);
+    fn cpu_anchors(&mut self, measured: &Measured, key: Key, limit: f64) -> Option<Src> {
         let Some(&idle) = measured.idle.get(&key) else {
             self.notes.push("The CPU's idle temperature wasn't measured: its curves need setup's idle sample".into());
             return None;
@@ -416,4 +421,15 @@ fn chipset_sensor(inventory: &Inventory) -> Option<&SensorInfo> {
         .filter(|d| d.source == Source::Hwmon)
         .flat_map(|d| &d.sensors)
         .find(|s| !s.below_ambient && ["pch", "chipset"].contains(&s.label.to_ascii_lowercase().as_str()))
+}
+
+/// The load check's correction (§5.5): curve `id`'s 100 % point `by` °C earlier, never at or before the point below it.
+pub fn earlier(config: &mut Config, id: &str, by: f64) {
+    let Some(Curve { kind: CurveKind::Graph { points, .. }, .. }) = config.curves.iter_mut().find(|c| c.id == id) else { return };
+    let n = points.len();
+    if n >= 2 {
+        points[n - 1][0] = (points[n - 1][0] - by).max(points[n - 2][0] + 1.0);
+    } else if let Some(p) = points.first_mut() {
+        p[0] -= by;
+    }
 }

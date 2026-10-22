@@ -760,6 +760,34 @@ fn setup_measures_the_x570_desk_from_a_fresh_install() {
     d.stop();
 }
 
+/// The load check (§5.5): what was measured is saved first, then every CPU thread is busy (on the mock desk, its simulated CPU)
+/// with the proposed Balanced curves on the fans; for the review, the profile that was on comes back.
+#[test]
+fn setup_runs_the_load_check_on_the_proposed_balanced_curves() {
+    let dir = fresh("setup-load");
+    let d = Daemon::start_scenario(&dir, "x570-desk", "tree", &["--speed", "50"]);
+    let mut c = d.connect();
+    c.line();
+    assert_eq!(c.call(json!({"op": "subscribe"}))["ok"], true);
+    let r = c.call(json!({"op": "setup.start", "load_check": true}));
+    assert!(r["result"]["text"].as_str().unwrap().contains("3 minutes of full CPU load"), "{r}");
+    let t =
+        c.tick_where(3000, "the load check", |t| t["setup"]["step"] == "load-check" && t["setup"]["load"]["seconds"].as_f64() > Some(20.0));
+    assert!(dir.join("tree/var/lib/penna/measured.toml").exists(), "measured before the load");
+    let cpu = |t: &Value| t["controls"].as_array().unwrap().iter().find(|x| x["label"] == "CPU_FAN").cloned().unwrap();
+    assert_eq!(cpu(&t)["curve"], "cpu-balanced", "the proposed Balanced curve runs CPU_FAN: {}", cpu(&t));
+    let m: toml::Value = toml::from_str(&fs::read_to_string(dir.join("tree/var/lib/penna/measured.toml")).unwrap()).unwrap();
+    let idle = m["idle"]["hwmon/k10temp/0000:00:18.3/temp1"].as_float().unwrap();
+    let t = c.tick_where(3000, "the review", |t| t["setup"]["step"] == "review");
+    let load = &t["setup"]["load"];
+    assert!(load["result"]["peak"].as_f64().unwrap() > idle + 10.0, "the CPU heated under load: {load}");
+    assert!(t["setup"]["say"].as_str().unwrap().contains("full load"), "{}", t["setup"]["say"]);
+    let t = c.tick_where(10, "Defaults again", |t| t["controls"].as_array().unwrap().iter().all(|x| x["state"] == "firmware"));
+    assert_eq!(t["profile"], "defaults");
+    assert!(t["setup"]["proposed"]["curves"].as_array().is_some_and(|c| !c.is_empty()));
+    d.stop();
+}
+
 /// Setup's draft belongs to its connection: closing it leaves the curves unsaved and Defaults on, and keeps the measurements.
 #[test]
 fn setup_curves_go_with_their_connection() {

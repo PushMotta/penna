@@ -4,9 +4,9 @@
 use crate::Live;
 use crate::trace::Trace;
 use penna_core::boards::Board;
-use penna_core::generate::{Proposal, generate};
+use penna_core::generate::{Proposal, cpu_source, earlier, generate};
 use penna_core::plan::Plan;
-use penna_core::setup::{GUARD_CPU, GUARD_GPU, Guard, Input, Role, Setup, Step, TachHint, Target};
+use penna_core::setup::{GUARD_CPU, GUARD_GPU, Guard, Input, LoadInput, Role, Setup, Step, TachHint, Target};
 use penna_core::{Inventory, Key, Readings, Source};
 use penna_proto::Level;
 use std::collections::BTreeMap;
@@ -60,11 +60,18 @@ pub fn input(inventory: &Inventory, board: Option<&Board>, only: Option<&[Key]>)
         }
     }
     let threads = std::thread::available_parallelism().map_or(0, |n| n.get() as u32);
-    Input { targets, tachs, guards, threads }
+    Input { targets, tachs, guards, threads, load_check: None }
 }
 
 /// `setup.start` from connection `conn`.
-pub fn start(live: &mut Live, inventory: &Inventory, out: &mut Trace, conn: u64, only: Option<Vec<Key>>) -> Result<String, String> {
+pub fn start(
+    live: &mut Live,
+    inventory: &Inventory,
+    out: &mut Trace,
+    conn: u64,
+    only: Option<Vec<Key>>,
+    load_check: Option<bool>,
+) -> Result<String, String> {
     if let Some(s) = &live.setup
         && !s.run.finished()
     {
@@ -80,22 +87,30 @@ pub fn start(live: &mut Live, inventory: &Inventory, out: &mut Trace, conn: u64,
     if input.targets.is_empty() {
         return Err("There is no fan here that Penna can drive: penna doctor says why.".into());
     }
+    // The load check (§5.5): on by default, but not on battery, and not when measuring only some fans again.
+    let check = load_check.unwrap_or(only.is_none() && !on_battery());
+    if check {
+        input.load_check = cpu_source(inventory, live.cpu_model.as_deref()).map(|(key, limit)| LoadInput { key, limit });
+    }
     let keys: Vec<Key> = input.targets.iter().map(|t| t.key.clone()).collect();
     let n = keys.len();
     live.plan.carry(&keys, inventory, &live.measured);
+    let check = if input.load_check.is_some() { "; after calibration, 3 minutes of full CPU load check the proposed curves" } else { "" };
     live.setup = Some(SetupRun { owner: conn, run: Setup::new(input, live.now), saved: false, last_step: Step::Idle, proposed: None });
-    let text = format!("Setup started: {n} fan control{}. Every fan stays with its firmware for the 30 s idle sample", plural(n));
+    let text = format!("Setup started: {n} fan control{}. Every fan stays with its firmware for the 30 s idle sample{check}", plural(n));
     out.note(live.now, Level::Info, None, text.clone());
     Ok(text)
 }
 
-/// Stops a running setup: every fan goes back as it was found.
-pub fn stop(live: &mut Live, out: &mut Trace, reason: &str) -> bool {
+/// Stops a running setup: every fan goes back as it was found, and so do any curves it proposed.
+pub fn stop(live: &mut Live, inventory: &Inventory, out: &mut Trace, reason: &str) -> bool {
     match live.setup.as_mut() {
         Some(s) if !s.run.finished() => {
             s.run.stop(reason);
             live.state.measuring.clear();
+            live.load_wanted = false;
             live.plan.end_setup();
+            drop_proposal(live, inventory);
             out.note(live.now, Level::Info, None, format!("Setup stopped: {reason} Every fan is back as it was found"));
             true
         }
@@ -103,41 +118,74 @@ pub fn stop(live: &mut Live, out: &mut Trace, reason: &str) -> bool {
     }
 }
 
+/// The loop runs `profile`: the load check switches to Balanced, and the review back (§5.5).
+fn switch(live: &mut Live, profile: &str) {
+    if live.state.profile != profile {
+        let _ = live.state.apply(&live.plan, penna_core::control::Request::Profile(profile.to_owned()), live.now);
+    }
+}
+
+/// A run that stops takes back the curves it proposed: during the load check they were running on the fans (§5.5).
+fn drop_proposal(live: &mut Live, inventory: &Inventory) {
+    let Some(owner) = live.setup.as_ref().map(|s| s.owner) else { return };
+    if live.draft.as_ref().is_some_and(|d| d.owner == owner && d.generated.is_some()) {
+        let _ = crate::requests::revert(live, inventory);
+        let saved = live.saved.profile.clone();
+        switch(live, &saved);
+    }
+    if let Some(s) = live.setup.as_mut() {
+        s.proposed = None;
+    }
+}
+
 /// The connection that started setup closed: a running setup stops, a finished one is put away.
-pub fn closed(live: &mut Live, out: &mut Trace, conn: u64) -> bool {
+pub fn closed(live: &mut Live, inventory: &Inventory, out: &mut Trace, conn: u64) -> bool {
     if !live.setup.as_ref().is_some_and(|s| s.owner == conn) {
         return false;
     }
-    stop(live, out, "The window that ran setup closed.");
+    stop(live, inventory, out, "The window that ran setup closed.");
     live.setup = None;
     live.plan.end_setup();
     true
 }
 
 /// One tick of setup, before the control loop runs: what it measures goes into `measuring`, together with any fan being
-/// identified. When measuring is over, the results are saved, and this returns true: the caller names the controls for their
-/// headers, then [`replan`]s, so the plan learns the new names and floors.
-pub fn step(live: &mut Live, readings: &Readings, out: &mut Trace, now: f64, unix: f64) -> bool {
+/// identified. When measuring is over the results are saved; then, and whenever the proposed curves must change (the load
+/// check moved a point, or ended), this returns true: the caller names the controls for their headers, [`replan`]s, so the plan
+/// learns the new names and floors, and [`propose`]s.
+pub fn step(live: &mut Live, inventory: &Inventory, readings: &Readings, out: &mut Trace, now: f64, unix: f64) -> bool {
     let mut measuring = BTreeMap::new();
     let load1 = if live.real { load_average() } else { None };
     let mut results = None;
+    let mut refresh = false;
+    let mut stopped = false;
     if let Some(s) = live.setup.as_mut()
         && !s.run.finished()
     {
         measuring = s.run.step(readings, &live.state, load1, now);
         let step = s.run.step_now();
         if step != s.last_step {
+            refresh |= s.last_step == Step::LoadCheck;
             s.last_step = step;
             out.note(now, Level::Info, None, format!("Setup: {}", step.name().to_lowercase()));
         }
         if let Some(why) = s.run.stopped() {
             out.note(now, Level::Alert, None, format!("Setup stopped: {why} Every fan is back as it was found"));
-        } else if s.run.finished() {
+            stopped = true;
+        } else if s.run.measured_all() && !s.saved {
             results = Some(s.run.measured(unix));
             s.saved = true;
         }
+        if let Some(e) = s.run.take_adjust() {
+            out.note(now, Level::Info, None, format!("Load check: the CPU's 100 % point moves {e:.0} °C earlier"));
+            refresh = true;
+        }
     }
-    let measured = results.is_some();
+    if stopped {
+        drop_proposal(live, inventory);
+    }
+    live.load_wanted = live.setup.as_ref().is_some_and(|s| s.run.load_wanted());
+    let measured = results.is_some() || refresh;
     if let Some(results) = results {
         for c in &results.controls {
             live.drift.forget(&c.key);
@@ -204,7 +252,9 @@ pub fn roles(live: &mut Live, inventory: &Inventory, out: &mut Trace, conn: u64,
 /// Measuring is over: curves for every fan, as a draft on setup's connection (§5.5, §11.3 call 9). The draft runs at once, but in
 /// the profile already active, so nothing changes until it is saved; saving it switches to Balanced.
 pub fn propose(live: &mut Live, inventory: &Inventory, out: &mut Trace) {
-    let Some(owner) = live.setup.as_ref().filter(|s| s.run.finished() && s.run.stopped().is_none()).map(|s| s.owner) else { return };
+    let Some(owner) = live.setup.as_ref().filter(|s| s.run.measured_all()).map(|s| s.owner) else { return };
+    let checking = live.setup.as_ref().is_some_and(|s| s.run.step_now() == Step::LoadCheck);
+    let moved = live.setup.as_ref().map_or(0.0, |s| s.run.earlier());
     let base = match &live.draft {
         Some(d) if d.owner != owner => {
             let why = "Another window has unsaved changes: save or discard them, then run setup again for curves.";
@@ -214,15 +264,26 @@ pub fn propose(live: &mut Live, inventory: &Inventory, out: &mut Trace) {
         Some(d) => d.generated.clone().unwrap_or_else(|| d.config.clone()),
         None => live.saved.clone(),
     };
-    let g = generate(&base, inventory, &live.measured, live.cpu_model.as_deref());
+    let mut g = generate(&base, inventory, &live.measured, live.cpu_model.as_deref());
+    if moved > 0.0 {
+        earlier(&mut g.config, "cpu-balanced", moved);
+    }
+    // During the load check the proposed Balanced curves run the fans; for the review, the profile that was on (§5.5).
+    if checking {
+        g.config.profile = "balanced".into();
+    }
     let proposal = Proposal::from(&g);
+    let profile = g.config.profile.clone();
     match crate::requests::run_draft(live, inventory, owner, g.config) {
         Ok(_) => {
             if let Some(d) = live.draft.as_mut() {
                 d.generated = Some(base);
             }
-            let n = proposal.curves.len();
-            out.note(live.now, Level::Info, None, format!("Setup proposes {n} curves, as a draft: nothing changes until it is saved"));
+            switch(live, &profile);
+            if !checking {
+                let n = proposal.curves.len();
+                out.note(live.now, Level::Info, None, format!("Setup proposes {n} curves, as a draft: nothing changes until it is saved"));
+            }
             set_proposed(live, proposal);
         }
         Err(e) => set_proposed(live, Proposal { refused: Some(format!("The curves didn't fit the configuration: {e}")), ..proposal }),
@@ -266,6 +327,15 @@ fn save(live: &Live) -> Result<String, String> {
     );
     penna_hw::held::write_atomically(path, text.as_bytes()).map_err(|e| format!("{e:#}"))?;
     Ok(path.display().to_string())
+}
+
+/// Running on a battery that is discharging.
+fn on_battery() -> bool {
+    let Ok(dir) = std::fs::read_dir("/sys/class/power_supply") else { return false };
+    dir.flatten().any(|e| {
+        let read = |f: &str| std::fs::read_to_string(e.path().join(f)).unwrap_or_default();
+        read("type").trim() == "Battery" && read("status").trim() == "Discharging"
+    })
 }
 
 fn load_average() -> Option<f64> {

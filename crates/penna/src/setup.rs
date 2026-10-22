@@ -13,7 +13,8 @@ use std::io::{BufRead, IsTerminal, Write};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-pub fn run(controls: Vec<String>, style: Style) -> Result<()> {
+/// `load_check`: `Some(false)` skips it; `None` leaves it to the daemon, which runs it unless on battery.
+pub fn run(controls: Vec<String>, load_check: Option<bool>, style: Style) -> Result<()> {
     let mut c = Client::find().ok_or_else(client::not_running)?;
     if !c.hello.can_write {
         bail!(c.hello.why.clone().unwrap_or_else(|| "pennad doesn't let this user change fans.".into()));
@@ -24,12 +25,12 @@ pub fn run(controls: Vec<String>, style: Style) -> Result<()> {
         ctrlc::set_handler(move || stop.store(true, Ordering::SeqCst)).context("installing the Ctrl-C handler")?;
     }
     let only = (!controls.is_empty()).then_some(controls);
-    let started = c.call(Op::SetupStart { controls: only, load_check: None })?;
+    let started = c.call(Op::SetupStart { controls: only, load_check })?;
     if let Some(text) = started.as_ref().and_then(|r| r.get("text")).and_then(|t| t.as_str()) {
         println!("{text}.");
     }
-    println!("You will hear the fans. Setup stops and hands every fan back if the CPU passes 85 °C, the GPU passes 80 °C, or a");
-    println!("sensor fails to read. Ctrl-C does the same.\n");
+    println!("You will hear the fans. Setup stops and hands every fan back if the CPU passes 85 °C while fans are measured, the");
+    println!("GPU passes 80 °C, or a sensor fails to read. Ctrl-C does the same.\n");
 
     let live = std::io::stdout().is_terminal();
     let mut out = std::io::stdout().lock();
@@ -49,7 +50,7 @@ pub fn run(controls: Vec<String>, style: Style) -> Result<()> {
         }
         while seen < p.step {
             write!(out, "{}", step_lines(seen, last.as_ref().unwrap_or(&p), &p, style))?;
-            seen = next(seen);
+            seen = next(seen, &p);
         }
         if p.stopped.is_some() || p.step == Step::Review {
             last = Some(p);
@@ -83,28 +84,17 @@ pub fn run(controls: Vec<String>, style: Style) -> Result<()> {
     curves(&mut c, proposed, style)
 }
 
-fn next(s: Step) -> Step {
-    match s {
-        Step::Idle => Step::WriteTest,
-        Step::WriteTest => Step::Pairing,
-        Step::Pairing => Step::Roles,
-        Step::Roles => Step::Calibration,
-        Step::Calibration | Step::Review => Step::Review,
-    }
+/// The step after `s` in this run: the load check only when it has one.
+fn next(s: Step, p: &Progress) -> Step {
+    p.steps.iter().map(|x| x.step).find(|x| *x > s).unwrap_or(Step::Review)
 }
 
 /// The lines for a step that has just ended, from what the run says now.
 fn step_lines(step: Step, before: &Progress, now: &Progress, style: Style) -> String {
-    let n = match step {
-        Step::Idle => 1,
-        Step::WriteTest => 2,
-        Step::Pairing => 3,
-        Step::Roles => 4,
-        Step::Calibration => 5,
-        Step::Review => 6,
-    };
+    let n = now.steps.iter().position(|s| s.step == step).map_or(0, |i| i + 1);
+    let total = now.steps.len();
     let seconds = now.steps.iter().find(|s| s.step == step).map_or(0.0, |s| s.seconds);
-    let head = format!("{n}/6  {:<12} {:>5}   ", step.name(), if seconds > 0.0 { clock(seconds) } else { String::new() });
+    let head = format!("{n}/{total}  {:<12} {:>5}   ", step.name(), if seconds > 0.0 { clock(seconds) } else { String::new() });
     let pad = " ".repeat(head.chars().count());
     let ctls = &now.controls;
     let name = |c: &ControlProgress| c.header.clone().unwrap_or_else(|| c.label.clone());
@@ -174,6 +164,10 @@ fn step_lines(step: Step, before: &Progress, now: &Progress, style: Style) -> St
                 }
             }
         }
+        Step::LoadCheck => match now.load.as_ref().and_then(|l| l.result.as_ref()) {
+            Some(r) => lines.push(penna_core::setup::load_words(r)),
+            None => lines.push("didn't finish".into()),
+        },
         Step::Review => {
             return format!("\nDone in {}. Every fan is back with its BIOS or driver; what setup measured is saved.\n", clock(now.elapsed));
         }

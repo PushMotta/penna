@@ -45,7 +45,7 @@ pub fn handle(live: &mut Live, inventory: &Inventory, out: &mut Trace, op: Op, u
         }
         Op::FullSpeed { on } => {
             if on {
-                crate::setup::stop(live, out, "Full speed was turned on.");
+                crate::setup::stop(live, inventory, out, "Full speed was turned on.");
             }
             live.state.apply(&live.plan, Request::FullSpeed(on), now)?;
             note(out, None, if on { "Full speed: every fan at 100 % until turned off".into() } else { "Full speed off".into() });
@@ -241,7 +241,7 @@ pub fn handle(live: &mut Live, inventory: &Inventory, out: &mut Trace, op: Op, u
             }
             return Ok(Some(studio(live, inventory, conn)));
         }
-        Op::SetupStart { controls, load_check: _ } => {
+        Op::SetupStart { controls, load_check } => {
             let only = match controls {
                 Some(names) => {
                     let all = every_control(live, inventory);
@@ -249,10 +249,10 @@ pub fn handle(live: &mut Live, inventory: &Inventory, out: &mut Trace, op: Op, u
                 }
                 None => None,
             };
-            said = crate::setup::start(live, inventory, out, conn, only)?;
+            said = crate::setup::start(live, inventory, out, conn, only, load_check)?;
         }
         Op::SetupStop => {
-            if !crate::setup::stop(live, out, "You stopped setup.") {
+            if !crate::setup::stop(live, inventory, out, "You stopped setup.") {
                 return Err("Setup isn't running.".into());
             }
             said = "Setup stopped: every fan is back as it was found".into();
@@ -286,7 +286,7 @@ pub fn handle(live: &mut Live, inventory: &Inventory, out: &mut Trace, op: Op, u
 /// Connection `conn` closed. If it held a draft, the fans go back to the saved configuration, and everyone is told. Returns whether
 /// anything changed.
 pub fn closed(live: &mut Live, inventory: &Inventory, out: &mut Trace, conn: u64) -> bool {
-    let setup = crate::setup::closed(live, out, conn);
+    let setup = crate::setup::closed(live, inventory, out, conn);
     let Some(d) = live.draft.as_ref().filter(|d| d.owner == conn) else { return setup };
     let what = changed_names(live, inventory, &live.saved, &d.config);
     if let Err(e) = revert(live, inventory) {
@@ -346,7 +346,7 @@ pub fn run_draft(live: &mut Live, inventory: &Inventory, conn: u64, cfg: Config)
 }
 
 /// Back to the saved configuration.
-fn revert(live: &mut Live, inventory: &Inventory) -> Result<(), String> {
+pub fn revert(live: &mut Live, inventory: &Inventory) -> Result<(), String> {
     let plan = plan_for(live, inventory, live.saved.clone())?;
     let saved = live.saved.clone();
     restart_changed_curves(live, &saved);
