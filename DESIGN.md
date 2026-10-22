@@ -1088,7 +1088,18 @@ Milestones, each ending in something visible:
   - **Fixed in 0.7.3** (§5.4): "stable" is judged on readings 2 s apart, and a fan still moving one way at 10 s gets up to 30 s. The rig's tachs now repeat as it87's do, and it has a SYS_FAN4 that overshoots: every point of five fans must be within 3 % of the fan's steady speed, which the old rule failed by 4 % on CPU_FAN. `x570-desk` has the cache and the overshoot too. Calibration takes 177 s on the rig where it took 99, and `penna setup` and the plugin say about five minutes. 165 Rust tests.
   - The journal and the studio said "below its 30 % floor" for the GPU fans, whose floor is now 40 %. Both name the real floor.
 
-  Still to do: run setup again on this desk with 0.7.3, and the simulated drivers when M9 adds them.
+  **The fourth run (22 Oct 2026, 0.7.3)** took 5:30 for ten controls, calibration 3:12, and SYS_FAN5_PUMP's re-measure 1:37. Every fan's duty and RPM were recorded each second from the tick stream (`target/m7-setup-run4.jsonl`; SYS_FAN4 alone in `target/m7-sysfan4-alone.log`), and every point is where its fan settled:
+  - **CPU_FAN and SYS_FAN2 are slow fans:** 8–10 s a step, and 16 s to reach 100 % from the hold. They read 1,730 and 1,726 RPM at 100 %, where M5 and the earlier runs read 1,662–1,687 while they were still speeding up and had 95 % above 100 %. Their tables now rise all the way.
+  - **SYS_FAN5_PUMP:** 1,819 RPM at 100 % after 18 s (M5 and the third run: 1,726, still rising), and a smooth table down to its stop at 10 %.
+  - **SYS_FAN4** overshot to 2,096 RPM and was read at 1,726, 20 s later. Above 65 % it holds about 1,700 RPM whatever the duty (1,642–1,726), its own regulation hunting: at 80 % and at 70 % it dipped and came back above the step before. Running it above 65 % buys nothing.
+  - **The 3090's fans stop below 45 % in manual**, both: given longer at 40 %, they kept slowing to a stall. Their floor is 45 %, and the journal says so. 2,962 and 2,974 RPM at 100 %.
+  - The other headers match the earlier runs. SYS_FAN1 is measured down to 5 % with no 0 % point, CPU_OPT is a pump measured down to 50 %, PCH_FAN stops below 10 % and starts at 20 %, and SYS_FAN6_PUMP is empty.
+
+  **On this desk, M7 is done.** Two things move on:
+  - **To M8:** step 3 of §5.4, a monotonic table, isn't built. SYS_FAN4's top shows why it matters, and M8 is the first to read a table backwards, from RPM to duty.
+  - **A role's reason quotes pairing's RPM:** the highest in 6 s at 100 %, before calibration. A slow fan reads low there: SYS_FAN5_PUMP's says 1,460 RPM, where it turns 1,819. A slow pump could be suggested as a case fan. That is safe, since a fan on a pump header stays at 50 % or more until confirmed (§5.3), but the suggestion should use the calibrated top once there is one.
+
+  Still to do: the simulated drivers when M9 adds them.
 - **M8** — **Generated curves** (§5.5): per role and profile from setup's measurements, the CPU load check, and the review step.
 - **M9** — **Laptops and other drivers:**
   - `levels`, `firmware-curve`, `modes` and `platform` controls, amdgpu included;
