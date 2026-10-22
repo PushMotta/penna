@@ -384,9 +384,12 @@ pub struct MeasuredControl {
     /// The write test's result (§5.1).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub write: Option<crate::setup::WriteResult>,
-    /// Pairing ran on it, so no `tachs` means no fan turns on this header.
+    /// Pairing found the fan on it: `tachs`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub paired: bool,
+    /// Pairing found no fan of its own on this header: nothing is plugged in, or what is turns with another control too.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub empty: bool,
     /// The lowest duty that still turns the fan.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop: Option<f64>,
@@ -396,7 +399,8 @@ pub struct MeasuredControl {
     /// Seconds from the start duty's write to a steady speed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spin_up: Option<f64>,
-    /// Calibration went no lower than this: a pump, a chipset fan, or a fan on a pump header not yet confirmed (§5.3, §5.4).
+    /// Calibration went no lower than this, and Penna never runs the fan below it: a pump, a chipset fan, a fan on a pump header
+    /// not yet confirmed, or a header that turns its fan faster below it (§5.3, §5.4).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lowest: Option<f64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -424,6 +428,7 @@ impl MeasuredControl {
             key,
             write: None,
             paired: false,
+            empty: false,
             stop: None,
             start: None,
             spin_up: None,

@@ -105,8 +105,10 @@ channel = 2
 id = "sys1"
 pwm = 2
 max_rpm = 2190
-stop = 20
-start = 26
+# It never stops, and written 0 % it runs flat out (setup, 22 Oct 2026).
+stop = 0
+start = 0
+races_at_zero = true
 
 [[chip.fan]]
 channel = 3
@@ -191,6 +193,8 @@ noise_rpm = 1700
 driver_on = 42.0
 driver_off = 37.0
 driver_percent = 53.0
+# In manual both fans stand still below 35–40 % (setup, 22 Oct 2026).
+stops = [38.0, 33.0]
 gpu_max = 93
 slowdown = 95
 shutdown = 98

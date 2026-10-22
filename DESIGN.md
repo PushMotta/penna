@@ -1,6 +1,6 @@
 # Penna — design specification
 
-Draft 3 · 21 October 2026 · status: decisions approved (§11), UI quality bar added (§8.6), M0–M6 done, design review 01 approved (milestone D, §11.1), design review 03 approved (milestone D2, §11.3). Penna 0.6.0 runs as a service on this desk and controls the 3090. Draft 3 widens Penna from this desk to any workstation or laptop, with automatic setup, generated curves and a Defaults profile: design review 02 (§11.2) was approved the same day. M5 was done on 22 Oct 2026: Penna drives every fan on this desk, and it87 is Verified.
+Draft 3 · 21 October 2026 · status: decisions approved (§11), UI quality bar added (§8.6), M0–M6 done, design review 01 approved (milestone D, §11.1), design review 03 approved (milestone D2, §11.3). Penna 0.7.1 runs as a service on this desk and controls the 3090, and setup has measured every fan here (M7). Draft 3 widens Penna from this desk to any workstation or laptop, with automatic setup, generated curves and a Defaults profile: design review 02 (§11.2) was approved the same day. M5 was done on 22 Oct 2026: Penna drives every fan on this desk, and it87 is Verified.
 
 Companion: design review 01 — mockups in real theme tokens, live motion prototypes, and eight calls before QML — is published as an artifact (https://claude.ai/artifact/DmFftUzWVBd11NNBv4e8aK). Its source is `design/penna-design-review.html`.
 
@@ -31,7 +31,7 @@ Everything below was checked on this machine on 21 Oct 2026, not taken from the 
 
 Findings from the probes (see §9.3 for what they change):
 
-- **The 3090 stops its fans by itself, and manual control cannot.** Sampled once a second at 36–39 °C: fans at 53 % / ~1000 RPM, then 0 % / 0 RPM a second later, all under the default policy. NVML refuses manual speeds below 30 %, so taking manual control of this card loses zero-RPM mode.
+- **The 3090 stops its fans by itself, and manual control cannot.** Sampled once a second at 36–39 °C: fans at 53 % / ~1000 RPM, then 0 % / 0 RPM a second later, all under the default policy. NVML refuses manual speeds below 30 %, so taking manual control of this card loses zero-RPM mode. *(M7, 22 Oct 2026: setup measured both fans in manual. GPU fan 1 stands still below 40 % and GPU fan 2 below 35 %, so manual 30 % stops them too, but only as a stall. Penna still hands a fan back to the driver below its floor, and the floor is now the measured stop, §4.5.)*
 - **NVML's "target" is not what the driver is doing.** `nvmlDeviceGetTargetFanSpeed` read 30 % throughout, both while the fans ran at 53 % and while they were stopped. `GetFanSpeed_v2` (percent) and `GetFanSpeedRPM` tracked reality.
 - **NVML percent is not duty.** It is a "percentage of the product's maximum noise tolerance fan speed" and "may exceed 100 %" (`nvml.h`).
 
@@ -255,9 +255,9 @@ source  ─► curve ─► response ─► limits ─► output map ─► writ
 
 - **Min / max %**, **offset %**.
 - **Step up / step down** in %/s (defaults 20 and 5).
-- **May stop** — off by default. When off, the floor is the calibrated stop duty plus 5 %, or 30 % until the fan is calibrated. When on, outputs below the stop duty become 0. *May stop* is refused on a motherboard fan with no calibrated stop duty. Leaving 0 uses the **start %** kick for 2 s and then settles. The kick is the calibrated start duty, otherwise the larger of the floor and 50 %.
+- **May stop** — off by default. When off, the floor is the calibrated stop duty plus 5 %, or 30 % until the fan is calibrated. When on, outputs below the stop duty become 0. *May stop* is refused on a motherboard fan with no calibrated stop duty. Leaving 0 uses the **start %** kick for 2 s and then settles. The kick is the calibrated start duty, otherwise the larger of the floor and 50 %. *(M7, 22 Oct 2026: no fan runs below the lowest duty setup took it to. A fan measured down to that duty without stopping, such as a pump at 50 % or a header that races below 5 %, gets that duty as its floor instead of 30 %.)*
 - **Entering and leaving safety.** Safety states and overrides apply at once. Leaving them, the fan falls back at the step-down rate. Overrides are clamped to the floor. An NVML override below 30 % on a fan with *may stop* hands the fan to the driver.
-- **NVML floor.** Manual control cannot go below 30 % on this card (§0). With *may stop* on, an output below the floor **hands the fan back** to the driver policy (`SetDefaultFanSpeed_v2`). The driver's own curve then stops the fan when cool and still protects the GPU. Manual control resumes when the curve rises above the floor plus 5 %. This is the only way to keep zero-RPM, and it is observed behaviour, not a guess.
+- **NVML floor.** Manual control cannot go below 30 % on this card (§0). With *may stop* on, an output below the floor **hands the fan back** to the driver policy (`SetDefaultFanSpeed_v2`). The driver's own curve then stops the fan when cool and still protects the GPU. Manual control resumes when the curve rises above the floor plus 5 %. This is the only way to keep zero-RPM, and it is observed behaviour, not a guess. *(M7, 22 Oct 2026: once setup has measured a GPU fan, its floor is also the stop duty: the 3090's fans stand still below 35–40 % in manual. Without *may stop* the floor keeps the 5 % margin above the stop.)*
 
 ### 4.6 Control states
 
@@ -352,6 +352,11 @@ Per control, with its tach paired. Fans are calibrated all at once, each against
 1. Step down from 100 % in 5 % steps. At each step, wait until RPM is stable within 3 % over 2 s (timeout 10 s) and record it. The lowest duty that still turns is the **stop duty**. Pumps and chipset fans stop the descent at 50 % and 30 %, and so does an unconfirmed fan on a pump header (50 %), except a chipset fan its firmware was seen stopping (§5.3).
 2. From 0, step up in 2 % steps. The first duty that spins a stopped fan is the **start duty**, usually above the stop duty because of stiction. The time from that write to a steady RPM is the **spin-up time**. *(M7, as built: the climb starts at the stop duty, since a stopped fan never starts below it; from 0 it kept a CPU fan stopped past its 10 s. Steps are 2 s apart. "Stable" also needs the last two readings within 1.5 %: a fan still closing on its speed passed the 3 % reading low.)*
 3. Store the duty→RPM table and make it monotonic, with the **maximum RPM**.
+
+*(M7, after the first run on this desk, 22 Oct 2026.)* Three changes:
+- **A duty counts from the first tick the loop shows it written.** The fan is taken on one tick and written on the next, and it87 caches the tach for 1.5 s. Counting from the request, a re-measure read three ticks of the firmware's own speed as steady and recorded 938 RPM at 100 %.
+- **A step that turns the fan faster than the step above ends the descent there**, by as much as pairing calls a rise (§5.2). That step above becomes the fan's lowest duty, and the review says why. Written 0 %, this desk's SYS_FAN1 runs at full speed.
+- **Calibration after a confirmed role carries on from where the run stopped.** It keeps what the run measured above that point.
 
 NVML fans skip steps 1–2: Penna records % → RPM over 30–100 % for the axis only. `levels` controls record the RPM at each level.
 
@@ -1047,7 +1052,31 @@ Milestones, each ending in something visible:
   - **Before the first run on this desk** (22 Oct 2026): this desk's CPU_OPT carries a liquid cooler's pump. Pairing's low step is now 50 %, a lone rising tach pairs on its rise (a pump barely slows), and a fast fan on a CPU header, or any fan on CPU_OPT, is held at 50 % until confirmed (§5.2, §5.3). `tests/setup.rs` adds a pump on CPU_OPT and checks that setup runs no fan below 50 % before calibration.
   - The plugin is merged; the running shell picks it up at its next start. `tools/setup-preview/live.sh` runs the studio's setup on a second screen against the mock desk.
 
-  Still to do: setup on this desk's hardware, with 0.7.0 installed.
+  **The first run on this desk (22 Oct 2026).** 0.7.0 was installed as the service, and `penna setup` ran in a terminal: 4:09 for ten controls. The idle sample took 30 s, the write test 7 s, pairing 1:42 and calibration 1:50.
+  - **Pairing agrees with M5's by-hand pairing** on every header. Each `pwmN` drives `fanN`, SYS_FAN6_PUMP is empty, and every fan's RPM at 60 % and at 100 % is within 3 % of M5's table. CPU_OPT was suggested as a pump and confirmed, so the pump was never run below 50 %. SYS_FAN5_PUMP was suggested as a case fan, confirmed, and then measured below 50 %.
+
+    | Header | Stops below | Starts at | At 100 % | |
+    |---|---|---|---|---|
+    | CPU_FAN | 10 % | 10 % | 1,662 RPM | about 350 RPM from 10 to 20 % |
+    | SYS_FAN1 | never | — | 2,170 RPM | about 835 RPM from 5 to 20 %, full speed at 0 % |
+    | SYS_FAN2 | 10 % | 10 % | 1,687 RPM | about 345 RPM from 10 to 20 % |
+    | PCH_FAN | 10 % | 18 % | 5,578 RPM | its BIOS stops it when cool |
+    | CPU_OPT (pump) | — | — | 2,142 RPM | measured down to 50 % only |
+    | SYS_FAN5_PUMP | 10 % | 10 % | 1,691 RPM at 90 % | its 100 % was recorded wrong, see below |
+    | SYS_FAN4 | 25 % | 25 % | 2,096 RPM | flat between 60 and 90 % |
+    | GPU fan 1 | 40 % | 40 % | 2,817 RPM | NVML percent |
+    | GPU fan 2 | 35 % | 35 % | 2,855 RPM | NVML percent |
+
+    Spin-up times were 8–11 s. Most fans reached the 10 s cap on "stable", so these are upper bounds.
+  - **Four things were wrong in what it saved; all four were fixed after the run:**
+    1. **SYS_FAN5_PUMP: 938 RPM at 100 %**, which is its firmware's speed. The re-measure started at 100 % on a fan not yet taken, and counted three readings from before its write. A duty now counts from the first tick the loop shows it written (§5.4). The rig in `tests/setup.rs` now lags its tachs by a tick, as it87's cache does, and without the fix it reproduces the bad reading.
+    2. **The re-measure ran the whole descent, 1:48**, where the CLI said about 30 s. It now carries on from 50 % and keeps the points above, in about a minute.
+    3. **SYS_FAN6_PUMP was saved as `paired = true`, with no tachs.** `paired` meant that pairing ran. It now means a fan was found, and a header with none is saved as `empty = true`.
+    4. **SYS_FAN1 was saved with 2,170 RPM at 0 % and a stop of 0 %.** Written 0 %, this header runs its fan flat out. Calibration now ends the descent at a step that runs faster than the one above, and records the step above as the fan's lowest duty (§5.4). The plan never runs a fan below its lowest duty (§4.5).
+  - **The 3090's fans stall in manual**: GPU fan 1 below 40 %, GPU fan 2 below 35 % (§0). The balanced GPU curve asks 30–40 % between 51 and 57 °C, and gpu-render asks 30 % at 40 °C. In those ranges a fan stood still while Penna showed a duty. The NVML floor now includes the measured stop (§4.5), so below it the fan goes back to the driver.
+  - `x570-desk` now has both quirks, and the IPC test checks them end to end. 162 Rust tests, 24 plugin logic tests.
+
+  Still to do: run setup again on this desk with these fixes, and the simulated drivers when M9 adds them.
 - **M8** — **Generated curves** (§5.5): per role and profile from setup's measurements, the CPU load check, and the review step.
 - **M9** — **Laptops and other drivers:**
   - `levels`, `firmware-curve`, `modes` and `platform` controls, amdgpu included;

@@ -174,22 +174,22 @@ pub fn roles(live: &mut Live, inventory: &Inventory, out: &mut Trace, conn: u64,
     save(live).map_err(|e| format!("Couldn't save the roles: {e}."))?;
     let n = roles.len();
     let mut text = format!("{n} role{} confirmed", plural(n));
-    let below: Vec<(Key, Vec<Key>, Role)> = live
+    let below: Vec<penna_core::config::MeasuredControl> = live
         .measured
         .controls
         .iter()
         .filter(|m| m.lowest == Some(penna_core::setup::PUMP_LOWEST) && m.role.is_some_and(|r| r != Role::Pump) && !m.tachs.is_empty())
         .filter(|m| roles.contains_key(&m.key))
-        .map(|m| (m.key.clone(), m.tachs.clone(), m.role.expect("filtered")))
+        .cloned()
         .collect();
     if !below.is_empty() && live.setup.as_ref().is_none_or(|s| s.run.finished()) {
-        let keys: Vec<Key> = below.iter().map(|(k, ..)| k.clone()).collect();
+        let keys: Vec<Key> = below.iter().map(|m| m.key.clone()).collect();
         let input = input(inventory, live.board.as_ref(), Some(&keys));
         let names: Vec<String> = input.targets.iter().map(|t| t.label.clone()).collect();
         live.plan.carry(&keys, inventory, &live.measured);
         live.setup =
             Some(SetupRun { owner: conn, run: Setup::calibrate(input, &below, live.now), saved: false, last_step: Step::Calibration });
-        text = format!("{text}; measuring {} below 50 %, about 30 s", names.join(" and "));
+        text = format!("{text}; measuring {} below 50 %, about a minute", names.join(" and "));
         out.note(live.now, Level::Info, None, format!("Setup: measuring {} below 50 %", names.join(" and ")));
     }
     Ok(text)

@@ -662,6 +662,11 @@ fn setup_measures_the_x570_desk_from_a_fresh_install() {
     }
     assert_eq!(ctl(&format!("{it8792}/pwm1"))["header"], "SYS_FAN5_PUMP");
     assert_eq!(ctl(&format!("{it8792}/pwm2"))["paired"], false, "nothing on SYS_FAN6_PUMP");
+    let sys1 = ctl(&format!("{it8688}/pwm2"));
+    assert_eq!((sys1["lowest"].as_f64(), sys1["stop"].is_null()), (Some(5.0), true), "full speed at 0 %: never below 5 %: {sys1}");
+    assert!(sys1["note"].as_str().is_some_and(|n| n.starts_with("At 0 % it turned faster")), "{sys1}");
+    let gpu = ctl("nvml/GPU-5a1d3090-0000-4000-8000-00000000mock/fan0");
+    assert_eq!((gpu["stop"].as_f64(), gpu["start"].as_f64()), (Some(40.0), Some(40.0)), "it stands still at 35 %: {gpu}");
     assert_eq!(ctl(&format!("{it8792}/pwm3"))["header"], "SYS_FAN4");
     let role = |key: String| ctl(&key)["suggestion"].clone();
     assert_eq!(role(format!("{it8688}/pwm1"))["role"], "cpu");
@@ -681,6 +686,8 @@ fn setup_measures_the_x570_desk_from_a_fresh_install() {
     assert_eq!(cpu["tachs"].as_array().unwrap()[0].as_str(), Some(format!("{it8688}/fan1").as_str()));
     assert!(cpu["stop"].as_float().is_some_and(|s| (15.0..=25.0).contains(&s)), "{cpu}");
     assert_eq!(cpu["suggested"].as_str(), Some("cpu"));
+    let empty = m["control"].as_array().unwrap().iter().find(|c| c["key"].as_str() == Some(&format!("{it8792}/pwm2"))).unwrap();
+    assert!(empty.get("paired").is_none() && empty["empty"].as_bool() == Some(true), "SYS_FAN6_PUMP is saved as empty: {empty}");
     let t = c.tick_where(10, "paired tachs", |t| tach(t, &format!("{it8688}/fan1"))["control"] == format!("{it8688}/pwm1"));
     assert!(tach(&t, &format!("{it8792}/fan2"))["control"].is_null());
 
@@ -698,8 +705,10 @@ fn setup_measures_the_x570_desk_from_a_fresh_install() {
     // Roles confirmed in the review are kept with the measurements. The case fan on a pump header, held at 50 % until now, is
     // measured below it at once, on this connection (§11.3 call 7).
     let r = c.call(json!({"op": "setup.roles", "roles": {format!("{it8792}/pwm1"): "case", "PCH_FAN": "chipset"}}));
-    assert_eq!(r["result"]["text"], "2 roles confirmed; measuring SYS_FAN5_PUMP below 50 %, about 30 s", "{r}");
+    assert_eq!(r["result"]["text"], "2 roles confirmed; measuring SYS_FAN5_PUMP below 50 %, about a minute", "{r}");
     let measured = fs::read_to_string(dir.join("tree/var/lib/penna/measured.toml")).unwrap();
+    let m: toml::Value = toml::from_str(&measured).unwrap();
+    let first = m["control"].as_array().unwrap().iter().find(|c| c["key"].as_str() == Some(&format!("{it8792}/pwm1"))).unwrap().clone();
     assert!(measured.contains("role = \"case\""), "{measured}");
     c.tick_where(200, "calibrating SYS_FAN5_PUMP", |t| t["setup"]["step"] == "calibration");
     let t = c.tick_where(2000, "measured below 50 %", |t| t["setup"]["step"] == "review");
@@ -710,6 +719,11 @@ fn setup_measures_the_x570_desk_from_a_fresh_install() {
     let sys5 = m["control"].as_array().unwrap().iter().find(|c| c["key"].as_str() == Some(&format!("{it8792}/pwm1"))).unwrap().clone();
     assert!(sys5.get("lowest").is_none() && sys5["role"].as_str() == Some("case"), "{sys5}");
     assert!(sys5["calibration"].as_array().unwrap()[0][0].as_float() < Some(50.0), "{sys5}");
+    // Measured on from 50 %: what the first run measured above stays, its 100 % among it.
+    let above =
+        |c: &toml::Value| c["calibration"].as_array().unwrap().iter().filter(|p| p[0].as_float() > Some(50.0)).cloned().collect::<Vec<_>>();
+    assert_eq!(above(&sys5), above(&first), "{sys5}");
+    assert!(sys5["reason"].as_str().is_some_and(|r| r.starts_with("On a pump header")), "{sys5}");
     let r = c.call(json!({"op": "setup.roles", "roles": {"CPU_FAN": "blower"}}));
     assert_eq!(r["error"], "\"blower\" isn't a role. Roles: cpu, gpu, pump, chipset, laptop, case.");
     d.stop();

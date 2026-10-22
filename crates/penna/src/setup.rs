@@ -160,11 +160,15 @@ fn step_lines(step: Step, before: &Progress, now: &Progress, style: Style) -> St
                 let top = c.table.last().map_or(String::new(), |t| format!("{} RPM at 100 %", thousands(t[1])));
                 let what = match (c.stop, c.start, c.lowest) {
                     (Some(s), Some(st), _) => format!("stops below {s:.0} %, starts at {st:.0} %, {top}"),
+                    (Some(s), None, _) if s <= 0.0 => format!("turns even at 0 %, {top}"),
                     (Some(s), None, _) => format!("stops below {s:.0} %, {top}"),
                     (None, _, Some(l)) => format!("measured down to {l:.0} %, {top}"),
                     _ => top,
                 };
                 lines.push(format!("{:<14} {what}", name(c)));
+                if let Some(note) = &c.note {
+                    notes.push(format!("{}: {note}", name(c)));
+                }
             }
         }
         Step::Review => {
@@ -262,9 +266,15 @@ fn confirm_roles(p: &Progress) -> Result<()> {
         })?;
         match done {
             Some(p) if p.stopped.is_none() => {
-                for c in p.controls.iter().filter(|c| c.stop.is_some()) {
-                    let start = c.start.map_or(String::new(), |s| format!(", starts at {s:.0} %"));
-                    println!("{}: stops below {:.0} %{start}.", c.header.clone().unwrap_or_else(|| c.label.clone()), c.stop.unwrap_or(0.0));
+                for c in &p.controls {
+                    let name = c.header.clone().unwrap_or_else(|| c.label.clone());
+                    if let Some(stop) = c.stop {
+                        let start = c.start.map_or(String::new(), |s| format!(", starts at {s:.0} %"));
+                        println!("{name}: stops below {stop:.0} %{start}.");
+                    }
+                    if let Some(note) = &c.note {
+                        println!("{name}: {note}");
+                    }
                 }
             }
             Some(p) => println!("Stopped: {}", p.stopped.unwrap_or_default()),

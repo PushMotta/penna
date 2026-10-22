@@ -231,11 +231,17 @@ pub fn control_plan(cfg: &config::ControlConfig, present: Option<(ControlKind, &
     let stop = m.and_then(|m| m.stop);
     let kind = present.map(|f| f.0);
     let at = format!("control {key}");
+    let lowest = m.and_then(|m| m.lowest);
     let floor = match kind {
-        Some(ControlKind::Nvml { min, .. }) => cfg.min.max(min as f64),
+        // A GPU fan has a stop too, once setup has measured one: the 3090's stand still below 35–40 % in manual (§5.4). One that
+        // may stop is handed back to its driver below it; one that may not keeps the margin.
+        Some(ControlKind::Nvml { min, .. }) if cfg.may_stop => cfg.min.max(min as f64).max(stop.unwrap_or(0.0)),
+        Some(ControlKind::Nvml { min, .. }) => cfg.min.max(min as f64).max(stop.map_or(0.0, |s| s + STOP_MARGIN)),
         _ if cfg.may_stop => cfg.min.max(stop.unwrap_or(0.0)),
-        _ => cfg.min.max(stop.map_or(UNCALIBRATED_FLOOR, |s| s + STOP_MARGIN)),
-    };
+        // Measured down to its lowest without stopping is calibration enough: a pump, or a header that races below it.
+        _ => cfg.min.max(stop.map_or(lowest.unwrap_or(UNCALIBRATED_FLOOR), |s| s + STOP_MARGIN)),
+    }
+    .max(lowest.unwrap_or(0.0));
     if kind.is_some() && !matches!(kind, Some(ControlKind::Nvml { .. })) && cfg.may_stop && stop.is_none() {
         problems.push(Problem { at: at.clone(), message: "may_stop needs a calibrated stop duty (penna calibrate)".into() });
     }

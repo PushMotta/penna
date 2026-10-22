@@ -51,11 +51,15 @@ struct FanModel {
     /// RPM at the stop duty, and the curve's shape above it.
     min: f64,
     g: f64,
+    /// Full speed at 0 %, as this desk's SYS_FAN1 runs.
+    races_at_zero: bool,
 }
 
 impl FanModel {
     fn rpm(&self, duty: f64, spinning: bool) -> f64 {
-        if duty < self.stop || (!spinning && duty < self.start) {
+        if self.races_at_zero && duty <= 0.0 {
+            self.max
+        } else if duty < self.stop || (!spinning && duty < self.start) {
             0.0
         } else {
             self.min + (self.max - self.min) * ((duty - self.stop) / (100.0 - self.stop)).powf(self.g)
@@ -68,6 +72,8 @@ struct Channel {
     mode: ControlMode,
     raw: u32,
     rpm: f64,
+    /// What the tach reads: a second behind, as it87 caches the chip for 1.5 s.
+    shown: f64,
     spinning: bool,
     writes: u32,
 }
@@ -81,10 +87,18 @@ struct Desk {
 }
 
 fn headers() -> Vec<Header> {
-    let f = |max, stop, start, min, g| Some(FanModel { max, stop, start, min, g });
+    let f = |max, stop, start, min, g| Some(FanModel { max, stop, start, min, g, races_at_zero: false });
     vec![
         Header { n: 1, name: "CPU_FAN", role: Some("cpu"), fan: f(1660.0, 18.0, 24.0, 360.0, 0.95), firmware: 27.0, reverts: false },
-        Header { n: 2, name: "SYS_FAN1", role: None, fan: f(2190.0, 20.0, 26.0, 480.0, 0.66), firmware: 27.0, reverts: false },
+        // Never stops: 830 RPM down to 5 %, and full speed at 0 % (setup on this desk, 22 Oct 2026).
+        Header {
+            n: 2,
+            name: "SYS_FAN1",
+            role: None,
+            fan: Some(FanModel { max: 2190.0, stop: 0.0, start: 0.0, min: 830.0, g: 1.2, races_at_zero: true }),
+            firmware: 27.0,
+            reverts: false,
+        },
         Header { n: 3, name: "PCH_FAN", role: Some("chipset"), fan: f(5620.0, 22.0, 28.0, 1500.0, 0.54), firmware: 16.0, reverts: false },
         Header {
             n: 4,
@@ -107,7 +121,7 @@ impl Desk {
             .into_iter()
             .map(|h| {
                 let rpm = h.fan.map_or(0.0, |f| f.rpm(h.firmware, true));
-                Channel { raw: raw(h.firmware), mode: ControlMode::Automatic(2), rpm, spinning: rpm > 0.0, writes: 0, h }
+                Channel { raw: raw(h.firmware), mode: ControlMode::Automatic(2), rpm, shown: rpm, spinning: rpm > 0.0, writes: 0, h }
             })
             .collect();
         Desk { channels, gpu_manual: false, gpu_percent: 0.0, gpu_rpm: 0.0, cpu_temp: 45.0 }
@@ -195,7 +209,7 @@ impl Desk {
         r.temps.insert(cpu(), Sample::Value(self.cpu_temp));
         r.temps.insert(gpu_temp(), Sample::Value(40.0));
         for c in &self.channels {
-            r.rpms.insert(fan(c.h.n), Sample::Value(c.rpm.round() as u32));
+            r.rpms.insert(fan(c.h.n), Sample::Value(c.shown.round() as u32));
             r.controls.insert(
                 pwm(c.h.n),
                 Sample::Value(ControlReading { percent: c.raw as f64 * 100.0 / 255.0, raw: Some(c.raw), mode: c.mode }),
@@ -260,6 +274,7 @@ impl Desk {
                 ControlMode::Manual => c.raw as f64 * 100.0 / 255.0,
                 _ => c.h.firmware,
             };
+            c.shown = c.rpm;
             let Some(f) = c.h.fan else { continue };
             if c.spinning && duty < f.stop {
                 c.spinning = false;
@@ -272,7 +287,8 @@ impl Desk {
                 c.rpm = 0.0;
             }
         }
-        let target = if !self.gpu_manual { 0.0 } else { 600.0 + (self.gpu_percent - 30.0).max(0.0) / 70.0 * 1220.0 };
+        // The 3090's fans stand still in manual below 35–40 % (setup on this desk, 22 Oct 2026).
+        let target = if !self.gpu_manual || self.gpu_percent < 38.0 { 0.0 } else { 500.0 + (self.gpu_percent - 40.0) / 60.0 * 2330.0 };
         self.gpu_rpm += (target - self.gpu_rpm) * (1.0 - (-1.0f64 / 2.0).exp());
         if target == 0.0 && self.gpu_rpm < 20.0 {
             self.gpu_rpm = 0.0;
@@ -396,6 +412,10 @@ fn setup_measures_this_desk_and_hands_every_fan_back() {
     let cal = |n: u32| m.get(&pwm(n)).unwrap().clone();
     // The stop duty is the lowest 5 % step that still turns the fan; the start is the first 2 % step up that spins it.
     assert_eq!((cal(1).stop, cal(1).start), (Some(20.0), Some(24.0)), "{:?}", cal(1));
+    // SYS_FAN1 turns faster at 0 % than at 5 %: no 0 % point, no stop, and never run below 5 %.
+    assert_eq!((cal(2).stop, cal(2).lowest, cal(2).calibration[0][0]), (None, Some(5.0), 5.0), "{:?}", cal(2));
+    let note = rig.progress(&pwm(2)).note.unwrap_or_default();
+    assert!(note.starts_with("At 0 % it turned faster, 2,1") && note.ends_with("Penna never runs it below 5 %."), "{note}");
     assert_eq!(cal(3).stop, Some(25.0), "PCH_FAN measured down to its stop");
     assert_eq!((cal(4).stop, cal(4).lowest), (None, Some(50.0)), "the pump header stops at 50 %");
     assert!(cal(7).stop.is_none() && cal(7).calibration.iter().all(|p| p[0] >= 50.0), "the pump is never taken below 50 %: {:?}", cal(7));
@@ -409,8 +429,23 @@ fn setup_measures_this_desk_and_hands_every_fan_back() {
     }
     assert!(cal(1).spin_up.is_some_and(|s| s > 0.0 && s <= 10.0), "{:?}", cal(1));
     let gpu = m.get(&gpu_fan()).unwrap();
-    assert_eq!((gpu.calibration.first().unwrap()[0], gpu.paired), (30.0, false), "NVML 30–100 % only, and no pairing of its own");
-    assert!(m.get(&pwm(5)).is_some_and(|c| c.paired && c.tachs.is_empty()), "the empty header is recorded as empty");
+    assert_eq!((gpu.stop, gpu.start, gpu.paired), (Some(40.0), Some(40.0), false), "it stood still at 35 %: {gpu:?}");
+    assert_eq!(gpu.calibration.first().unwrap()[0], 40.0);
+    let empty = m.get(&pwm(5)).unwrap();
+    assert!(empty.empty && !empty.paired && empty.tachs.is_empty(), "the empty header is recorded as empty: {empty:?}");
+    assert!(m.get(&pwm(1)).is_some_and(|c| c.paired && !c.empty));
+
+    // What the plan makes of it: never below a measured stop, the GPU's included, nor below what setup went down to.
+    let floor = |key: Key, may_stop: bool| {
+        let kind = if key == gpu_fan() { ControlKind::Nvml { min: 30, max: 100 } } else { ControlKind::Duty { scale: 255 } };
+        let cfg = penna_core::config::ControlConfig { may_stop, ..penna_core::config::ControlConfig::defaults(key) };
+        penna_core::plan::control_plan(&cfg, Some((kind, "")), &m).0.floor
+    };
+    assert_eq!(floor(gpu_fan(), true), 40.0, "handed to its driver below its stop");
+    assert_eq!(floor(gpu_fan(), false), 45.0, "or kept clear of it");
+    assert_eq!(floor(pwm(2), false), 5.0, "SYS_FAN1: measured down to 5 % without stopping");
+    assert_eq!(floor(pwm(7), false), 50.0, "the pump: never below 50 %");
+    assert_eq!(floor(pwm(1), false), 25.0, "CPU_FAN: its stop and the margin");
     assert!(m.get(&pwm(3)).unwrap().firmware_stops);
     assert!((m.idle[&cpu()] - 45.0).abs() < 0.5, "{:?}", m.idle);
 
@@ -422,6 +457,41 @@ fn setup_measures_this_desk_and_hands_every_fan_back() {
     assert!(rig.desk.channels.iter().all(|c| c.mode == ControlMode::Automatic(2)), "every header back on its BIOS");
     assert!(!rig.desk.gpu_manual, "the GPU fan back on its driver");
     assert!(rig.plan.carried.is_empty(), "nothing left in the plan that the configuration doesn't name");
+}
+
+#[test]
+fn a_case_fan_confirmed_on_a_pump_header_is_measured_on_below_50_percent() {
+    let mut rig = Rig::new();
+    rig.until(Step::Review, 400.0);
+    let first = rig.setup.measured(1.0e9);
+    for _ in 0..3 {
+        rig.tick();
+    }
+    assert_eq!(rig.desk.channels[3].mode, ControlMode::Automatic(2), "SYS_FAN5_PUMP back on its BIOS, which runs it at 60 %");
+
+    // Confirmed as a case fan, as pennad's setup.roles does it (§11.3 call 7): measured below the 50 % it was held to.
+    let mut sys5 = first.get(&pwm(4)).unwrap().clone();
+    sys5.role = Some(Role::Case);
+    rig.plan.carry(&[pwm(4)], &rig.desk.inventory(), &first);
+    rig.setup = Setup::calibrate(rig.desk.input(), std::slice::from_ref(&sys5), rig.now);
+    let start = rig.now;
+    rig.until(Step::Review, start + 120.0);
+    assert!(rig.now - start <= 60.0, "about a minute, from where the first run stopped; took {} s", rig.now - start);
+    let again = rig.setup.measured(1.0e9 + 300.0);
+    let after = again.get(&pwm(4)).unwrap();
+    let above = |t: &[[f64; 2]]| t.iter().filter(|p| p[0] > 50.0).copied().collect::<Vec<_>>();
+    assert_eq!(above(&after.calibration), above(&sys5.calibration), "what the first run measured above 50 % stays");
+    // 50 % counts once it is written, not while the tach still reads the 60 % its BIOS ran when it was taken.
+    let at = |t: &[[f64; 2]], d: f64| t.iter().find(|p| p[0] == d).map(|p| p[1]).unwrap();
+    let (was, now) = (at(&sys5.calibration, 50.0), at(&after.calibration, 50.0));
+    assert!((now - was).abs() < was * 0.03, "50 %: {now} RPM, where the first run read {was}");
+    assert_eq!((after.stop, after.start, after.lowest), (Some(20.0), Some(26.0), None), "{after:?}");
+    assert_eq!(after.role, Some(Role::Case));
+    assert!(after.reason.as_deref().is_some_and(|r| r.starts_with("On a pump header, but 1,7")), "its reason stays: {after:?}");
+    for _ in 0..3 {
+        rig.tick();
+    }
+    assert_eq!(rig.desk.channels[3].mode, ControlMode::Automatic(2), "and back on its BIOS");
 }
 
 #[test]

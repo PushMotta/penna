@@ -200,6 +200,9 @@ pub struct FanSpec {
     pub start: f64,
     #[serde(default = "two")]
     pub tau: f64,
+    /// Full speed when written 0 %, as the development desk's SYS_FAN1 runs (§5.4).
+    #[serde(default)]
+    pub races_at_zero: bool,
 }
 
 fn two() -> f64 {
@@ -223,6 +226,9 @@ pub struct GpuSpec {
     pub driver_on: f64,
     pub driver_off: f64,
     pub driver_percent: f64,
+    /// In manual, fan `i` stands still below `stops[i]` percent, as the 3090's do below 35–40 % (§5.4).
+    #[serde(default)]
+    pub stops: Vec<f64>,
     pub gpu_max: f64,
     pub slowdown: f64,
     pub shutdown: f64,
@@ -475,8 +481,10 @@ impl Sim {
         // NVML fans need no pairing; calibration only records percent → RPM over the settable range, for the axis (§5.4).
         for g in &self.sc.gpus {
             for i in 0..g.fans {
-                let calibration = calibration_steps(g.min as f64).into_iter().map(|d| [d, gpu_rpm(g, d).round()]).collect();
-                controls.push(MeasuredControl { calibration, ..MeasuredControl::new(Key::nvml_fan(&g.uuid, i)) });
+                let stop = g.stops.get(i as usize).copied();
+                let calibration =
+                    calibration_steps(stop.unwrap_or(0.0).max(g.min as f64)).into_iter().map(|d| [d, gpu_rpm(g, d).round()]).collect();
+                controls.push(MeasuredControl { calibration, stop, start: stop, ..MeasuredControl::new(Key::nvml_fan(&g.uuid, i)) });
             }
         }
         Measured { controls, ..Measured::default() }
@@ -603,7 +611,14 @@ impl Sim {
                 } else if !st.spinning && duty >= f.start {
                     st.spinning = true;
                 }
-                let target = if st.spinning { f.max_rpm * (duty / 100.0).powf(0.8) } else { 0.0 };
+                let target = if f.races_at_zero && duty <= 0.0 {
+                    st.spinning = true;
+                    f.max_rpm
+                } else if st.spinning {
+                    f.max_rpm * (duty / 100.0).powf(0.8)
+                } else {
+                    0.0
+                };
                 st.rpm += (target - st.rpm) * (1.0 - (-h / f.tau).exp());
                 let shown = if stuck { 0.0 } else { st.rpm };
                 put(&dir.join(format!("fan{}_input", f.channel)), &(shown.round() as i64).to_string())?;
@@ -625,14 +640,16 @@ impl Sim {
             }
             for i in 0..g.fans {
                 let policy = fs::read_to_string(dir.join(format!("fan{i}_policy"))).unwrap_or_default();
-                let duty = if policy.trim() == MANUAL {
+                let manual = policy.trim() == MANUAL;
+                let duty = if manual {
                     get::<f64>(&dir.join(format!("fan{i}_target"))).unwrap_or(g.min as f64)
                 } else if self.gpu_on[gi] {
                     g.driver_percent
                 } else {
                     0.0
                 };
-                let target = gpu_rpm(g, duty);
+                let still = manual && g.stops.get(i as usize).is_some_and(|s| duty < *s);
+                let target = if still { 0.0 } else { gpu_rpm(g, duty) };
                 let st = self.fans.entry(format!("{}-fan{i}", g.id)).or_default();
                 st.spinning = target > 0.0;
                 st.rpm += (target - st.rpm) * (1.0 - (-h / 2.0f64).exp());

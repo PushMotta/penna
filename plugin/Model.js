@@ -307,13 +307,14 @@ function calCells(s, tick) {
   })
 }
 
-// The review's roles (call 7): the suggestion, its reason, whether it still needs the user's yes.
+// The review's roles (call 7): the suggestion, its reason and what calibration found, whether it still needs the user's yes.
 var ROLES = ["cpu", "case", "pump", "chipset"]
 var ROLE_NAME = { cpu: "CPU cooler", gpu: "GPU", pump: "Pump", chipset: "Chipset", laptop: "Laptop", case: "Case" }
 
 function reviewRows(s) {
   return (s && s.controls ? s.controls : []).filter(function(c) { return !!c.suggestion }).map(function(c) {
-    return { key: String(c.key), name: String(c.header || c.label), role: String(c.suggestion.role), reason: String(c.suggestion.reason),
+    var reason = String(c.suggestion.reason) + (c.note ? " " + String(c.note) : "")
+    return { key: String(c.key), name: String(c.header || c.label), role: String(c.suggestion.role), reason: reason,
              confirm: !!c.suggestion.confirm, nvml: isNvmlKey(c.key) }
   })
 }

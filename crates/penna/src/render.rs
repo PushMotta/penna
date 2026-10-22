@@ -122,7 +122,7 @@ fn fan_row(out: &mut String, c: &ControlTick, style: Style, now: f64) {
     let curve = c.curve_label.as_deref().unwrap_or("");
     let what = match c.state {
         State::Curve => style.dim(curve),
-        State::Handback => style.dim(&format!("{curve} · below 30 %: the driver's curve runs it")),
+        State::Handback => style.dim(&format!("{curve} · below {:.0} %: the driver's curve runs it", c.floor)),
         State::Override => match c.override_ {
             Some(o) => {
                 let left = o.until.map(|u| (u - now).max(0.0));

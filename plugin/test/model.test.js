@@ -200,9 +200,13 @@ test("the setup view's rail, rows, bars and review come from the run's progress 
   assert.deepEqual(M.pairBars(s, tick({ tachs })).map(b => [b.label, b.hot]), [["CPU_FAN", true], ["PCH_FAN", false], ["SYS_FAN6_PUMP", false]])
   const review = { step: "review", controls: [
     { key: it8688 + "/pwm4", label: "IT8688E pwm4", header: "PCH_FAN", suggestion: { role: "chipset", reason: "The board calls this header PCH_FAN.", confirm: false } },
+    { key: it8688 + "/pwm2", label: "IT8688E pwm2", header: "SYS_FAN1", suggestion: { role: "case", reason: "A system fan header.", confirm: false },
+      note: "At 0 % it turned faster, 2,170 RPM, than at 5 %: Penna never runs it below 5 %." },
     { key: "hwmon/it8792_4008090b/it87.2656/pwm1", label: "IT8792E pwm1", header: "SYS_FAN5_PUMP", suggestion: { role: "case", reason: "On a pump header…", confirm: true } },
     { key: "hwmon/it8792_4008090b/it87.2656/pwm2", label: "IT8792E pwm2", header: null, paired: false, suggestion: null }] }
-  assert.deepEqual(M.reviewRows(review).map(r => [r.name, r.role, r.confirm]), [["PCH_FAN", "chipset", false], ["SYS_FAN5_PUMP", "case", true]])
+  assert.deepEqual(M.reviewRows(review).map(r => [r.name, r.role, r.confirm]),
+    [["PCH_FAN", "chipset", false], ["SYS_FAN1", "case", false], ["SYS_FAN5_PUMP", "case", true]])
+  assert.equal(M.reviewRows(review)[1].reason, "A system fan header. At 0 % it turned faster, 2,170 RPM, than at 5 %: Penna never runs it below 5 %.")
   assert.equal(M.nextRole("case"), "pump")
   assert.equal(M.nextRole("chipset"), "cpu")
 })

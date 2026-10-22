@@ -222,9 +222,20 @@ struct Ctl {
     start: Option<f64>,
     spin_up: Option<f64>,
     lowest: Option<f64>,
+    /// What calibration found that a person should know, such as a header that runs its fan faster at a lower duty.
+    note: Option<String>,
     firmware_stops: bool,
+    /// The role the user confirmed, when calibration runs again after the review (§11.3 call 7).
+    confirmed: Option<Role>,
     demand: Option<f64>,
     status: String,
+}
+
+impl Ctl {
+    /// The confirmed role, else the suggested one.
+    fn role(&self) -> Option<Role> {
+        self.confirmed.or(self.suggestion.as_ref().map(|s| s.role))
+    }
 }
 
 /// One control's progress, for the setup view and `penna setup` (§8.3).
@@ -249,6 +260,9 @@ pub struct ControlProgress {
     pub start: Option<f64>,
     pub spin_up: Option<f64>,
     pub lowest: Option<f64>,
+    /// What calibration found that a person should know.
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -333,7 +347,9 @@ impl Setup {
                 start: None,
                 spin_up: None,
                 lowest: None,
+                note: None,
                 firmware_stops: false,
+                confirmed: None,
                 demand: None,
                 status: if is_nvml(t.kind) { "Driver".to_owned() } else { "BIOS".to_owned() },
             })
@@ -362,29 +378,38 @@ impl Setup {
     }
 
     /// Calibration alone, for fans whose pairing is known and whose role the user has just confirmed (§11.3 call 7): a case
-    /// fan on a pump header, measured below the 50 % it was held to. `known` is each control with its tachs and role.
-    pub fn calibrate(input: Input, known: &[(Key, Vec<Key>, Role)], now: f64) -> Setup {
+    /// fan on a pump header, measured below the 50 % it was held to. `known` is what the last run measured of each, with the
+    /// confirmed role. Calibration goes on from where that run stopped and keeps what it measured above.
+    pub fn calibrate(input: Input, known: &[MeasuredControl], now: f64) -> Setup {
         let mut s = Setup::new(input, now);
-        s.ctls.retain(|c| known.iter().any(|(k, ..)| k == &c.target.key));
+        s.ctls.retain(|c| known.iter().any(|m| m.key == c.target.key && m.role.is_some()));
         for c in &mut s.ctls {
-            let (_, tachs, role) = known.iter().find(|(k, ..)| k == &c.target.key).expect("kept above");
-            c.write = Some(WriteResult::Ok);
+            let m = known.iter().find(|m| m.key == c.target.key).expect("kept above");
+            let role = m.role.expect("kept above");
+            let from = m.lowest.unwrap_or(100.0);
+            c.write = m.write.or(Some(WriteResult::Ok));
             c.paired = Some(true);
-            c.tachs = tachs.clone();
+            c.tachs = m.tachs.clone();
+            c.firmware_stops = m.firmware_stops;
             c.lowest = match role {
                 Role::Pump => Some(PUMP_LOWEST),
-                Role::Chipset => Some(CHIPSET_LOWEST),
+                Role::Chipset if !m.firmware_stops => Some(CHIPSET_LOWEST),
                 _ => None,
             };
-            c.suggestion = Some(Suggestion { role: *role, reason: "Confirmed by you.".into(), confirm: false, may_stop: false });
+            c.suggestion = Some(Suggestion {
+                role: m.suggested.unwrap_or(role),
+                reason: m.reason.clone().unwrap_or_default(),
+                confirm: false,
+                may_stop: m.firmware_stops,
+            });
+            c.confirmed = Some(role);
+            c.table = m.calibration.iter().filter(|p| p[0] > from + 1e-9).copied().collect();
+            c.cal = Cal::Down { duty: from, since: now };
+            c.demand = Some(from);
+            c.status = format!("stepping down · {from:.0} %");
         }
         s.enter(Step::Calibration);
-        for c in &mut s.ctls {
-            c.cal = Cal::Down { duty: 100.0, since: now };
-            c.demand = Some(100.0);
-            c.status = "stepping down · 100 %".to_owned();
-        }
-        s.say = format!("Stepping down from 100 % in {CAL_DOWN:.0} % steps, waiting for each to settle.");
+        s.say = format!("Stepping down in {CAL_DOWN:.0} % steps from where the last run stopped, waiting for each to settle.");
         s
     }
 
@@ -424,7 +449,7 @@ impl Setup {
                 Step::WriteTest => self.write_test(readings, state),
                 Step::Pairing => self.pairing(readings),
                 Step::Roles => self.roles(),
-                Step::Calibration => self.calibration(readings),
+                Step::Calibration => self.calibration(readings, state),
                 Step::Review => {}
             }
         }
@@ -886,10 +911,29 @@ impl Setup {
         self.say = format!("Stepping every fan down from 100 % in {CAL_DOWN:.0} % steps, waiting for each to settle.");
     }
 
-    fn calibration(&mut self, readings: &Readings) {
+    fn calibration(&mut self, readings: &Readings, state: &LoopState) {
         let now = self.now;
         for c in &mut self.ctls {
-            if c.paired != Some(true) || c.cal == Cal::Done {
+            if c.paired != Some(true) || matches!(c.cal, Cal::Done | Cal::Waiting) {
+                continue;
+            }
+            // A duty counts once the loop shows it written. A control setup has just asked for is taken on one tick and written
+            // on the next, and until then its tach reads what its firmware runs.
+            let asked = match c.cal {
+                Cal::Down { since, .. } | Cal::Up { since, .. } | Cal::Spin { since, .. } => since,
+                Cal::Waiting | Cal::Done => now,
+            };
+            let running = state
+                .controls
+                .get(&c.target.key)
+                .is_some_and(|cs| cs.state == State::Measuring && c.demand.is_some_and(|d| (cs.duty - d).abs() < 0.5));
+            if !running {
+                c.samples.clear();
+                if now - asked > CAL_SETTLE_MAX {
+                    c.cal = Cal::Done;
+                    c.demand = None;
+                    c.status = "Penna couldn't take it from its firmware".to_owned();
+                }
                 continue;
             }
             let Some(r) = tach_rpm(readings, &c.tachs) else {
@@ -910,6 +954,22 @@ impl Setup {
                         c.demand = Some(first);
                         c.status = format!("stopped at {duty:.0} % · starting · {first:.0} %");
                         c.samples.clear();
+                        continue;
+                    }
+                    if let Some(&[above, above_rpm]) = c.table.first()
+                        && settled >= above_rpm * (1.0 + PAIR_RISE)
+                        && settled - above_rpm >= PAIR_RISE_RPM
+                    {
+                        // Faster at a lower duty, by as much as pairing calls a rise: down here the header runs its fan at
+                        // full speed, as this desk's SYS_FAN1 does at 0 %. Penna never runs it below the step above (§5.4).
+                        c.lowest = Some(above);
+                        c.note = Some(format!(
+                            "At {duty:.0} % it turned faster, {} RPM, than at {above:.0} %: Penna never runs it below {above:.0} %.",
+                            rpm(settled)
+                        ));
+                        c.cal = Cal::Done;
+                        c.demand = Some(PAIR_HOLD.max(above));
+                        c.status = format!("measured down to {above:.0} %");
                         continue;
                     }
                     c.table.insert(0, [duty, settled.round()]);
@@ -940,7 +1000,7 @@ impl Setup {
                         c.status = format!("spinning up at {duty:.0} %");
                         continue;
                     }
-                    let cap = if c.suggestion.as_ref().is_some_and(|s| s.role == Role::Cpu) { CPU_STOPPED_MAX } else { STOPPED_MAX };
+                    let cap = if c.role() == Some(Role::Cpu) { CPU_STOPPED_MAX } else { STOPPED_MAX };
                     if now - stopped_since >= cap || duty + CAL_UP > 100.0 {
                         // Never stopped longer than that: back up to the hold, the start duty unknown.
                         c.cal = Cal::Done;
@@ -976,7 +1036,7 @@ impl Setup {
                 "{} stopped below {:.0} %. Starting it again in {CAL_UP:.0} % steps{}",
                 self.header(c).unwrap_or_else(|| c.target.label.clone()),
                 c.stop.unwrap_or(0.0),
-                if c.suggestion.as_ref().is_some_and(|s| s.role == Role::Cpu) {
+                if c.role() == Some(Role::Cpu) {
                     format!("; a CPU fan is never stopped for more than {CPU_STOPPED_MAX:.0} s.")
                 } else {
                     ".".to_owned()
@@ -1012,8 +1072,9 @@ impl Setup {
             .map(|c| {
                 let mut m = MeasuredControl::new(c.target.key.clone());
                 m.write = c.write;
-                // NVML pairs itself (§5.2); for hwmon, pairing ran, so no tachs means no fan on the header.
-                m.paired = !is_nvml(c.target.kind) && c.paired.is_some();
+                // NVML pairs itself (§5.2).
+                m.paired = !is_nvml(c.target.kind) && c.paired == Some(true);
+                m.empty = !is_nvml(c.target.kind) && c.paired == Some(false);
                 m.tachs = if is_nvml(c.target.kind) { Vec::new() } else { c.tachs.clone() };
                 m.stop = c.stop;
                 m.start = c.start;
@@ -1023,6 +1084,7 @@ impl Setup {
                 m.firmware_stops = c.firmware_stops;
                 m.suggested = c.suggestion.as_ref().map(|s| s.role);
                 m.reason = c.suggestion.as_ref().map(|s| s.reason.clone());
+                m.role = c.confirmed;
                 m
             })
             .collect();
@@ -1083,6 +1145,7 @@ impl Setup {
                     start: c.start,
                     spin_up: c.spin_up,
                     lowest: c.lowest,
+                    note: c.note.clone(),
                 })
                 .collect(),
             guards: self
