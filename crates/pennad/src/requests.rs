@@ -275,7 +275,7 @@ fn preview(live: &mut Live, inventory: &Inventory, out: &mut Trace, conn: u64, c
     let plan = Plan::new(cfg.clone(), inventory, &live.measured, live.cpu_model.as_deref()).map_err(|p| config::sentence(&p))?;
     restart_changed_curves(live, &cfg);
     let started = live.draft.is_none();
-    live.plan = plan;
+    live.replace_plan(plan, inventory);
     if cfg == live.saved {
         live.draft = None;
     } else {
@@ -292,7 +292,7 @@ fn revert(live: &mut Live, inventory: &Inventory) -> Result<(), String> {
     let plan = plan_for(live, inventory, live.saved.clone())?;
     let saved = live.saved.clone();
     restart_changed_curves(live, &saved);
-    live.plan = plan;
+    live.replace_plan(plan, inventory);
     live.draft = None;
     Ok(())
 }
@@ -424,9 +424,9 @@ fn change_saved(live: &mut Live, inventory: &Inventory, change: impl Fn(&mut Con
     match (draft, live.draft.as_mut()) {
         (Some((cfg, plan)), Some(d)) => {
             d.config = cfg;
-            live.plan = plan;
+            live.replace_plan(plan, inventory);
         }
-        _ => live.plan = saved_plan,
+        _ => live.replace_plan(saved_plan, inventory),
     }
     Ok(())
 }

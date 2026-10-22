@@ -450,6 +450,42 @@ fn drafts_preview_save_discard_and_die_with_their_connection() {
     d.stop();
 }
 
+/// A fan a draft took that the saved configuration doesn't name goes back to its firmware when the draft goes, instead of staying
+/// where the preview left it.
+#[test]
+fn a_fan_only_a_draft_adopted_is_handed_back_when_the_draft_goes() {
+    let dir = fresh("draft-hand-back");
+    let d = Daemon::start(&dir, &["--speed", "20"]);
+    let enable = || fs::read_to_string(dir.join("tree/sys/devices/platform/it87.2608/hwmon/hwmon5/pwm4_enable")).unwrap();
+    let held = || fs::read_to_string(dir.join("run/held.json")).unwrap_or_default();
+    let mut c = d.connect();
+    c.line();
+    assert_eq!(c.call(json!({"op": "subscribe"}))["ok"], true);
+    assert_eq!(enable().trim(), "2", "the BIOS runs it before anyone adopts it");
+
+    for close in [false, true] {
+        let r = c.call(json!({"op": "draft.assign", "control": SPARE, "curve": "case"}));
+        assert_eq!(r["ok"], true, "{r}");
+        c.tick_where(40, "the spare fan taken by the draft", |t| control(t, SPARE)["state"] == "curve");
+        assert_eq!(enable().trim(), "1");
+        assert!(held().contains("pwm4_enable"), "{}", held());
+        if close {
+            drop(c);
+            c = d.connect();
+            c.line();
+            assert_eq!(c.call(json!({"op": "subscribe"}))["ok"], true);
+        } else {
+            assert_eq!(c.call(json!({"op": "draft.discard"}))["ok"], true);
+        }
+        c.tick_where(40, "the spare fan back with its firmware", |t| {
+            control(t, SPARE).is_null() && t["firmware"].as_array().unwrap().iter().any(|f| f["key"] == SPARE)
+        });
+        assert_eq!(enable().trim(), "2", "handed back when the draft was {}", if close { "closed" } else { "discarded" });
+        assert!(!held().contains("pwm4_enable"), "{}", held());
+    }
+    d.stop();
+}
+
 /// `hold_until` says where a held curve lets go (§4.4), and is null otherwise.
 #[test]
 fn hold_until_names_where_a_held_curve_lets_go() {

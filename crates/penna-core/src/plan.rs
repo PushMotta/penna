@@ -1,6 +1,7 @@
 //! A configuration resolved against a machine (DESIGN.md §4, §6.3): defaults filled in, floors and emergency limits worked out,
 //! everything [`crate::control::tick`] needs and nothing it has to look up twice.
 use crate::config::{self, Config, CurveKind, HysteresisDirection, Measured, Problem, VirtualKind};
+use crate::control::LoopState;
 use crate::{ControlKind, Inventory, Key, LimitKind};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -32,6 +33,9 @@ pub struct Plan {
     pub emergency: BTreeMap<Key, f64>,
     /// Every physical sensor the loop reads: what curves read, and what can declare an emergency.
     pub physical: Vec<Key>,
+    /// Controls in `controls` that the configuration no longer names but Penna still held when this plan replaced the last one
+    /// ([`Plan::keep_held`]). Nothing assigns them, so the loop gives them back; then [`Plan::drop_released`] lets them go.
+    pub carried: BTreeSet<Key>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -138,7 +142,33 @@ impl Plan {
         let sources = config.physical_sources();
         let emergency = emergency_limits(inventory, cpu_model, &sources);
         let physical: BTreeSet<Key> = sources.into_iter().chain(emergency.keys().cloned()).collect();
-        Ok(Plan { config, curves, virtuals, controls, emergency, physical: physical.into_iter().collect() })
+        Ok(Plan { config, curves, virtuals, controls, emergency, physical: physical.into_iter().collect(), carried: BTreeSet::new() })
+    }
+
+    /// Keeps every control Penna holds that this plan, about to replace `prev`, doesn't name: a fan that only a discarded draft
+    /// adopted would otherwise stay manual at its last duty, because the loop only steps the controls its plan names (§6.1). It
+    /// comes over with nothing assigned, so the next tick gives it back, and with the kind it has now, so a fan whose device went
+    /// away is `absent` and waits in `held.json` (§3.6).
+    pub fn keep_held(&mut self, prev: &Plan, state: &LoopState, inventory: &Inventory) {
+        for (key, cs) in &state.controls {
+            if !cs.held || self.controls.contains_key(key) {
+                continue;
+            }
+            let Some(old) = prev.controls.get(key) else { continue };
+            let mut c = old.clone();
+            c.kind = inventory.devices.iter().flat_map(|d| &d.controls).find(|i| &i.key == key).map(|i| i.kind);
+            self.controls.insert(key.clone(), c);
+            self.carried.insert(key.clone());
+        }
+    }
+
+    /// Lets go of carried controls once they are given back.
+    pub fn drop_released(&mut self, state: &LoopState) {
+        let done: Vec<Key> = self.carried.iter().filter(|k| state.controls.get(*k).is_none_or(|c| !c.held)).cloned().collect();
+        for key in done {
+            self.carried.remove(&key);
+            self.controls.remove(&key);
+        }
     }
 
     /// The curve a profile gives a control, or `None` for firmware. Defaults gives every control to its firmware (§4.7).
@@ -314,6 +344,45 @@ mod tests {
         let l = emergency_limits(&inventory(), None, &read);
         assert_eq!(l.get(&Key::parse("hwmon/it87/it87.2608/temp3").unwrap()), Some(&95.0));
         assert_eq!(l.get(&Key::parse("hwmon/k10temp/0000:00:18.3/temp1").unwrap()), Some(&95.0), "an unknown CPU gets 95 °C");
+    }
+
+    #[test]
+    fn a_held_control_the_next_plan_drops_is_kept_until_it_is_given_back() {
+        let fan = Key::parse("hwmon/it87/it87.2608/pwm1").unwrap();
+        let mut cfg = Config::parse("version = 1\nprofile = \"p\"\n[profiles.p]\n").unwrap();
+        cfg.curves.push(config::Curve {
+            id: "flat".into(),
+            label: None,
+            kind: CurveKind::Flat { percent: 50.0 },
+            response: None,
+            hysteresis: None,
+            hysteresis_direction: HysteresisDirection::Falling,
+        });
+        let mut adopting = cfg.clone();
+        adopting.profiles.get_mut("p").unwrap().insert(fan.clone(), "flat".into());
+        let measured = Measured::default();
+        let before = Plan::new(adopting, &inventory(), &measured, None).unwrap();
+        let mut state = LoopState::new(&before);
+        state.controls.entry(fan.clone()).or_default().held = true;
+
+        let mut after = Plan::new(cfg.clone(), &inventory(), &measured, None).unwrap();
+        assert!(!after.controls.contains_key(&fan));
+        after.keep_held(&before, &state, &inventory());
+        assert_eq!(after.controls[&fan].kind, Some(ControlKind::Duty { scale: 255 }));
+        assert_eq!(after.assignment("p", &fan), None, "nothing assigns it, so the loop gives it back");
+        after.drop_released(&state);
+        assert!(after.controls.contains_key(&fan), "still held");
+        state.controls.get_mut(&fan).unwrap().held = false;
+        after.drop_released(&state);
+        assert!(!after.controls.contains_key(&fan) && after.carried.is_empty());
+
+        // Its device is gone: it comes along absent, and waits in held.json rather than being written.
+        state.controls.get_mut(&fan).unwrap().held = true;
+        let mut gone = inventory();
+        gone.devices.retain(|d| d.driver != "it87");
+        let mut after = Plan::new(cfg, &gone, &measured, None).unwrap();
+        after.keep_held(&before, &state, &gone);
+        assert_eq!(after.controls[&fan].kind, None);
     }
 
     #[test]

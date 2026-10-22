@@ -308,6 +308,12 @@ pub struct Draft {
 }
 
 impl Live {
+    /// Replaces the plan. Every control Penna still holds that the new plan doesn't name comes along until it is given back (§6.1).
+    pub fn replace_plan(&mut self, mut plan: Plan, inventory: &Inventory) {
+        plan.keep_held(&self.plan, &self.state, inventory);
+        self.plan = plan;
+    }
+
     pub fn draft_tick(&self) -> Option<penna_proto::DraftTick> {
         self.draft.as_ref().map(|d| {
             let (curves, controls) = penna_core::config::changes(&self.saved, &d.config);
@@ -472,6 +478,7 @@ fn run(args: Args) -> Result<()> {
                 queue.push_back(follow);
             }
         }
+        live.plan.drop_released(&live.state);
         let _ = sd_notify::notify(&[sd_notify::NotifyState::Watchdog]);
         last_ping = Instant::now();
         out.tick(now, &live.plan, &live.state, &readings);
@@ -549,7 +556,7 @@ fn rediscovered(live: &mut Live, machine: &mut Machine, held: &mut Held, out: &m
     out.devices_changed(now, &machine.inventory);
     let cfg = live.draft.as_ref().map_or_else(|| live.saved.clone(), |d| d.config.clone());
     match Plan::new(cfg, &machine.inventory, &live.measured, live.cpu_model.as_deref()) {
-        Ok(plan) => live.plan = plan,
+        Ok(plan) => live.replace_plan(plan, &machine.inventory),
         Err(problems) => {
             let list: Vec<String> = problems.iter().map(|p| p.to_string()).collect();
             out.note(
