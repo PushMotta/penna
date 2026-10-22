@@ -402,6 +402,9 @@ pub struct ControlTick {
     pub may_stop: bool,
     #[serde(rename = "override")]
     pub override_: Option<OverrideTick>,
+    /// How much slower than calibrated it has turned for ten minutes (§5.6): 0.3 is 30 % slower. `null`: as calibrated.
+    #[serde(default)]
+    pub drift: Option<f64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]

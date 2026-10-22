@@ -30,6 +30,8 @@ pub struct Context<'a> {
     pub draft: Option<DraftTick>,
     /// A setup run's progress, if one runs or waits in review.
     pub setup: Option<penna_core::setup::Progress>,
+    /// Drifting controls (§5.6): how much slower than calibrated.
+    pub drift: &'a BTreeMap<Key, f64>,
 }
 
 /// A sparkline starts here (§11.1, call 5).
@@ -100,6 +102,7 @@ pub fn tick(cx: &Context) -> Tick {
                 floor: r1(c.floor),
                 may_stop: c.may_stop,
                 override_: ov.map(|o| OverrideTick { duty: r1(o.duty), until: o.until.map(|u| r2(cx.t + (u - cx.now) / cx.rate)) }),
+                drift: cx.drift.get(key).map(|d| r2(*d)),
             }
         })
         .collect();

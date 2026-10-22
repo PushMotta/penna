@@ -315,6 +315,8 @@ pub struct Live {
     pub board: Option<penna_core::boards::Board>,
     /// This machine's own hardware, not a mock desk or a test tree.
     pub real: bool,
+    /// Calibrated fans that turn too slowly (§5.6).
+    pub drift: penna_core::drift::DriftWatch,
 }
 
 /// A draft belongs to the connection that made it: when that connection closes, the daemon goes back to `saved`.
@@ -350,6 +352,7 @@ impl Live {
             rate: self.rate,
             draft: self.draft_tick(),
             setup: self.setup.as_ref().map(|s| s.run.progress()),
+            drift: &self.drift.drifting,
         })
     }
 }
@@ -425,6 +428,7 @@ fn run(args: Args) -> Result<()> {
         identify: std::collections::BTreeMap::new(),
         board: machine.board.clone(),
         real,
+        drift: penna_core::drift::DriftWatch::default(),
     };
     let mut ring = history::Ring::default();
 
@@ -512,6 +516,9 @@ fn run(args: Args) -> Result<()> {
             }
         }
         live.plan.drop_released(&live.state);
+        for change in live.drift.update(&live.state, &readings, &live.measured, now) {
+            drifted(&live, &mut out, now, change);
+        }
         let _ = sd_notify::notify(&[sd_notify::NotifyState::Watchdog]);
         last_ping = Instant::now();
         out.tick(now, &live.plan, &live.state, &readings);
@@ -639,6 +646,26 @@ fn rediscovered(live: &mut Live, machine: &mut Machine, held: &mut Held, out: &m
         match result {
             Ok(s) => out.note(now, penna_proto::Level::Info, Some(key), format!("Back, and put back as Penna found it: {s}")),
             Err(err) => out.note(now, penna_proto::Level::Alert, Some(key), format!("Back, but could not be put back: {err}")),
+        }
+    }
+}
+
+/// A fan that drifted, or recovered, said once (§5.6).
+fn drifted(live: &Live, out: &mut trace::Trace, now: f64, change: penna_core::drift::DriftChange) {
+    use penna_core::drift::DriftChange;
+    let label = |k: &penna_core::Key| live.plan.controls.get(k).map_or_else(|| k.to_string(), |c| c.label.clone());
+    match change {
+        DriftChange::Started { key, slower } => {
+            let text = format!(
+                "{} turns {:.0} % slower than when it was set up: dust, or a tired bearing. Recalibrate it from its card",
+                label(&key),
+                slower * 100.0
+            );
+            out.note(now, penna_proto::Level::Warn, Some(key), text);
+        }
+        DriftChange::Recovered { key } => {
+            let text = format!("{} turns as calibrated again", label(&key));
+            out.note(now, penna_proto::Level::Info, Some(key), text);
         }
     }
 }

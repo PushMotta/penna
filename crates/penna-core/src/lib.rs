@@ -12,6 +12,7 @@
 pub mod boards;
 pub mod config;
 pub mod control;
+pub mod drift;
 pub mod drivers;
 pub mod held;
 pub mod key;

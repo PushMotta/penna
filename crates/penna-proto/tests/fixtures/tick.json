@@ -79,7 +79,8 @@
       "curve_label": "CPU quiet",
       "floor": 30.0,
       "may_stop": false,
-      "override": null
+      "override": null,
+      "drift": null
     },
     {
       "key": "hwmon/it87/it87.2608/pwm2",
@@ -98,7 +99,8 @@
       "curve_label": "Case",
       "floor": 30.0,
       "may_stop": false,
-      "override": { "duty": 60.0, "until": 1792595509.2 }
+      "override": { "duty": 60.0, "until": 1792595509.2 },
+      "drift": 0.3
     },
     {
       "key": "nvml/GPU-5a1d3090-0000-4000-8000-00000000mock/fan0",
@@ -117,7 +119,8 @@
       "curve_label": "GPU",
       "floor": 30.0,
       "may_stop": true,
-      "override": null
+      "override": null,
+      "drift": null
     },
     {
       "key": "hwmon/it87/it87.2608/pwm5",
@@ -136,7 +139,8 @@
       "curve_label": null,
       "floor": 30.0,
       "may_stop": false,
-      "override": null
+      "override": null,
+      "drift": null
     }
   ],
   "firmware": [{ "key": "hwmon/it87/it87.2608/pwm4", "label": "pwm4", "rpm": null }],
