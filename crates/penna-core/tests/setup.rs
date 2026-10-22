@@ -379,7 +379,7 @@ fn setup_measures_this_desk_and_hands_every_fan_back() {
     let m = rig.setup.measured(1.0e9);
     let cal = |n: u32| m.get(&pwm(n)).unwrap().clone();
     // The stop duty is the lowest 5 % step that still turns the fan; the start is the first 2 % step up that spins it.
-    assert_eq!((cal(1).stop, cal(1).start), (Some(20.0), Some(25.0)), "{:?}", cal(1));
+    assert_eq!((cal(1).stop, cal(1).start), (Some(20.0), Some(24.0)), "{:?}", cal(1));
     assert_eq!(cal(3).stop, Some(25.0), "PCH_FAN measured down to its stop");
     assert_eq!((cal(4).stop, cal(4).lowest), (None, Some(50.0)), "the pump header stops at 50 %");
     assert_eq!(cal(4).calibration.first().unwrap()[0], 50.0);

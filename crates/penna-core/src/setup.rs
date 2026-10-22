@@ -35,8 +35,10 @@ pub const CAL_DOWN: f64 = 5.0;
 pub const CAL_UP: f64 = 2.0;
 pub const CAL_SETTLE_MIN: f64 = 2.0;
 pub const CAL_SETTLE_MAX: f64 = 10.0;
-/// Stable: the last three readings within this share of their mean.
+/// Stable: the last three readings within this share of their mean, and the last two this close.
 pub const CAL_STABLE: f64 = 0.03;
+pub const CAL_STILL: f64 = 0.015;
+pub const CAL_STILL_RPM: f64 = 20.0;
 /// Seconds at each duty while a stopped fan is stepped up.
 pub const CAL_UP_WAIT: f64 = 2.0;
 /// A CPU fan is never stopped longer than this (§5.3); other fans get up to the second.
@@ -677,7 +679,8 @@ impl Setup {
             }
             if *l <= b * (1.0 - PAIR_FALL) {
                 found.push((t.key.clone(), [*b, *p, *l]));
-            } else {
+            } else if !self.claims.contains_key(&t.key) {
+                // A tach an earlier control turns, still coming back from its 40 %, rises too: that one is explained.
                 rose_only.push(t.label.clone());
             }
         }
@@ -832,11 +835,13 @@ impl Setup {
                 Cal::Down { duty, since } => {
                     let Some(settled) = settled(&c.samples, now - since) else { continue };
                     if settled < STOPPED_RPM {
-                        // It stopped: the stop duty is the last that turned it. Step back up from here.
+                        // It stopped: the stop duty is the last that turned it. A stopped fan never starts below that, so the
+                        // climb starts there, which keeps a CPU fan's stop short.
                         c.stop = c.table.first().map(|p| p[0]);
-                        c.cal = Cal::Up { duty: duty + CAL_UP, since: now, stopped_since: now };
-                        c.demand = Some(duty + CAL_UP);
-                        c.status = format!("stopped at {duty:.0} % · starting · {:.0} %", duty + CAL_UP);
+                        let first = c.stop.unwrap_or(duty + CAL_UP).max(duty + CAL_UP);
+                        c.cal = Cal::Up { duty: first, since: now, stopped_since: now };
+                        c.demand = Some(first);
+                        c.status = format!("stopped at {duty:.0} % · starting · {first:.0} %");
                         c.samples.clear();
                         continue;
                     }
@@ -1078,16 +1083,20 @@ fn tach_rpm(readings: &Readings, tachs: &[Key]) -> Option<f64> {
     (!vals.is_empty()).then(|| vals.iter().sum::<f64>() / vals.len() as f64)
 }
 
-/// A steady reading once a duty has had time to settle (§5.4): once the last three agree within 3 % of their mean, after at
-/// least 2 s, or after 10 s whatever they do, the latest of them. A fan still closing on its speed reads low in a mean.
+/// A steady reading once a duty has had time to settle (§5.4): the last three within 3 % of their mean and no longer moving,
+/// after at least 2 s, or after 10 s whatever they do; then the latest of them. A fan still closing on its speed can pass the 3 %
+/// while it reads low.
 fn settled(samples: &[f64], held: f64) -> Option<f64> {
     if held < CAL_SETTLE_MIN || samples.len() < 3 {
         return None;
     }
     let last = &samples[samples.len() - 3..];
     let mean = last.iter().sum::<f64>() / 3.0;
-    let stable =
-        if mean < STOPPED_RPM { last.iter().all(|r| *r < STOPPED_RPM) } else { last.iter().all(|r| (r - mean).abs() <= mean * CAL_STABLE) };
+    let stable = if mean < STOPPED_RPM {
+        last.iter().all(|r| *r < STOPPED_RPM)
+    } else {
+        last.iter().all(|r| (r - mean).abs() <= mean * CAL_STABLE) && (last[2] - last[1]).abs() <= (last[2] * CAL_STILL).max(CAL_STILL_RPM)
+    };
     (stable || held >= CAL_SETTLE_MAX).then_some(last[2])
 }
 
@@ -1118,6 +1127,7 @@ mod tests {
         assert_eq!(settled(&[1000.0, 1000.0], 3.0), None, "three readings first");
         assert_eq!(settled(&[900.0, 1000.0, 1010.0], 1.0), None, "two seconds first");
         assert_eq!(settled(&[1500.0, 1200.0, 1000.0], 3.0), None, "still falling");
+        assert_eq!(settled(&[1537.0, 1586.0, 1616.0], 5.0), None, "within 3 %, but still rising");
         assert_eq!(settled(&[1000.0, 1010.0, 995.0], 3.0), Some(995.0));
         assert_eq!(settled(&[1500.0, 1200.0, 1000.0], 10.0), Some(1000.0), "after 10 s, whatever it reads");
         assert_eq!(settled(&[0.0, 0.0, 0.0], 2.0), Some(0.0));

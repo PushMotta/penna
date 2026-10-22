@@ -22,7 +22,7 @@ impl Style {
     fn bold(self, s: &str) -> String {
         self.wrap("1", s)
     }
-    fn dim(self, s: &str) -> String {
+    pub fn dim(self, s: &str) -> String {
         self.wrap("2", s)
     }
     fn urgent(self, s: &str) -> String {

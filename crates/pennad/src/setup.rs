@@ -49,9 +49,11 @@ pub fn input(inventory: &Inventory, board: Option<&Board>, only: Option<&[Key]>)
         let label = inventory.devices.iter().flat_map(|d| &d.sensors).find(|s| s.key == cpu).map_or("Tctl", |s| s.label.as_str());
         guards.push(Guard { key: cpu.clone(), label: format!("CPU · {label}"), limit: GUARD_CPU });
     }
-    for d in inventory.devices.iter().filter(|d| d.source == Source::Nvml) {
+    let gpus: Vec<_> = inventory.devices.iter().filter(|d| d.source == Source::Nvml).collect();
+    for (i, d) in gpus.iter().enumerate() {
         if let Some(s) = d.sensors.iter().find(|s| s.key.channel() == "temp") {
-            guards.push(Guard { key: s.key.clone(), label: format!("GPU · {}", d.label), limit: GUARD_GPU });
+            let n = if gpus.len() > 1 { format!(" {}", i + 1) } else { String::new() };
+            guards.push(Guard { key: s.key.clone(), label: format!("GPU{n}"), limit: GUARD_GPU });
         }
     }
     let threads = std::thread::available_parallelism().map_or(0, |n| n.get() as u32);
@@ -65,7 +67,13 @@ pub fn start(live: &mut Live, inventory: &Inventory, out: &mut Trace, conn: u64,
     {
         return Err(if s.owner == conn { "Setup is already running.".into() } else { TAKEN.into() });
     }
-    let input = input(inventory, live.board.as_ref(), only.as_deref());
+    let mut input = input(inventory, live.board.as_ref(), only.as_deref());
+    // A fan the configuration names is called that ("GPU fan 1").
+    for t in &mut input.targets {
+        if let Some(l) = live.saved.control(&t.key).and_then(|c| c.label.clone()) {
+            t.label = l;
+        }
+    }
     if input.targets.is_empty() {
         return Err("There is no fan here that Penna can drive: penna doctor says why.".into());
     }

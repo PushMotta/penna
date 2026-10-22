@@ -5,6 +5,7 @@
 mod client;
 mod doctor;
 mod render;
+mod setup;
 mod waybar;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -78,6 +79,14 @@ enum Command {
     Release { control: String },
     /// Rename a sensor, tach or control (by key or current name).
     Label { key: String, label: String },
+    /// Measure every fan (DESIGN.md §5): write test, pairing, roles and calibration, about four minutes. Ctrl-C stops it and
+    /// hands every fan back.
+    Setup {
+        /// Only these controls (names or keys), to measure one fan again.
+        controls: Vec<String>,
+    },
+    /// Spin a fan to 100 % for 3 s, then back, to find it by ear or by eye.
+    Identify { control: String },
     /// Open the curve studio in the Omarchy shell.
     Open,
     /// Stream what changes: takes, hand-backs, failsafes, emergencies.
@@ -205,6 +214,8 @@ fn run(cli: Cli) -> Result<()> {
         Command::Adopt { control, curve } => say(Op::Adopt { control, curve }),
         Command::Release { control } => say(Op::Release { control }),
         Command::Label { key, label } => say(Op::Label { key, label }),
+        Command::Setup { controls } => setup::run(controls, style()),
+        Command::Identify { control } => say(Op::Identify { control }),
         Command::Open => open_studio(),
         Command::Events { json } => events(json),
         Command::Waybar { follow, sensor } => bar(follow, sensor.as_deref()),
