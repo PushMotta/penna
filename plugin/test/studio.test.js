@@ -72,3 +72,63 @@ test("triggers and flats edit through the same handles", () => {
   assert.equal(M.curveWith(flat, [[60, 42]]).duty, 42)
   assert.equal(trig.trigger.idle, 35, "curveWith never mutates its input")
 })
+
+// Setup's draft on a new install, as the studio body carries it (§5.5, §11.3 call 9): Defaults on, three profiles generated.
+const CPU = "hwmon/k10temp/0000:00:18.3/temp1"
+const GPU = "nvml/GPU-1/temp"
+const generated = {
+  profile: "defaults",
+  profiles: [{ id: "defaults", label: "Defaults", builtin: true, assign: {} },
+             { id: "quiet", label: "Quiet", assign: {} }, { id: "balanced", label: "Balanced", assign: {} }, { id: "render", label: "Render", assign: {} }],
+  curves: [],
+  draft: { mine: true, dirty: true, curves: ["cpu-balanced"], controls: [], generated: ["cpu-balanced", "gpu-balanced"],
+           anchors: { [CPU]: { idle: 41.3, target: null, limit: 90 }, [GPU]: { idle: 45, target: 83, limit: 93 } } }
+}
+
+test("the studio shows a profile without running it, Balanced while Defaults runs", () => {
+  assert.deepEqual(M.profileTabs(generated).map(t => t.value), ["quiet", "balanced", "render"], "never Defaults")
+  assert.equal(M.viewProfile(generated, ""), "balanced", "where saving goes")
+  assert.equal(M.viewProfile(generated, "quiet"), "quiet")
+  assert.equal(M.viewProfile(generated, "defaults"), "balanced", "Defaults assigns nothing to show")
+  assert.equal(M.viewProfile({ ...generated, profile: "render" }, ""), "render", "the one running, when it can be shown")
+  assert.equal(M.viewProfile({ profile: "defaults", profiles: [generated.profiles[0]] }, ""), "", "nothing to show")
+})
+
+test("setup's curves are marked Generated until saved, and Save says it switches to Balanced", () => {
+  assert.equal(M.isGenerated(generated, "cpu-balanced"), true)
+  assert.equal(M.isGenerated(generated, "gpu"), false)
+  assert.equal(M.draftLine(generated), "Generated curves, not saved", "Defaults runs nothing of them")
+  assert.equal(M.draftLine({ ...generated, profile: "balanced" }), "Generated curves, running live, not saved")
+  assert.equal(M.saveLabel(generated), "Save and switch to Balanced")
+  assert.equal(M.saveLabel({ ...generated, profile: "balanced" }), "Save")
+  const edits = { ...generated, draft: { ...generated.draft, generated: [] } }
+  assert.equal(M.draftLine(edits), "Unsaved changes, running live")
+  assert.equal(M.saveLabel(edits), "Save")
+})
+
+test("a generated curve's anchors go on its temperature axis", () => {
+  const cpu = { id: "cpu-balanced", kind: "graph", source: CPU, points: [[51, 15], [82, 100]] }
+  assert.deepEqual(M.anchorMarks(generated, cpu), [{ t: 41.3, label: "idle 41" }, { t: 90, label: "limit 90" }], "no target for a CPU")
+  assert.deepEqual(M.anchorMarks(generated, { ...cpu, id: "gpu-balanced", source: GPU }).map(m => m.label), ["idle 45", "target 83", "limit 93"])
+  assert.deepEqual(M.anchorMarks(generated, { ...cpu, id: "mine" }), [], "a curve setup didn't make has none")
+  assert.deepEqual(M.anchorMarks(generated, { id: "pump-balanced", kind: "flat", duty: 85 }), [])
+})
+
+test("the load check shows the CPU against where a pass ends, and the time left", () => {
+  const s = { steps: [{ step: "load-check", seconds: 180 }],
+              load: { source: CPU, pass: 1, loading: true, seconds: 50.4, celsius: 64.9, fans: 52.4, limit: 90, result: null } }
+  assert.deepEqual(M.loadView(s), { loading: true, title: "Full CPU load · pass 1", celsius: 64.9, fans: 52.4, limit: 90, ends: 85,
+                                    time: "2:10 left", source: CPU })
+  const cooling = M.loadView({ ...s, load: { ...s.load, pass: 2, loading: false, seconds: 34, celsius: null } })
+  assert.deepEqual([cooling.title, cooling.time, cooling.celsius], ["Cooling before the second pass", "0:34", null])
+  assert.equal(M.loadView({ steps: [] }), null)
+})
+
+test("the review says what confirming does with the proposed curves", () => {
+  const s = { proposed: { curves: new Array(19).fill("c"), anchors: {}, notes: [], refused: null } }
+  assert.equal(M.proposalText(s, { profile: "defaults" }),
+    "Confirming opens the 19 curves setup made for Quiet, Balanced and Render in the editor, marked Generated. Nothing runs them until you save, which switches to Balanced.")
+  assert.match(M.proposalText(s, { profile: "balanced", profiles: [{ id: "balanced", label: "Balanced" }] }), /Balanced is on, so the fans run them already; saving keeps them\.$/)
+  assert.equal(M.proposalText({ proposed: { refused: "Another window has unsaved changes." } }, {}), "Another window has unsaved changes.")
+  assert.equal(M.proposalText({}, {}), "")
+})

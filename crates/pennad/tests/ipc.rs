@@ -803,6 +803,20 @@ fn curves_are_generated_from_saved_measurements() {
     let draft = &r["result"]["draft"];
     assert_eq!((draft["mine"].as_bool(), draft["generated"].as_array().map(Vec::len)), (Some(true), Some(19)), "{draft}");
     assert_eq!(r["result"]["profile"], "defaults", "nothing runs until it is saved");
+    let cpu = &draft["anchors"]["hwmon/k10temp/0000:00:18.3/temp1"];
+    assert_eq!((cpu["idle"].as_f64(), cpu["limit"].as_f64()), (Some(42.0), Some(90.0)), "{draft}");
+    // The studio edits any profile the draft has while Defaults runs (§8.3); Defaults itself stays fixed.
+    let fan = "hwmon/it8688_4008090b/it87.2624/pwm1";
+    let r = c.call(json!({"op": "draft.assign", "control": fan, "curve": "cpu-render", "profile": "quiet"}));
+    let quiet = r["result"]["profiles"].as_array().unwrap().iter().find(|p| p["id"] == "quiet").cloned().unwrap();
+    assert_eq!((r["result"]["profile"].as_str(), quiet["assign"][fan].as_str()), (Some("defaults"), Some("cpu-render")), "{r}");
+    assert_eq!(r["result"]["draft"]["generated"].as_array().map(Vec::len), Some(19), "still setup's draft");
+    for named in [json!({}), json!({"profile": "Defaults"})] {
+        let mut req = json!({"op": "draft.assign", "control": fan, "curve": "cpu-quiet"});
+        req.as_object_mut().unwrap().extend(named.as_object().unwrap().clone());
+        let r = c.call(req);
+        assert!(r["error"].as_str().is_some_and(|e| e.starts_with("Defaults leaves every fan")), "{r}");
+    }
     let mut other = d.connect();
     other.line();
     assert_eq!(other.call(json!({"op": "draft.generate"}))["error"], "Another studio has unsaved changes.");

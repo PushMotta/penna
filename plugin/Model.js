@@ -616,6 +616,89 @@ function curveOptions(body) {
   return list.map(function(c) { return { value: String(c.id), label: String(c.label) } }).concat([{ value: "firmware", label: "Firmware" }])
 }
 
+// ---------------------------------------------------------------- generated curves (M8: §5.5, §11.3 call 9)
+
+// The profiles the studio can show, in the body's order: every one but Defaults, which assigns nothing (§4.7).
+function profileTabs(body) {
+  var list = body && Array.isArray(body.profiles) ? body.profiles : []
+  return list.filter(function(p) { return !p.builtin }).map(function(p) {
+    return { value: String(p.id), label: String(p.label || capitalise(String(p.id))), running: p.id === body.profile }
+  })
+}
+
+// The profile the studio shows and edits: the one chosen, else the one running, else Balanced, where saving setup's curves
+// goes. Choosing one changes what the editor shows, never what runs.
+function viewProfile(body, chosen) {
+  var tabs = profileTabs(body)
+  var has = function(id) { return tabs.some(function(t) { return t.value === id }) }
+  if (chosen && has(chosen)) return String(chosen)
+  if (body && has(body.profile)) return String(body.profile)
+  if (has("balanced")) return "balanced"
+  return tabs.length ? tabs[0].value : ""
+}
+
+function generatedDraft(body) {
+  return !!(body && body.draft && body.draft.mine && Array.isArray(body.draft.generated) && body.draft.generated.length)
+}
+
+function isGenerated(body, id) {
+  return !!(body && body.draft && Array.isArray(body.draft.generated) && body.draft.generated.indexOf(id) >= 0)
+}
+
+// The header's line while there are unsaved changes. Setup's curves run only once a profile they fill is on.
+function draftLine(body) {
+  if (!generatedDraft(body)) return "Unsaved changes, running live"
+  return profileTabs(body).some(function(t) { return t.running }) ? "Generated curves, running live, not saved" : "Generated curves, not saved"
+}
+
+// Saving setup's curves switches to Balanced (§11.3 call 9), and the button says so.
+function saveLabel(body) {
+  return generatedDraft(body) && body.profile !== "balanced" ? "Save and switch to Balanced" : "Save"
+}
+
+// A generated curve's anchors on its temperature axis (§5.5): where its source rests, what a profile keeps it under, and its
+// limit. [{ t, label }], left to right.
+function anchorMarks(body, curve) {
+  if (!curve || !curve.source || (curve.kind !== "graph" && curve.kind !== "trigger") || !isGenerated(body, curve.id)) return []
+  var a = body.draft.anchors ? body.draft.anchors[curve.source] : null
+  if (!a) return []
+  return [["idle", a.idle], ["target", a.target], ["limit", a.limit]]
+    .filter(function(m) { return m[1] !== null && m[1] !== undefined && Number(m[1]) >= T_MIN && Number(m[1]) <= T_MAX })
+    .map(function(m) { return { t: Number(m[1]), label: m[0] + " " + Math.round(Number(m[1])) } })
+}
+
+// The load check while it runs (§5.5): the CPU against the temperature that ends a pass, its fans, and the time left.
+function loadView(s) {
+  var l = s ? s.load : null
+  if (!l) return null
+  var step = (s.steps || []).filter(function(x) { return x.step === "load-check" })[0]
+  var length = step ? Number(step.seconds) : 180
+  var num = function(v) { return v === null || v === undefined ? null : Number(v) }
+  return {
+    loading: !!l.loading,
+    title: l.loading ? "Full CPU load · pass " + l.pass : "Cooling before the second pass",
+    celsius: num(l.celsius),
+    fans: num(l.fans),
+    limit: Number(l.limit),
+    ends: Number(l.limit) - 5,
+    time: l.loading ? clock(Math.max(0, length - Number(l.seconds))) + " left" : clock(Number(l.seconds)),
+    source: l.source ? String(l.source) : ""
+  }
+}
+
+// What the review says will happen to the curves setup proposes once the roles are confirmed.
+function proposalText(s, tick) {
+  var p = s ? s.proposed : null
+  if (!p) return ""
+  if (p.refused) return String(p.refused)
+  var n = (p.curves || []).length
+  var on = tick && ["quiet", "balanced", "render"].indexOf(tick.profile) >= 0 ? profileLabel(tick) : ""
+  var head = "Confirming opens the " + n + " curves setup made for Quiet, Balanced and Render in the editor, marked Generated. "
+  if (on === "Balanced") return head + "Balanced is on, so the fans run them already; saving keeps them."
+  if (on) return head + on + " is on, so the fans run them already; saving keeps them and switches to Balanced."
+  return head + "Nothing runs them until you save, which switches to Balanced."
+}
+
 function writeBlockedReason(connected, canWrite) {
   if (!connected || canWrite) return ""
   return "Changing fans needs the penna group: sudo usermod -aG penna $USER (it applies at once)."
@@ -635,6 +718,8 @@ if (typeof module !== "undefined") {
     T_MIN: T_MIN, T_MAX: T_MAX, clamp: clamp, copyPoints: copyPoints, pointsEqual: pointsEqual, evalPoints: evalPoints,
     movePoint: movePoint, addPoint: addPoint, deletePoint: deletePoint, bandPolygon: bandPolygon, rpmAt: rpmAt, readout: readout,
     inspector: inspector, limitsLine: limitsLine, curveOptions: curveOptions, handlesOf: handlesOf, curveWith: curveWith,
-    moveHandle: moveHandle, pathOf: pathOf, shadeOf: shadeOf
+    moveHandle: moveHandle, pathOf: pathOf, shadeOf: shadeOf, nvmlFloor: nvmlFloor, profileTabs: profileTabs,
+    viewProfile: viewProfile, generatedDraft: generatedDraft, isGenerated: isGenerated, draftLine: draftLine, saveLabel: saveLabel,
+    anchorMarks: anchorMarks, loadView: loadView, proposalText: proposalText
   }
 }

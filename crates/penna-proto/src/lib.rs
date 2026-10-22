@@ -9,6 +9,7 @@ pub mod hardware;
 
 use penna_core::control::{State, Trend};
 use penna_core::drivers::Tier;
+use penna_core::generate::Anchors;
 use penna_core::{Key, Limit, Unreachable};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -102,9 +103,14 @@ pub enum Op {
     /// The curve's id is `curve`: `id` is the request's own (§7.3).
     #[serde(rename = "draft.delete_curve")]
     DraftDeleteCurve { curve: String },
-    /// `curve` is a curve id or `"firmware"`; applies to the active profile.
+    /// `curve` is a curve id or `"firmware"`; applies to `profile`, or the active profile when it is left out.
     #[serde(rename = "draft.assign")]
-    DraftAssign { control: String, curve: String },
+    DraftAssign {
+        control: String,
+        curve: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        profile: Option<String>,
+    },
     #[serde(rename = "draft.limits")]
     DraftLimits {
         control: String,
@@ -582,6 +588,9 @@ pub struct DraftInfo {
     /// The curves in the draft that setup generated (§5.5): each is marked *Generated* until it is saved.
     #[serde(default)]
     pub generated: Vec<String>,
+    /// The anchors of every source the generated curves follow (§5.5), to draw on the temperature axis.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub anchors: BTreeMap<Key, Anchors>,
 }
 
 /// The last ticks, oldest first, sent once after `subscribe`. `null` is a failed read.

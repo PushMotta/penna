@@ -19,13 +19,15 @@ mod trace;
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
 use penna_core::config::{Config, Measured};
+use penna_core::generate::Anchors;
 use penna_core::control::{Command, LoopState, Outcome, tick};
 use penna_core::plan::Plan;
-use penna_core::{Inventory, Readings};
+use penna_core::{Inventory, Key, Readings};
 use penna_hw::held::{self, Held};
 use penna_hw::sim::{self, Sim};
 use penna_hw::{Machine, Options};
 use penna_proto::{Event, Hello, Transition};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -329,6 +331,8 @@ pub struct Draft {
     /// Setup generated it from this configuration (§5.5): saving it switches to Balanced (§11.3 call 9), and setup generates
     /// again from here when the roles change, so a role given up leaves no curve behind.
     pub generated: Option<Config>,
+    /// The anchors of every source its generated curves follow, for the studio to draw (§5.5).
+    pub anchors: BTreeMap<Key, Anchors>,
 }
 
 impl Live {

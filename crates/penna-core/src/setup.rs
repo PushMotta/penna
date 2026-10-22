@@ -214,6 +214,9 @@ pub struct LoadInput {
 /// Where the load check is (§5.5).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LoadProgress {
+    /// The CPU sensor it watches.
+    #[serde(default)]
+    pub source: Option<Key>,
     /// The pass, 1 or 2, and whether the CPU is loaded now or cooling before the second.
     pub pass: u8,
     pub loading: bool,
@@ -1380,6 +1383,7 @@ impl Setup {
                 })
                 .collect(),
             load: self.load.as_ref().zip(self.input.load_check.as_ref()).map(|(l, input)| LoadProgress {
+                source: Some(input.key.clone()),
                 pass: l.pass,
                 loading: l.loading,
                 seconds: self.now - l.since,

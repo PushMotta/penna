@@ -280,6 +280,7 @@ pub fn propose(live: &mut Live, inventory: &Inventory, out: &mut Trace) {
         Ok(_) => {
             if let Some(d) = live.draft.as_mut() {
                 d.generated = Some(base);
+                d.anchors = g.anchors;
             }
             switch(live, &profile);
             if !checking {

@@ -46,8 +46,13 @@ Item {
   property string selectedKey: ""
   readonly property var selectedLive: find(liveControls, "key", selectedKey)
   readonly property var selectedInfo: body ? find(body.controls, "key", selectedKey) : null
-  readonly property var activeProfile: body ? find(body.profiles, "id", body.profile) : null
-  readonly property string selectedCurveId: activeProfile && activeProfile.assign && activeProfile.assign[selectedKey] ? String(activeProfile.assign[selectedKey]) : "firmware"
+  // The profile the studio shows and edits, which needn't be the one running: setup's curves fill three while Defaults may
+  // run (§8.3, §11.3 call 9). Choosing one never changes what runs.
+  property string viewChoice: ""
+  readonly property string viewId: Model.viewProfile(body, viewChoice)
+  readonly property var viewedProfile: body ? find(body.profiles, "id", viewId) : null
+  readonly property var profileTabList: Model.profileTabs(body)
+  readonly property string selectedCurveId: viewedProfile && viewedProfile.assign && viewedProfile.assign[selectedKey] ? String(viewedProfile.assign[selectedKey]) : "firmware"
   readonly property var selectedCurve: body ? find(body.curves, "id", selectedCurveId) : null
   readonly property var selectedCurveLive: tick ? find(tick.curves, "id", selectedCurveId) : null
   readonly property var plausibleSensors: Model.sensors(tick).filter(function(s) { return !s.below_ambient && s.celsius !== null && s.celsius !== undefined })
@@ -57,6 +62,7 @@ Item {
   // when their content changes, so the dropdown and the chips aren't rebuilt under the hand.
   property var curveOptionList: []
   property var chipList: []
+  property var anchorList: []
   function syncLists() {
     var o = Model.curveOptions(body)
     if (JSON.stringify(o) !== JSON.stringify(curveOptionList)) curveOptionList = o
@@ -66,7 +72,11 @@ Item {
               : c.kind === "trigger" ? ["Trigger", c.source_label || "", "On at " + c.trigger.on + " °C, off at " + c.trigger.off + " °C"]
               : c.kind === "mix" ? ["Mix", c.mix.op]
               : ["Flat"]
+    // Setup made it, and it isn't saved yet (§11.3 call 9).
+    if (c && Model.isGenerated(body, c.id)) chips.unshift("Generated")
     if (JSON.stringify(chips) !== JSON.stringify(chipList)) chipList = chips
+    var a = Model.anchorMarks(body, c)
+    if (JSON.stringify(a) !== JSON.stringify(anchorList)) anchorList = a
   }
   onBodyChanged: syncLists()
   onSelectedCurveChanged: syncLists()
@@ -93,7 +103,7 @@ Item {
   readonly property bool setupRunning: setupLive !== null && !setupLive.stopped && setupLive.step !== "review"
 
   function startSetup() {
-    client.setupStart(function(reply) {
+    client.setupStart(setupView.loadCheck, function(reply) {
       if (reply.ok) {
         root.setupScreen = false
         root.setupDismissed = false
@@ -103,10 +113,44 @@ Item {
     })
   }
 
+  // Confirmed roles open the curves setup proposes in the editor (§8.3). A fan on a pump header confirmed as a case fan is
+  // measured below 50 % first, and the editor opens when that is done.
+  property string curvesWait: ""        // "remeasure", then "remeasuring", while that fan is measured
   function confirmRoles() {
     client.setupRoles(setupView.chosenRoles(), function(reply) {
-      root.say(reply.ok ? (reply.result && reply.result.text ? reply.result.text + "." : "Confirmed.") : reply.error)
+      if (!reply.ok) {
+        root.say(reply.error)
+        return
+      }
+      var text = (reply.result && reply.result.text ? String(reply.result.text) : "Roles confirmed") + "."
+      if (text.indexOf("measuring") >= 0) {
+        root.curvesWait = "remeasure"
+        root.say(text)
+      } else {
+        root.showCurves(text)
+      }
     })
+  }
+
+  function showCurves(text) {
+    curvesWait = ""
+    var p = setupLive ? setupLive.proposed : null
+    if (p && p.refused) {
+      say(p.refused)
+      return
+    }
+    viewChoice = ""
+    setupScreen = false
+    setupDismissed = true
+    client.refresh()
+    var n = p && p.curves ? p.curves.length : 0
+    say(text + (n ? " Setup's " + n + " curves are marked Generated until you save them." : ""))
+  }
+
+  onSetupLiveChanged: {
+    if (!setupLive || setupLive.stopped) curvesWait = ""
+    else if (curvesWait === "remeasure" && setupLive.step !== "review") curvesWait = "remeasuring"
+    else if (curvesWait === "remeasuring" && setupLive.step === "review") showCurves("Measured.")
   }
 
   // A drifting fan's Recalibrate: setup for that fan alone, on this connection (§5.6).
@@ -154,7 +198,7 @@ Item {
   readonly property var actions: !setupShown ? [
     { id: "setup", label: "Set up fans…", enabled: canWrite && !client.dirty, tip: client.dirty ? "Save or discard your changes first" : "" },
     { id: "discard", label: "Discard", enabled: client.dirty, tip: "" },
-    { id: "save", label: "Save", enabled: client.dirty, tip: "" }
+    { id: "save", label: Model.saveLabel(body), enabled: client.dirty, tip: "" }
   ] : setupLive === null ? [
     { id: "cancel", label: "Cancel", enabled: true, tip: "" },
     { id: "start", label: "Start setup", enabled: canWrite, tip: "", primary: true }
@@ -210,10 +254,13 @@ Item {
   function save() {
     if (!client.dirty) return
     flushPending()
+    var generated = Model.generatedDraft(body)
     client.save(function(reply) {
       if (reply.ok) {
         root.closeArmed = false
-        root.say(reply.result && reply.result.text ? reply.result.text : "Saved.")
+        root.viewChoice = ""
+        root.say(generated ? "Saved. Penna runs every fan on Balanced; switch profiles in the popup."
+                           : reply.result && reply.result.text ? reply.result.text : "Saved.")
       }
     })
   }
@@ -221,11 +268,20 @@ Item {
   function discard() {
     if (!client.dirty) return
     pendingCurve = null
+    var generated = Model.generatedDraft(body)
     client.discard(function(reply) {
       root.closeArmed = false
       editor.syncFromCurve()
-      if (reply.ok) root.say("Back to the saved curves.")
+      if (reply.ok) root.say(generated ? "Not saved: every fan runs as it did before setup. What setup measured is kept." : "Back to the saved curves.")
     })
+  }
+
+  // p: the next profile to show.
+  function cycleView() {
+    var tabs = profileTabList
+    if (!tabs.length) return
+    var i = tabs.map(function(t) { return t.value }).indexOf(viewId)
+    viewChoice = tabs[(i + 1) % tabs.length].value
   }
 
   function say(text) {
@@ -273,12 +329,14 @@ Item {
     }
     closeArmed = false
     if (setupShown) {
-      // Setup's view has one area: the action bar.
+      // Setup's view has one area: the action bar. On the start screen, c turns the load check on or off.
+      if (k === Qt.Key_C && setupScreen && setupLive === null) { setupView.loadCheck = !setupView.loadCheck; return true }
       if (k === Qt.Key_H || k === Qt.Key_Left) { actionIndex = Math.max(0, actionIndex - 1); return true }
       if (k === Qt.Key_L || k === Qt.Key_Right) { actionIndex = Math.min(actions.length - 1, actionIndex + 1); return true }
       if (k === Qt.Key_Return || k === Qt.Key_Enter || k === Qt.Key_Space) { activateAction(actionIndex); return true }
       return false
     }
+    if (k === Qt.Key_P && focusArea !== "editor") { cycleView(); return true }
     if (focusArea === "controls") {
       if (k === Qt.Key_J || k === Qt.Key_Down) { moveControl(1); return true }
       if (k === Qt.Key_K || k === Qt.Key_Up) { moveControl(-1); return true }
@@ -369,14 +427,17 @@ Item {
       if (!root.opened) return
       root.syncKeys()
       root.pushAll()
+      if (root.setupShown) setupView.ticked()
     }
     function onHistoryReplaced() { if (root.opened) root.pushAll() }
   }
 
   StudioClient { id: client }
 
-  readonly property string hints: setupShown ? (setupRunning ? "Setup belongs to this window: closing it stops setup and hands every fan back." : "h/l action · ↵ choose · esc close")
-                                : focusArea === "controls" ? "j/k control · ↵ edit its curve · ⇥ editor · esc close"
+  readonly property string hints: setupShown ? (setupRunning ? "Setup belongs to this window: closing it stops setup and hands every fan back."
+                                              : setupScreen && setupLive === null ? "c load check · h/l action · ↵ choose · esc close"
+                                              : "h/l action · ↵ choose · esc close")
+                                : focusArea === "controls" ? "j/k control · ↵ edit its curve · p profile · ⇥ editor · esc close"
                                 : focusArea === "editor" ? "[ ] point · h/l °C · j/k % · ⇧ ×5 · a add · x delete · ⇥ actions · ctrl+s save"
                                 : "h/l action · ↵ choose · ⇥ controls · esc close"
 
@@ -459,10 +520,28 @@ Item {
               }
               Text {
                 anchors.verticalCenter: parent.verticalCenter
-                text: root.setupShown ? "· Setting up fans" : root.activeProfile ? "· " + root.activeProfile.label + " profile" : ""
+                visible: root.setupShown
+                text: "· Setting up fans"
                 color: root.dim
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
+              }
+              ProfilePills {
+                anchors.verticalCenter: parent.verticalCenter
+                visible: !root.setupShown && root.profileTabList.length > 0
+                options: root.profileTabList
+                value: root.viewId
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onChanged: function(v) { root.viewChoice = v }
+              }
+              Text {
+                anchors.verticalCenter: parent.verticalCenter
+                visible: !root.setupShown && root.body !== null && root.viewId !== "" && root.viewId !== root.body.profile
+                text: root.body ? Model.profileLabel(root.body) + " runs" : ""
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
               }
             }
             Row {
@@ -475,7 +554,7 @@ Item {
                 spacing: Style.spacing.md
                 Rectangle { anchors.verticalCenter: parent.verticalCenter; width: Style.space(7); height: width; radius: width / 2; color: root.accent }
                 Text {
-                  text: "Unsaved changes, running live"
+                  text: Model.draftLine(root.body)
                   color: root.accent
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.bodySmall
@@ -498,6 +577,7 @@ Item {
             width: parent.width
             setup: root.setupLive
             tick: root.tick
+            history: root.service ? root.service.history : ({})
             starting: root.setupScreen && root.setupLive === null
             canWrite: root.canWrite
             foreground: root.foreground
@@ -634,7 +714,7 @@ Item {
                   value: root.selectedCurveId
                   foreground: root.foreground
                   fontFamily: root.fontFamily
-                  onChanged: function(v) { if (v !== root.selectedCurveId) client.assign(root.selectedKey, v) }
+                  onChanged: function(v) { if (v !== root.selectedCurveId) client.assign(root.selectedKey, v, root.viewId) }
                 }
               }
 
@@ -648,9 +728,10 @@ Item {
                     visible: modelData !== ""
                     width: chipText.implicitWidth + Style.spacing.md * 2
                     height: chipText.implicitHeight + Style.spacing.xs * 2
-                    color: Util.alpha(root.foreground, 0.04)
+                    readonly property bool generated: modelData === "Generated"
+                    color: generated ? Util.alpha(root.accent, 0.12) : Util.alpha(root.foreground, 0.04)
                     border.width: 1
-                    border.color: Util.alpha(root.foreground, 0.4)
+                    border.color: generated ? root.accent : Util.alpha(root.foreground, 0.4)
                     Text {
                       id: chipText
                       anchors.centerIn: parent
@@ -678,6 +759,7 @@ Item {
                   curve: root.selectedCurve
                   control: root.selectedInfo
                   live: root.selectedCurveLive
+                  marks: root.anchorList
                   tickMs: root.tickMs
                   reducedMotion: root.reducedMotion
                   running: root.live

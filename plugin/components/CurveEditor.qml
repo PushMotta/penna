@@ -14,6 +14,7 @@ Item {
   property var curve: null          // studio body curve (the draft)
   property var control: null        // studio body control: floor, stop, nvml, calibration
   property var live: null           // tick curve: smoothed, out, held, hold_until
+  property var marks: []            // a generated curve's anchors, [{ t, label }] (Model.anchorMarks)
   property int tickMs: 1000
   property bool reducedMotion: false
   property bool running: true
@@ -243,7 +244,7 @@ Item {
 
   // ---------------------------------------------------------- limits
   // NVIDIA: below the floor the driver runs the fan (§4.5). Motherboard: the floor, and where the fan stops.
-  readonly property real floorDuty: control ? (control.nvml ? Number(control.nvml.min) : Number(control.floor)) : -1
+  readonly property real floorDuty: control ? (control.nvml ? Model.nvmlFloor(control) : Number(control.floor)) : -1
   readonly property real stopDuty: control && !control.nvml && control.stop !== null && control.stop !== undefined ? Number(control.stop) : -1
 
   Rectangle {
@@ -294,6 +295,51 @@ Item {
     color: root.dim
     font.family: root.fontFamily
     font.pixelSize: Style.font.caption
+  }
+
+  // ---------------------------------------------------------- anchors
+  // Where setup placed a generated curve from (§5.5): its source at rest, the target, the limit. A label that would run into
+  // the one before goes a line up.
+  readonly property var anchorRows: {
+    var rows = []
+    var right = -1e9
+    var row = 0
+    for (var i = 0; i < marks.length; i++) {
+      var x = sx(marks[i].t) + Style.spacing.xs
+      row = x < right + Style.spacing.md ? 1 - row : 0
+      rows.push(row)
+      right = x + marks[i].label.length * Style.font.caption * 0.6
+    }
+    return rows
+  }
+  Repeater {
+    model: root.marks.length
+    Item {
+      required property int index
+      readonly property var a: root.marks[index]
+      Shape {
+        width: root.width
+        height: root.height
+        ShapePath {
+          strokeColor: Util.alpha(root.accent, 0.6)
+          strokeWidth: 1
+          strokeStyle: ShapePath.DashLine
+          dashPattern: [3, 3]
+          fillColor: "transparent"
+          startX: Math.round(root.sx(a.t)) + 0.5; startY: root.padT
+          PathLine { x: Math.round(root.sx(a.t)) + 0.5; y: root.padT + root.plotH }
+        }
+      }
+      Text {
+        text: a.label
+        x: Math.round(root.sx(a.t)) + Style.spacing.xs
+        // Along the bottom, where a curve is low at idle and long gone up by the limit.
+        y: root.padT + root.plotH - (root.anchorRows[index] + 1) * (implicitHeight + Style.spacing.xs)
+        color: root.accent
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+      }
+    }
   }
 
   // ---------------------------------------------------------- shade and curve

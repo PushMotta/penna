@@ -171,11 +171,18 @@ pub fn handle(live: &mut Live, inventory: &Inventory, out: &mut Trace, op: Op, u
             preview(live, inventory, out, conn, cfg)?;
             return Ok(Some(studio(live, inventory, conn)));
         }
-        Op::DraftAssign { control, curve } => {
+        Op::DraftAssign { control, curve, profile: named } => {
             let key = control_key(&every_control(live, inventory), &control)?;
             let mut cfg = draft_base(live, conn)?;
             let id = if curve.trim().eq_ignore_ascii_case(FIRMWARE) { FIRMWARE.to_owned() } else { curve_id(&cfg, &curve)? };
-            let active = editable(&cfg)?;
+            // The studio shows any profile the draft has, not only the one running (§8.3).
+            let active = match named {
+                Some(name) => match profile(&cfg, &name)? {
+                    p if p == DEFAULTS => return Err(defaults_fixed(&cfg)),
+                    p => p,
+                },
+                None => editable(&cfg)?,
+            };
             if id != FIRMWARE {
                 drivable(inventory, &key)?;
             }
@@ -257,6 +264,7 @@ pub fn handle(live: &mut Live, inventory: &Inventory, out: &mut Trace, op: Op, u
             }
             if let Some(d) = live.draft.as_mut() {
                 d.generated = Some(base);
+                d.anchors = g.anchors;
             }
             return Ok(Some(studio(live, inventory, conn)));
         }
@@ -323,7 +331,7 @@ fn studio(live: &Live, inventory: &Inventory, conn: u64) -> Value {
         Some(d) => {
             let (curves, controls) = changes(&live.saved, &d.config);
             let generated = d.generated.as_ref().map(|base| changes(base, &d.config).0).unwrap_or_default();
-            DraftInfo { mine: d.owner == conn, dirty: true, curves, controls, generated }
+            DraftInfo { mine: d.owner == conn, dirty: true, curves, controls, generated, anchors: d.anchors.clone() }
         }
         None => DraftInfo::default(),
     };
@@ -359,8 +367,9 @@ pub fn run_draft(live: &mut Live, inventory: &Inventory, conn: u64, cfg: Config)
         live.draft = None;
         return Ok(false);
     }
-    let generated = live.draft.as_ref().filter(|d| d.owner == conn).and_then(|d| d.generated.clone());
-    live.draft = Some(Draft { owner: conn, config: cfg, generated });
+    let mine = live.draft.take().filter(|d| d.owner == conn);
+    let (generated, anchors) = mine.map(|d| (d.generated, d.anchors)).unwrap_or_default();
+    live.draft = Some(Draft { owner: conn, config: cfg, generated, anchors });
     Ok(started)
 }
 
@@ -511,13 +520,17 @@ fn change_saved(live: &mut Live, inventory: &Inventory, change: impl Fn(&mut Con
 /// The active profile, when it can be changed: Defaults can't (§4.7).
 fn editable(cfg: &Config) -> Result<String, String> {
     if cfg.profile == DEFAULTS {
-        let others: Vec<String> = cfg.profiles.keys().map(|p| words(p)).collect();
-        return Err(format!(
-            "Defaults leaves every fan with its BIOS or driver, and can't be changed. Choose {} first.",
-            if others.is_empty() { "another profile".to_owned() } else { others.join(", ") }
-        ));
+        return Err(defaults_fixed(cfg));
     }
     Ok(cfg.profile.clone())
+}
+
+fn defaults_fixed(cfg: &Config) -> String {
+    let others: Vec<String> = cfg.profiles.keys().map(|p| words(p)).collect();
+    format!(
+        "Defaults leaves every fan with its BIOS or driver, and can't be changed. Choose {} first.",
+        if others.is_empty() { "another profile".to_owned() } else { others.join(", ") }
+    )
 }
 
 /// A control Penna can drive, or why not (§3.5).

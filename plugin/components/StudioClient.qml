@@ -48,7 +48,8 @@ Item {
 
   function refresh() { request("studio", {}, function(r) { if (r.ok) root.body = r.result }) }
   function putCurve(curve, callback) { draftOp("draft.put_curve", { curve: curve }, callback) }
-  function assign(control, curve, callback) { draftOp("draft.assign", { control: control, curve: curve }, callback) }
+  // In `profile`, the one the studio shows, which needn't be the one running (§8.3).
+  function assign(control, curve, profile, callback) { draftOp("draft.assign", { control: control, curve: curve, profile: profile }, callback) }
   function discard(callback) { draftOp("draft.discard", {}, callback) }
   function save(callback) {
     request("draft.save", {}, function(reply) {
@@ -63,7 +64,7 @@ Item {
   }
 
   // Setup (§5) runs on this connection too: closing the studio stops it and every fan goes back.
-  function setupStart(callback) { request("setup.start", {}, callback) }
+  function setupStart(loadCheck, callback) { request("setup.start", { load_check: loadCheck }, callback) }
   function setupStop(callback) { request("setup.stop", {}, callback) }
   function setupRoles(roles, callback) { request("setup.roles", { roles: roles }, callback) }
   function identify(control, callback) { request("identify", { control: control }, callback) }

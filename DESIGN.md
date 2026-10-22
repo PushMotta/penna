@@ -596,7 +596,7 @@ Errors are sentences a person can act on, in the voice of §8.
 | `studio` | — | The studio body (below) for this connection |
 | ✎ `draft.put_curve` | `curve` (a curve object as in the studio body; a new `id` creates a curve) | The updated studio body |
 | ✎ `draft.delete_curve` | `curve` (its id; `id` is the request's own field) | The updated studio body. Refused while a control in any profile uses the curve. |
-| ✎ `draft.assign` | `control`, `curve` (id, or `"firmware"`) | The updated studio body. Applies to the active profile. |
+| ✎ `draft.assign` | `control`, `curve` (id, or `"firmware"`), `profile`? | The updated studio body. Applies to `profile`, or to the active profile when it is left out; Defaults can't be changed either way. *(M8: the studio edits the profile it shows, which needn't be the one running, §8.3.)* |
 | ✎ `draft.limits` | `control`, then any of `min`, `max`, `offset`, `step_up`, `step_down`, `may_stop`, `failsafe` | The updated studio body |
 | ✎ `draft.save` | — | `ok` with `result.text`. Persists the whole draft (§7.5). |
 | ✎ `draft.discard` | — | The studio body at the saved configuration |
@@ -654,7 +654,7 @@ A draft is validated like `penna check`; a refused change leaves the draft as it
 
 A `setup` event carries the step, the control being measured, live readings ("Raising PWM 3 to 100 % — fan 4 rose 610 → 1,790 RPM"), the guard temperatures and, at the end, the results. Ticks gain `controls[].kind` with the kinds of §3.5, `controls[].tier` (§3.6), and `controls[].drift`.
 
-*(M8, as built.)* Setup's progress in the tick carries `load` while the load check runs (its pass, °C, the CPU fans' duty, and its result) and `proposed` once measuring is over: the curves setup generated, the anchors of their sources, the fans left alone and why, or why there is no draft. The studio's `draft` gains `generated`, the curves still as setup made them. Saving a generated draft switches to Balanced (§11.3 call 9). `$PENNA_SOCKET`, when set, is the only socket a client tries.
+*(M8, as built.)* Setup's progress in the tick carries `load` while the load check runs (its pass, °C, the CPU fans' duty, and its result) and `proposed` once measuring is over: the curves setup generated, the anchors of their sources, the fans left alone and why, or why there is no draft. The studio's `draft` gains `generated`, the curves still as setup made them, and `anchors`, the idle, target and limit of each source they follow, for the editor to draw. `load` names its `source`, the sensor it watches. Saving a generated draft switches to Balanced (§11.3 call 9). `$PENNA_SOCKET`, when set, is the only socket a client tries.
 
 **`tick` event.** UI-shaped: everything a surface draws, with no second request.
 
@@ -822,6 +822,11 @@ Summoned from the popup's `Curves…` and with `penna open`. A centred card abou
   It ends on the review: role chips per fan, with `Identify`, then the generated curves in the editor, marked *Generated*, ready to save or discard.
 
   *(As approved in D2, §11.3.)* The setup view takes the studio over: the editor's place shows a rail of the seven steps and one panel per step, the controls column one row per fan with its live RPM and its step in words, and the sensors column becomes the guards. Pairing shows every tach on one RPM scale with the one that moves in the accent. Calibration draws each fan's duty → RPM table in small multiples, each on its own scale. *Stop and hand back* sits where *Save* does. The review's roles are chips with their reason and a name field per fan; a dashed chip still needs the user's yes. The draft holds all three profiles, and each curve's anchors (idle, target, limit) are drawn on its temperature axis. *Save* keeps the whole draft and switches to Balanced; *Discard* leaves Defaults on and keeps the measurements.
+  *(M8, as built, 22 Oct 2026.)*
+  - **The studio shows one profile at a time,** chosen with pills in its header (Quiet, Balanced, Render; `p` cycles), with which one runs beside them when that is another. Choosing one changes what the editor shows and edits, never what runs: setup's draft fills three profiles while a new install runs Defaults, and switching profiles would save that choice before the curves were. A new install shows Balanced, where saving goes.
+  - **Confirming the roles opens the editor on the draft,** once a fan on a pump header has been measured below 50 %. The review says beforehand what confirming does, and lists the fans left with their firmware.
+  - **A curve setup made carries a *Generated* chip** until it is saved, the header says "Generated curves, not saved", and its anchors are dashed lines on its temperature axis. *Save* reads *Save and switch to Balanced* unless Balanced is on.
+  - **The start screen's one option is the load check,** on by default (`c`). Its panel shows the CPU against the temperature that ends a pass, the CPU fans' duty, the time left, and the last four minutes on a chart.
 - **Each card shows its kind and tier** *(draft 3)*. "8-point firmware curve, on the CPU sensor", "3 steps", "Documented: nobody has verified this driver yet". A fan whose write test came back `reverts` says what writes over it. *(D2, §11.3: only where they say something. Cards are grouped under a heading per device, which names the tier once: "IT8688E · motherboard · Verified", with one sentence under it when the tier is below Verified. A card adds a kind line unless it is plain duty or NVML. Drift is a line on the card with* Recalibrate*, not a badge; `stalled` is urgent.)*
 
 The setup view, the Defaults pill, and kind and tier on the cards are new UI. They went through a visual review in real theme tokens before any QML (milestone D2, §10, §11.3), as milestone D did.
@@ -1143,9 +1148,11 @@ Milestones, each ending in something visible:
   - **The wording matched what ran:** the journal said "Balanced is on, so the fans run them until the draft is saved or left", and SYS_FAN5_PUMP's reason quotes 1,820 RPM.
   - **The GPU fans' stop came out at 40 %, both.** Four runs have now measured 35–45 %: 40 and 35 % (M7), 45 and 45 % (fourth), 35 and 45 % (fifth), 40 and 40 % (sixth). The fourth run, given longer at 40 %, saw both fans slowly stall there. With *may stop* the floor is the measured stop with no margin (§4.5), so a GPU fan can be asked to run where it stalled before.
 
+  **The studio's review (0.8.2):** the start screen's load check option and the load check's panel, the review's word on the proposed curves, confirmed roles opening the editor on the draft, the profile the studio shows apart from the one running, *Generated* chips, the anchors on the axis, and *Save and switch to Balanced* (§8.3). `draft.assign` takes the profile it applies to, and the studio body carries the draft's anchors (§7.3). `tools/setup-preview` renders every step on the mock desk, the load check included, then the editor on the draft. 178 Rust tests, 29 plugin logic tests.
+
   Still to do:
-  - the plugin's review of the proposed curves, the *Generated* marks and the anchors on the axis (§8.3, §11.3 call 9);
-  - deciding the GPU fans' floor: the measured stop, or a margin above it.
+  - setup run from the studio on this desk, from start to save;
+  - deciding the GPU fans' floor: the measured stop, or a margin above it. A shared GPU curve starts at the lower of the two fans' floors, so with floors of 35 and 45 % (the fifth run) the second fan stays on the driver's curve until the curve passes 50 %.
 - **M9** — **Laptops and other drivers:**
   - `levels`, `firmware-curve`, `modes` and `platform` controls, amdgpu included;
   - a Documented fixture per driver;

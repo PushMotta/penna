@@ -5,7 +5,8 @@ import "../Model.js" as Model
 
 // Setup in the studio (DESIGN.md §5, §8.3 as approved in design review 03, call 4). It takes the studio over: the fans on the
 // left with their live RPM and step, the rail of steps and one panel per step in the middle, the guards on the right. It ends
-// on the review: each fan's role with its reason, a name for it, and Identify. The action bar stays the studio's.
+// on the review: each fan's role with its reason, a name for it, and Identify; confirming them opens the curves setup
+// proposes in the editor (§5.5). The action bar stays the studio's.
 Item {
   id: root
 
@@ -20,6 +21,9 @@ Item {
   property int tickMs: 1000
   property bool live: true
   property bool reducedMotion: false
+  property var history: ({})        // the service's five minutes of readings, for the load check's chart
+  // The start screen's one option (§11.3 call 4): 3 minutes of full CPU load on the proposed curves.
+  property bool loadCheck: true
 
   // The review's choices, kept here until the user confirms them: control → role.
   property var roleChoice: ({})
@@ -31,6 +35,14 @@ Item {
   readonly property string step: starting || !setup ? "start" : setup.stopped ? "stopped" : String(setup.step)
   readonly property var rows: Model.setupRows(setup, tick)
   readonly property var review: Model.reviewRows(setup)
+  readonly property var load: Model.loadView(setup)
+
+  // Once a tick, from the studio: the load check's chart moves on.
+  function ticked() {
+    if (step !== "load-check" || !load || !load.source) return
+    loadChart.values = history[load.source] || []
+    loadChart.push()
+  }
 
   function roleOf(row) { return roleChoice[row.key] !== undefined ? roleChoice[row.key] : row.role }
   function chooseNext(row) {
@@ -193,7 +205,7 @@ Item {
             width: parent.width
             wrapMode: Text.Wrap
             text: "Penna measures every fan: what it reads back, which header it turns, its role, and its speed at every duty. "
-                + "Nothing about your curves changes."
+                + "Then it proposes curves for Quiet, Balanced and Render, and nothing is saved until you say so."
             color: root.foreground
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
@@ -203,8 +215,9 @@ Item {
                     ["2", "Write test", "5 s", "Take each fan, write 60 % and 80 %, read both back."],
                     ["3", "Pairing", "12 s a fan", "Find which header each control turns, one at a time."],
                     ["4", "Roles", "", "Suggest what each fan does, with the reason."],
-                    ["5", "Calibration", "about 1:30", "Measure each fan's speed at every duty, all at once."],
-                    ["6", "Review", "", "Confirm the roles and name the fans."]]
+                    ["5", "Calibration", "about 3:00", "Measure each fan's speed at every duty, all at once."],
+                    ["6", "Load check", root.loadCheck ? "3:00" : "skipped", "Load every CPU thread on the proposed Balanced curves, and see where it levels."],
+                    ["7", "Review", "", "Confirm the roles and name the fans, then the proposed curves."]]
             Row {
               required property var modelData
               spacing: Style.spacing.lg
@@ -221,10 +234,24 @@ Item {
               }
             }
           }
+          Toggle {
+            width: parent.width
+            label: "Load check"
+            description: "3 minutes of full CPU load at the lowest priority, so other work still comes first. If the CPU comes within "
+                       + "5 °C of its limit, the curve's top moves 5 °C earlier and the check runs again."
+            checked: root.loadCheck
+            enabled: root.canWrite
+            foreground: root.foreground
+            accent: root.accent
+            fontFamily: root.fontFamily
+            titleSize: Style.font.bodySmall
+            onClicked: root.loadCheck = !root.loadCheck
+          }
           Text {
             width: parent.width
             wrapMode: Text.Wrap
-            text: "About five minutes, and you will hear the fans. The machine should be idle: setup waits while it is busy."
+            text: (root.loadCheck ? "About nine minutes" : "About six minutes") + ", and you will hear the fans. The machine should be idle: "
+                + "setup waits while it is busy."
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
@@ -387,6 +414,108 @@ Item {
           }
         }
 
+        // Load check (§5.5): the CPU under full load on the proposed Balanced curves, until it levels.
+        Column {
+          visible: root.step === "load-check" && root.load !== null
+          width: parent.width
+          spacing: Style.spacing.lg
+          Item {
+            width: parent.width
+            implicitHeight: loadTitle.implicitHeight
+            Text { id: loadTitle; text: root.load ? root.load.title : ""; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.title; font.bold: true }
+            Text {
+              anchors.right: parent.right
+              anchors.baseline: loadTitle.baseline
+              text: root.load ? root.load.time : ""
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              font.features: ({ "tnum": 1 })
+            }
+          }
+          Text {
+            width: parent.width
+            wrapMode: Text.Wrap
+            text: !root.load ? "" : root.load.loading
+                ? "Every CPU thread is busy at the lowest priority, with the proposed Balanced curves running the fans. Passing "
+                  + Math.round(root.load.ends) + " °C ends the pass: the curve's top moves 5 °C earlier, and the check runs again."
+                : "The CPU passed " + Math.round(root.load.ends) + " °C, so the curve's top moved 5 °C earlier. The second pass starts once "
+                  + "the CPU is back within 10 °C of idle, or after 2 minutes."
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+          Row {
+            spacing: Style.space(40)
+            Column {
+              spacing: Style.spacing.xs
+              Text { text: "CPU"; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption; font.bold: true }
+              LiveNumber {
+                value: root.load && root.load.celsius !== null ? root.load.celsius : NaN
+                step: 0.1
+                decimals: 1
+                suffix: " °C"
+                tickMs: root.tickMs
+                live: root.live
+                reducedMotion: root.reducedMotion
+                color: root.load && root.load.celsius !== null && root.load.celsius >= root.load.ends ? root.urgent : root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.heading
+              }
+            }
+            Column {
+              spacing: Style.spacing.xs
+              Text { text: "CPU FANS"; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption; font.bold: true }
+              LiveNumber {
+                value: root.load && root.load.fans !== null ? root.load.fans : NaN
+                step: 1
+                suffix: " %"
+                tickMs: root.tickMs
+                live: root.live
+                reducedMotion: root.reducedMotion
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.heading
+              }
+            }
+          }
+          // The last four minutes of the CPU, from 20 °C to its limit, with the line where a pass ends.
+          Item {
+            width: parent.width
+            height: Style.space(120)
+            Rectangle { anchors.fill: parent; color: Util.alpha(root.foreground, 0.04) }
+            Sparkline {
+              id: loadChart
+              anchors.fill: parent
+              lo: 20
+              hi: root.load ? root.load.limit : 100
+              window: 240
+              tickMs: root.tickMs
+              live: root.live
+              reducedMotion: root.reducedMotion
+              foreground: root.foreground
+            }
+            Rectangle {
+              visible: root.load !== null
+              width: parent.width
+              height: 1
+              y: root.load ? Math.round(loadChart.yOf(root.load.ends)) : 0
+              color: Util.alpha(root.urgent, 0.8)
+            }
+            Text {
+              visible: root.load !== null
+              anchors.left: parent.left
+              anchors.leftMargin: Style.spacing.sm
+              y: root.load ? Math.round(loadChart.yOf(root.load.ends)) + Style.spacing.xs : 0
+              text: root.load ? "a pass ends at " + Math.round(root.load.ends) + " °C" : ""
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+          }
+          Text { text: "4 minutes · 20 to " + (root.load ? Math.round(root.load.limit) : 100) + " °C, the CPU's limit"; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+        }
+
         // Review: roles with their reasons, a name, Identify (call 7).
         Column {
           visible: root.step === "review"
@@ -452,6 +581,34 @@ Item {
               }
             }
           }
+          PanelSectionHeader {
+            visible: proposalText.text !== ""
+            text: "CURVES"
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+          }
+          Text {
+            id: proposalText
+            visible: text !== ""
+            width: parent.width
+            wrapMode: Text.Wrap
+            text: Model.proposalText(root.setup, root.tick)
+            color: root.setup && root.setup.proposed && root.setup.proposed.refused ? root.urgent : root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+          Repeater {
+            model: root.step === "review" && root.setup && root.setup.proposed && !root.setup.proposed.refused ? (root.setup.proposed.notes || []) : []
+            Text {
+              required property var modelData
+              width: panel.width
+              wrapMode: Text.Wrap
+              text: modelData
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+          }
         }
 
         // Stopped.
@@ -483,7 +640,8 @@ Item {
 
     Text {
       width: parent.width
-      elide: Text.ElideRight
+      // Wrapped: at the review it carries the load check's result.
+      wrapMode: Text.Wrap
       text: root.step === "start" ? "Nothing changes until you start. Every fan stays with its BIOS or driver."
           : root.setup ? String(root.setup.waiting || root.setup.say || "") : ""
       color: root.dim
