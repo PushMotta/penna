@@ -507,10 +507,15 @@ function rpmAt(calibration, duty) {
   return table[table.length - 1][1]
 }
 
+// Below this, an NVIDIA fan goes back to its driver: its settable minimum, or its measured stop when it stands still above that.
+function nvmlFloor(control) {
+  return control.floor !== null && control.floor !== undefined ? Number(control.floor) : Number(control.nvml.min)
+}
+
 function readout(t, d, control) {
   var head = Math.round(t) + " °C → " + Math.round(d) + " %"
   if (!control) return head
-  if (control.nvml && d < Number(control.nvml.min)) return head + " driver curve"
+  if (control.nvml && d < nvmlFloor(control)) return head + " driver curve"
   if (control.stop !== null && control.stop !== undefined && d < Number(control.stop) && control.may_stop) return head + " stopped"
   var r = rpmAt(control.calibration, d)
   return r === null ? head : head + " ≈ " + formatNumber(r, 10, 0, true) + " RPM"
@@ -521,7 +526,7 @@ function inspector(curveLive, control, controlLive, tick) {
   if (!curveLive) return ""
   if (controlLive && controlLive.state === "override") return tick && tick.full_speed ? "Full speed holds this fan at 100 %" : "An override holds this fan"
   if (controlLive && controlLive.state === "handback") {
-    var floor = control && control.nvml ? Number(control.nvml.min) : 30
+    var floor = control && control.nvml ? nvmlFloor(control) : 30
     return "Below the " + floor + " % floor: the driver runs this fan (" + formatNumber(controlLive.rpm, 10, 0, true) + " RPM)"
   }
   if (controlLive && isAlert(controlLive.state)) return capitalise(controlLive.state) + (controlLive.reason ? ": " + controlLive.reason : "")

@@ -5,7 +5,8 @@ const M = require("../Model.js")
 const pts = [[45, 30], [65, 40], [78, 65], [88, 100]]
 const cooler = { key: "pwm1", nvml: null, floor: 30, stop: 20, may_stop: false, step_up: 20, step_down: 5,
                  calibration: [[20, 420], [40, 765], [60, 1110], [80, 1455], [100, 1800]] }
-const gpuFan = { key: "fan0", nvml: { min: 30, max: 100 }, floor: 30, may_stop: true, step_up: 20, step_down: 5, calibration: null }
+// The 3090's fan as setup measured it: settable from 30 %, but standing still below 40 % in manual.
+const gpuFan = { key: "fan0", nvml: { min: 30, max: 100 }, stop: 40, floor: 40, may_stop: true, step_up: 20, step_down: 5, calibration: null }
 
 test("a dragged point snaps, stays between its neighbours and never makes the curve dip", () => {
   assert.deepEqual(M.movePoint(pts, 1, 70.4, 39.6), [[45, 30], [70, 40], [78, 65], [88, 100]])
@@ -42,6 +43,7 @@ test("the hysteresis band lies between f(T) and f(T + H)", () => {
 test("the readout names temperature, duty and what it buys", () => {
   assert.equal(M.readout(72, 58, cooler), "72 °C → 58 % ≈ 1,080 RPM")
   assert.equal(M.readout(40, 20, gpuFan), "40 °C → 20 % driver curve")
+  assert.equal(M.readout(50, 35, gpuFan), "50 °C → 35 % driver curve", "settable, but below the measured stop")
   assert.equal(M.readout(40, 40, gpuFan), "40 °C → 40 %", "no RPM axis before calibration")
   assert.equal(M.rpmAt(cooler.calibration, 10), 0)
   assert.equal(M.rpmAt(null, 50), null)
@@ -50,7 +52,7 @@ test("the readout names temperature, duty and what it buys", () => {
 test("the inspector says what the output is doing", () => {
   assert.equal(M.inspector({ held: true, hold_until: 60.4 }, cooler, { state: "curve", trend: "steady" }, {}), "Holding: hysteresis keeps it until 60.4 °C")
   assert.equal(M.inspector({ held: false }, cooler, { state: "curve", trend: "rising", target: 64 }, {}), "Rising at the step limit, 20 %/s → 64 %")
-  assert.equal(M.inspector({ held: false }, gpuFan, { state: "handback", rpm: 0 }, {}), "Below the 30 % floor: the driver runs this fan (0 RPM)")
+  assert.equal(M.inspector({ held: false }, gpuFan, { state: "handback", rpm: 0 }, {}), "Below the 40 % floor: the driver runs this fan (0 RPM)")
   assert.equal(M.inspector({ held: false }, cooler, { state: "curve", trend: "steady" }, {}), "Following the curve")
   assert.equal(M.limitsLine(cooler), "min 30 % · stalls below 20 % · steps ↑20 ↓5 %/s")
 })

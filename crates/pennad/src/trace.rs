@@ -194,7 +194,10 @@ impl Trace {
                     c.map_or(0, |c| c.reasserts.len())
                 ),
             },
-            (Command::Handback { .. }, Outcome::Done) => format!("{label}: below its 30 % floor: handed to the driver's curve, still held"),
+            (Command::Handback { key }, Outcome::Done) => {
+                let floor = plan.controls.get(key).map_or(0.0, |c| c.floor);
+                format!("{label}: below its {floor:.0} % floor: handed to the driver's curve, still held")
+            }
             (Command::Release { .. }, Outcome::Done) => format!("{label}: handed back to its firmware, exactly as found"),
             (Command::Write { .. }, Outcome::Done) => return,
             (cmd, Outcome::Failed(e)) => format!("{label}: {} failed: {e}", verb(cmd)),
