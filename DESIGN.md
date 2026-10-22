@@ -392,7 +392,7 @@ On this desk: Tctl idle about 45 °C and limit 90 °C. The 3090's target is NVML
 | | 50 % at | target | target − 5 | target − 10 |
 | | 100 % at | limit − 3 | limit − 5 | target |
 
-On this desk, Balanced CPU comes out as: floor to 55 °C, 50 % airflow at 70 °C, 100 % at 82 °C.
+On this desk, Balanced CPU comes out as: floor to 51 °C, 50 % airflow at 70 °C, 100 % at 82 °C.
 
 - **Case fans** follow a Mix (max) of a CPU curve and a GPU curve. They stay at their floor until either source is 15 °C above idle, and their top is capped at 50 % airflow in Quiet, 75 % in Balanced and 100 % in Render.
 - **Pumps** are Flat at 70 %, 85 % and 100 % duty.
@@ -1137,9 +1137,15 @@ Milestones, each ending in something visible:
 
   178 Rust tests, 24 plugin logic tests.
 
+  **The sixth run (22 Oct 2026, 0.8.1)** took 8:32 with the load check: pairing 1:43, calibration 3:11, load check 3:01. Confirming the roles re-measured SYS_FAN5_PUMP in 1:31, down to its stop at 10 %. The proposal was saved, and every fan is on Balanced.
+  - **The idle sample was idle enough:** Tctl read 40.9–45.0 °C, with a 4 °C bump at 17 s. Its lowest fifth gave 41.3 °C, where the fifth run took 50.3. Balanced CPU now holds CPU_FAN at its floor to 51 °C, not 60.
+  - **The load check settled:** "Under 3 minutes of full load the CPU levelled at 65 °C, with its fans at 52 %." The peak was 69.4 °C. Over the last 2 minutes CPU_FAN held 52.4 % and the case fans 46.8 % without moving, with Tctl at 63.9–65.6 °C. The fifth run levelled at 68 °C with CPU_FAN hunting between 45 and 57 %.
+  - **The wording matched what ran:** the journal said "Balanced is on, so the fans run them until the draft is saved or left", and SYS_FAN5_PUMP's reason quotes 1,820 RPM.
+  - **The GPU fans' stop came out at 40 %, both.** Four runs have now measured 35–45 %: 40 and 35 % (M7), 45 and 45 % (fourth), 35 and 45 % (fifth), 40 and 40 % (sixth). The fourth run, given longer at 40 %, saw both fans slowly stall there. With *may stop* the floor is the measured stop with no margin (§4.5), so a GPU fan can be asked to run where it stalled before.
+
   Still to do:
   - the plugin's review of the proposed curves, the *Generated* marks and the anchors on the axis (§8.3, §11.3 call 9);
-  - a run on this desk with 0.8.1, for an idle sample that is idle and a load check without hunting.
+  - deciding the GPU fans' floor: the measured stop, or a margin above it.
 - **M9** — **Laptops and other drivers:**
   - `levels`, `firmware-curve`, `modes` and `platform` controls, amdgpu included;
   - a Documented fixture per driver;
