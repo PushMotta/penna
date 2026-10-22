@@ -28,6 +28,8 @@ pub enum State {
     #[default]
     Firmware,
     Curve,
+    /// Setup is measuring it (§5): it runs at the duty setup asks for. Only an emergency outranks that.
+    Measuring,
     Handback,
     Override,
     Failsafe,
@@ -42,6 +44,7 @@ impl State {
         match self {
             State::Firmware => "firmware",
             State::Curve => "curve",
+            State::Measuring => "measuring",
             State::Handback => "handback",
             State::Override => "override",
             State::Failsafe => "failsafe",
@@ -194,6 +197,9 @@ pub struct LoopState {
     pub controls: BTreeMap<Key, ControlState>,
     /// Sensors in emergency, with the limit they crossed.
     pub emergency: BTreeMap<Key, f64>,
+    /// The duty setup asks of each control it measures (§5), set by the daemon before every tick. A control here is taken whether
+    /// or not a profile adopts it, and runs at exactly this duty, below its floor too.
+    pub measuring: BTreeMap<Key, f64>,
 }
 
 impl LoopState {
@@ -356,12 +362,22 @@ pub fn tick(plan: &Plan, prev: &LoopState, readings: &Readings, now: f64) -> (Lo
     let mut cmds = Vec::new();
     let emergency = !st.emergency.is_empty();
     for (key, c) in &plan.controls {
+        let measuring = st.measuring.get(key).copied();
         let curve = plan.assignment(&st.profile, key);
-        let output = curve.map(|id| st.outputs.get(id).cloned().unwrap_or_else(|| Err(format!("curve {id:?} has no output"))));
-        let ov = if st.full_speed { Some(100.0) } else { st.overrides.get(key).or(st.override_all.as_ref()).map(|o| o.duty) };
+        let output = match measuring {
+            Some(d) => Some(Ok(d)),
+            None => curve.map(|id| st.outputs.get(id).cloned().unwrap_or_else(|| Err(format!("curve {id:?} has no output")))),
+        };
+        let ov = if measuring.is_some() {
+            None
+        } else if st.full_speed {
+            Some(100.0)
+        } else {
+            st.overrides.get(key).or(st.override_all.as_ref()).map(|o| o.duty)
+        };
         let cs = st.controls.entry(key.clone()).or_default();
         let reason = if emergency { st.emergency.iter().next().map(|(k, l)| format!("{k} at or above {l} °C")) } else { None };
-        step_control(c, cs, output, readings.controls.get(key), reason, ov, now, dt, &mut cmds);
+        step_control(c, cs, output, readings.controls.get(key), reason, ov, measuring.is_some(), now, dt, &mut cmds);
     }
     (st, cmds)
 }
@@ -526,6 +542,7 @@ fn step_control(
     reading: Option<&Sample<ControlReading>>,
     emergency: Option<String>,
     ov: Option<f64>,
+    measuring: bool,
     now: f64,
     dt: f64,
     cmds: &mut Vec<Command>,
@@ -635,12 +652,33 @@ fn step_control(
         (State::Emergency, 100.0, true, Some(why))
     } else {
         match output {
+            Ok(v) if measuring => (State::Measuring, v, true, None),
             Err(e) => (State::Failsafe, c.failsafe, true, Some(e)),
             Ok(_) if ov.is_some() => (State::Override, ov.expect("checked"), true, None),
             Ok(v) => (State::Curve, v + c.offset, false, None),
         }
     };
     cs.reason = reason;
+    if state == State::Measuring {
+        // Setup's own duty, exactly: no floor, limit, step rate or kick (§5.4 measures below the floor).
+        let duty = match kind {
+            ControlKind::Nvml { min, max } => desired.clamp(min as f64, max as f64),
+            _ => desired.clamp(0.0, 100.0),
+        };
+        cs.kick_until = None;
+        cs.trend = Trend::Steady;
+        cs.state = state;
+        cs.duty = duty;
+        cs.target = duty;
+        let raw = c.raw(duty);
+        if cs.force_reassert {
+            cs.force_reassert = false;
+            cmds.push(Command::Reassert { key: key.clone(), raw });
+        } else if cs.handback || cs.written != Some(raw) {
+            cmds.push(Command::Write { key: key.clone(), raw });
+        }
+        return;
+    }
 
     let mut duty;
     match kind {

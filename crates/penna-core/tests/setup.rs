@@ -1,0 +1,466 @@
+//! Setup (DESIGN.md §5, §11.3) driving the real control loop against a modelled desk, on simulated time: the daemon's own
+//! sequence of read, setup, tick, carry out, record. The desk is shaped on the one Penna was built on: a CPU fan, a case fan, a
+//! chipset fan its BIOS stops when cool, a case fan on a pump header, an empty header, a header whose firmware takes it back, and
+//! an NVIDIA fan.
+use penna_core::config::Measured;
+use penna_core::control::{Command, LoopState, Outcome, tick};
+use penna_core::plan::Plan;
+use penna_core::setup::{Guard, Input, Role, Setup, Step, TachHint, Target, WriteResult};
+use penna_core::{
+    ControlInfo, ControlKind, ControlMode, ControlReading, Device, Inventory, Key, Readings, Sample, SensorInfo, Source, TachInfo,
+};
+use std::collections::BTreeMap;
+
+const CHIP: &str = "hwmon/it8688/it87.2624";
+
+fn pwm(n: u32) -> Key {
+    Key::parse(&format!("{CHIP}/pwm{n}")).unwrap()
+}
+fn fan(n: u32) -> Key {
+    Key::parse(&format!("{CHIP}/fan{n}")).unwrap()
+}
+fn cpu() -> Key {
+    Key::parse("hwmon/k10temp/0000:00:18.3/temp1").unwrap()
+}
+fn gpu_fan() -> Key {
+    Key::parse("nvml/GPU-1/fan0").unwrap()
+}
+fn gpu_temp() -> Key {
+    Key::parse("nvml/GPU-1/temp").unwrap()
+}
+
+/// One header: its PWM, the fan on it if any, and what the firmware does with it.
+#[derive(Clone)]
+struct Header {
+    n: u32,
+    name: &'static str,
+    role: Option<&'static str>,
+    fan: Option<FanModel>,
+    /// The firmware's own duty while it runs the header.
+    firmware: f64,
+    /// The firmware writes the header back to automatic within a second of a manual write.
+    reverts: bool,
+}
+
+#[derive(Clone, Copy)]
+struct FanModel {
+    max: f64,
+    /// Turns down to this duty, and starts again at `start`.
+    stop: f64,
+    start: f64,
+    /// RPM at the stop duty, and the curve's shape above it.
+    min: f64,
+    g: f64,
+}
+
+impl FanModel {
+    fn rpm(&self, duty: f64, spinning: bool) -> f64 {
+        if duty < self.stop || (!spinning && duty < self.start) {
+            0.0
+        } else {
+            self.min + (self.max - self.min) * ((duty - self.stop) / (100.0 - self.stop)).powf(self.g)
+        }
+    }
+}
+
+struct Channel {
+    h: Header,
+    mode: ControlMode,
+    raw: u32,
+    rpm: f64,
+    spinning: bool,
+    writes: u32,
+}
+
+struct Desk {
+    channels: Vec<Channel>,
+    gpu_manual: bool,
+    gpu_percent: f64,
+    gpu_rpm: f64,
+    cpu_temp: f64,
+}
+
+fn headers() -> Vec<Header> {
+    let f = |max, stop, start, min, g| Some(FanModel { max, stop, start, min, g });
+    vec![
+        Header { n: 1, name: "CPU_FAN", role: Some("cpu"), fan: f(1660.0, 18.0, 24.0, 360.0, 0.95), firmware: 27.0, reverts: false },
+        Header { n: 2, name: "SYS_FAN1", role: None, fan: f(2190.0, 20.0, 26.0, 480.0, 0.66), firmware: 27.0, reverts: false },
+        Header { n: 3, name: "PCH_FAN", role: Some("chipset"), fan: f(5620.0, 22.0, 28.0, 1500.0, 0.54), firmware: 16.0, reverts: false },
+        Header {
+            n: 4,
+            name: "SYS_FAN5_PUMP",
+            role: Some("pump-header"),
+            fan: f(1730.0, 20.0, 26.0, 420.0, 0.93),
+            firmware: 60.0,
+            reverts: false,
+        },
+        Header { n: 5, name: "SYS_FAN6_PUMP", role: Some("pump-header"), fan: None, firmware: 60.0, reverts: false },
+        Header { n: 6, name: "SYS_FAN4", role: None, fan: f(2140.0, 18.0, 24.0, 520.0, 0.69), firmware: 40.0, reverts: true },
+    ]
+}
+
+impl Desk {
+    fn new() -> Desk {
+        let channels = headers()
+            .into_iter()
+            .map(|h| {
+                let rpm = h.fan.map_or(0.0, |f| f.rpm(h.firmware, true));
+                Channel { raw: raw(h.firmware), mode: ControlMode::Automatic(2), rpm, spinning: rpm > 0.0, writes: 0, h }
+            })
+            .collect();
+        Desk { channels, gpu_manual: false, gpu_percent: 0.0, gpu_rpm: 0.0, cpu_temp: 45.0 }
+    }
+
+    fn inventory(&self) -> Inventory {
+        let sensor =
+            |key: Key, label: &str| SensorInfo { key, label: label.into(), limits: vec![], ignored_limits: vec![], below_ambient: false };
+        Inventory {
+            devices: vec![
+                Device {
+                    id: "hwmon/k10temp/0000:00:18.3".into(),
+                    source: Source::Hwmon,
+                    driver: "k10temp".into(),
+                    label: "AMD CPU".into(),
+                    location: "0000:00:18.3".into(),
+                    model: None,
+                    sensors: vec![sensor(cpu(), "Tctl")],
+                    tachs: vec![],
+                    controls: vec![],
+                },
+                Device {
+                    id: CHIP.into(),
+                    source: Source::Hwmon,
+                    driver: "it8688".into(),
+                    label: "Motherboard".into(),
+                    location: "it87.2624".into(),
+                    model: Some("IT8688E".into()),
+                    sensors: vec![],
+                    tachs: self.channels.iter().map(|c| TachInfo { key: fan(c.h.n), label: c.h.name.into() }).collect(),
+                    controls: self
+                        .channels
+                        .iter()
+                        .map(|c| ControlInfo {
+                            key: pwm(c.h.n),
+                            label: format!("IT8688E pwm{}", c.h.n),
+                            kind: ControlKind::Duty { scale: 255 },
+                        })
+                        .collect(),
+                },
+                Device {
+                    id: "nvml/GPU-1".into(),
+                    source: Source::Nvml,
+                    driver: "nvml".into(),
+                    label: "GPU".into(),
+                    location: String::new(),
+                    model: None,
+                    sensors: vec![sensor(gpu_temp(), "GPU")],
+                    tachs: vec![],
+                    controls: vec![ControlInfo {
+                        key: gpu_fan(),
+                        label: "GPU fan 1".into(),
+                        kind: ControlKind::Nvml { min: 30, max: 100 },
+                    }],
+                },
+            ],
+            ..Inventory::default()
+        }
+    }
+
+    fn input(&self) -> Input {
+        let inv = self.inventory();
+        Input {
+            targets: inv
+                .devices
+                .iter()
+                .flat_map(|d| &d.controls)
+                .map(|c| Target { key: c.key.clone(), label: c.label.clone(), kind: c.kind })
+                .collect(),
+            tachs: self
+                .channels
+                .iter()
+                .map(|c| TachHint { key: fan(c.h.n), label: c.h.name.into(), role: c.h.role.map(str::to_owned) })
+                .collect(),
+            guards: vec![
+                Guard { key: cpu(), label: "CPU · Tctl".into(), limit: 85.0 },
+                Guard { key: gpu_temp(), label: "GPU".into(), limit: 80.0 },
+            ],
+            threads: 32,
+        }
+    }
+
+    fn readings(&self) -> Readings {
+        let mut r = Readings::default();
+        r.temps.insert(cpu(), Sample::Value(self.cpu_temp));
+        r.temps.insert(gpu_temp(), Sample::Value(40.0));
+        for c in &self.channels {
+            r.rpms.insert(fan(c.h.n), Sample::Value(c.rpm.round() as u32));
+            r.controls.insert(
+                pwm(c.h.n),
+                Sample::Value(ControlReading { percent: c.raw as f64 * 100.0 / 255.0, raw: Some(c.raw), mode: c.mode }),
+            );
+        }
+        r.rpms.insert(gpu_fan(), Sample::Value(self.gpu_rpm.round() as u32));
+        let mode = if self.gpu_manual { ControlMode::Manual } else { ControlMode::Driver };
+        r.controls.insert(gpu_fan(), Sample::Value(ControlReading { percent: self.gpu_percent, raw: None, mode }));
+        r
+    }
+
+    fn channel(&mut self, key: &Key) -> Option<&mut Channel> {
+        self.channels.iter_mut().find(|c| &pwm(c.h.n) == key)
+    }
+
+    fn carry_out(&mut self, cmd: &Command) -> Outcome {
+        let key = cmd.key().clone();
+        if key == gpu_fan() {
+            return match cmd {
+                Command::Take { .. } => Outcome::Taken { duty: 0.0 },
+                Command::Write { raw, .. } | Command::Reassert { raw, .. } => {
+                    self.gpu_manual = true;
+                    self.gpu_percent = *raw as f64;
+                    Outcome::Done
+                }
+                Command::Handback { .. } | Command::Release { .. } => {
+                    self.gpu_manual = false;
+                    Outcome::Done
+                }
+            };
+        }
+        let c = self.channel(&key).expect("a header of this desk");
+        match cmd {
+            Command::Take { .. } => {
+                c.mode = ControlMode::Manual;
+                Outcome::Taken { duty: c.h.firmware }
+            }
+            Command::Write { raw, .. } | Command::Reassert { raw, .. } => {
+                c.mode = if *raw >= 255 { ControlMode::Full } else { ControlMode::Manual };
+                c.raw = *raw;
+                c.writes += 1;
+                Outcome::Done
+            }
+            Command::Handback { .. } => Outcome::Done,
+            Command::Release { .. } => {
+                c.mode = ControlMode::Automatic(2);
+                c.raw = raw(c.h.firmware);
+                Outcome::Done
+            }
+        }
+    }
+
+    /// One second passes: firmware that takes headers back does, and every fan moves a second towards its duty.
+    fn advance(&mut self) {
+        for c in &mut self.channels {
+            if c.h.reverts && c.mode != ControlMode::Automatic(2) {
+                c.mode = ControlMode::Automatic(2);
+                c.raw = raw(c.h.firmware);
+            }
+            let duty = match c.mode {
+                ControlMode::Full => 100.0,
+                ControlMode::Manual => c.raw as f64 * 100.0 / 255.0,
+                _ => c.h.firmware,
+            };
+            let Some(f) = c.h.fan else { continue };
+            if c.spinning && duty < f.stop {
+                c.spinning = false;
+            } else if !c.spinning && duty >= f.start {
+                c.spinning = true;
+            }
+            let target = f.rpm(duty, c.spinning);
+            c.rpm += (target - c.rpm) * (1.0 - (-1.0f64 / 1.4).exp());
+            if target == 0.0 && c.rpm < 20.0 {
+                c.rpm = 0.0;
+            }
+        }
+        let target = if !self.gpu_manual { 0.0 } else { 600.0 + (self.gpu_percent - 30.0).max(0.0) / 70.0 * 1220.0 };
+        self.gpu_rpm += (target - self.gpu_rpm) * (1.0 - (-1.0f64 / 2.0).exp());
+        if target == 0.0 && self.gpu_rpm < 20.0 {
+            self.gpu_rpm = 0.0;
+        }
+    }
+}
+
+fn raw(duty: f64) -> u32 {
+    (duty * 255.0 / 100.0 - 1e-9).ceil().clamp(0.0, 255.0) as u32
+}
+
+/// The daemon's loop, one tick a second: read, setup, tick, carry out, record.
+struct Rig {
+    desk: Desk,
+    plan: Plan,
+    state: LoopState,
+    setup: Setup,
+    now: f64,
+    load: Option<f64>,
+}
+
+impl Rig {
+    fn new() -> Rig {
+        let desk = Desk::new();
+        let inv = desk.inventory();
+        let mut plan = Plan::new(penna_core::starter::starter(&inv), &inv, &Measured::default(), None).expect("the starter fits");
+        let input = desk.input();
+        let keys: Vec<Key> = input.targets.iter().map(|t| t.key.clone()).collect();
+        plan.carry(&keys, &inv, &Measured::default());
+        let state = LoopState::new(&plan);
+        Rig { setup: Setup::new(input, 0.0), desk, plan, state, now: 0.0, load: None }
+    }
+
+    fn tick(&mut self) {
+        let readings = self.desk.readings();
+        self.state.measuring = self.setup.step(&readings, &self.state, self.load, self.now);
+        let (next, cmds) = tick(&self.plan, &self.state, &readings, self.now);
+        self.state = next;
+        let mut queue: std::collections::VecDeque<Command> = cmds.into();
+        while let Some(cmd) = queue.pop_front() {
+            let outcome = self.desk.carry_out(&cmd);
+            if let Some(follow) = self.state.record(&self.plan, &cmd, &outcome) {
+                queue.push_back(follow);
+            }
+        }
+        if self.setup.finished() {
+            self.plan.end_setup();
+        }
+        self.plan.drop_released(&self.state);
+        self.desk.advance();
+        self.now += 1.0;
+    }
+
+    fn until(&mut self, step: Step, max: f64) {
+        while self.setup.step_now() < step && self.setup.stopped().is_none() {
+            assert!(self.now < max, "setup never reached {step:?} by {max} s; it says: {}", self.setup.progress().say);
+            self.tick();
+        }
+    }
+
+    fn progress(&self, key: &Key) -> penna_core::setup::ControlProgress {
+        self.setup.progress().controls.into_iter().find(|c| &c.key == key).unwrap()
+    }
+}
+
+#[test]
+fn setup_measures_this_desk_and_hands_every_fan_back() {
+    let mut rig = Rig::new();
+    rig.until(Step::WriteTest, 40.0);
+    assert!(rig.now >= 30.0, "the idle sample takes 30 s");
+    assert!(rig.desk.channels.iter().all(|c| c.writes == 0), "no fan is taken during the idle sample");
+
+    rig.until(Step::Pairing, 50.0);
+    assert_eq!(rig.progress(&pwm(1)).write, Some(WriteResult::Ok), "{:?}", rig.progress(&pwm(1)));
+    let sys4 = rig.progress(&pwm(6));
+    assert_eq!(sys4.write, Some(WriteResult::Reverts), "{sys4:?}");
+    assert!(sys4.write_detail.as_deref().unwrap().contains("its firmware took it back (pwm_enable 2"), "{sys4:?}");
+
+    rig.until(Step::Calibration, 200.0);
+    let p = rig.setup.progress();
+    for (n, name) in [(1, "CPU_FAN"), (2, "SYS_FAN1"), (3, "PCH_FAN"), (4, "SYS_FAN5_PUMP")] {
+        let c = p.controls.iter().find(|c| c.key == pwm(n)).unwrap();
+        assert_eq!(c.tachs, vec![fan(n)], "pwm{n} drives its own fan: {c:?}");
+        assert_eq!(c.header.as_deref(), Some(name));
+    }
+    let empty = rig.progress(&pwm(5));
+    assert_eq!((empty.paired, empty.tachs.len(), empty.duty), (Some(false), 0, None), "no fan on SYS_FAN6_PUMP: {empty:?}");
+    assert_eq!(rig.progress(&pwm(6)).paired, None, "a header that reverts isn't paired");
+    assert_eq!(rig.progress(&gpu_fan()).tachs, vec![gpu_fan()], "NVML pairs itself");
+
+    // Roles, with their reasons (§11.3 calls 7 and 8).
+    let role = |n: u32| rig.progress(&pwm(n)).suggestion.unwrap();
+    assert_eq!((role(1).role, role(1).reason.as_str()), (Role::Cpu, "The board calls this header CPU_FAN."));
+    assert_eq!(role(2).role, Role::Case);
+    let pch = role(3);
+    assert!(pch.role == Role::Chipset && pch.may_stop, "the BIOS stopped it during the idle sample: {pch:?}");
+    let pump = role(4);
+    assert!(pump.role == Role::Case && pump.confirm, "{pump:?}");
+    assert!(pump.reason.starts_with("On a pump header, but 1,7"), "{pump:?}");
+    assert_eq!(rig.progress(&gpu_fan()).suggestion.unwrap().role, Role::Gpu);
+    assert_eq!(rig.progress(&pwm(4)).lowest, Some(50.0), "held at 50 % until confirmed");
+    assert_eq!(rig.progress(&pwm(3)).lowest, None, "measured to a stop, as its BIOS stops it");
+
+    rig.until(Step::Review, 400.0);
+    assert!(rig.now < 330.0, "about four minutes without the load check; took {} s", rig.now);
+    let m = rig.setup.measured(1.0e9);
+    let cal = |n: u32| m.get(&pwm(n)).unwrap().clone();
+    // The stop duty is the lowest 5 % step that still turns the fan; the start is the first 2 % step up that spins it.
+    assert_eq!((cal(1).stop, cal(1).start), (Some(20.0), Some(25.0)), "{:?}", cal(1));
+    assert_eq!(cal(3).stop, Some(25.0), "PCH_FAN measured down to its stop");
+    assert_eq!((cal(4).stop, cal(4).lowest), (None, Some(50.0)), "the pump header stops at 50 %");
+    assert_eq!(cal(4).calibration.first().unwrap()[0], 50.0);
+    for n in [1, 2, 3, 4] {
+        let t = &cal(n).calibration;
+        assert!(t.windows(2).all(|w| w[0][0] < w[1][0] && w[0][1] < w[1][1] + 30.0), "pwm{n}'s table rises: {t:?}");
+        let top = t.last().unwrap();
+        let max = headers()[n as usize - 1].fan.unwrap().max;
+        assert!(top[0] == 100.0 && (top[1] - max).abs() < max * 0.03, "pwm{n} reaches {max} RPM at 100 %: {top:?}");
+    }
+    assert!(cal(1).spin_up.is_some_and(|s| s > 0.0 && s <= 10.0), "{:?}", cal(1));
+    let gpu = m.get(&gpu_fan()).unwrap();
+    assert_eq!((gpu.calibration.first().unwrap()[0], gpu.paired), (30.0, false), "NVML 30–100 % only, and no pairing of its own");
+    assert!(m.get(&pwm(5)).is_some_and(|c| c.paired && c.tachs.is_empty()), "the empty header is recorded as empty");
+    assert!(m.get(&pwm(3)).unwrap().firmware_stops);
+    assert!((m.idle[&cpu()] - 45.0).abs() < 0.5, "{:?}", m.idle);
+
+    // Measuring is over: nothing is asked of any fan, and the loop gives every one back as it was found.
+    for _ in 0..3 {
+        rig.tick();
+    }
+    assert!(rig.state.measuring.is_empty());
+    assert!(rig.desk.channels.iter().all(|c| c.mode == ControlMode::Automatic(2)), "every header back on its BIOS");
+    assert!(!rig.desk.gpu_manual, "the GPU fan back on its driver");
+    assert!(rig.plan.carried.is_empty(), "nothing left in the plan that the configuration doesn't name");
+}
+
+#[test]
+fn a_guard_stops_setup_and_every_fan_goes_back() {
+    let mut rig = Rig::new();
+    rig.until(Step::Calibration, 200.0);
+    for _ in 0..10 {
+        rig.tick();
+    }
+    rig.desk.cpu_temp = 86.0;
+    rig.tick();
+    let stopped = rig.setup.stopped().expect("stopped").to_owned();
+    assert_eq!(stopped, "CPU · Tctl reached 86 °C, past setup's guard of 85 °C.");
+    assert!(rig.state.measuring.is_empty());
+    rig.desk.cpu_temp = 50.0;
+    for _ in 0..2 {
+        rig.tick();
+    }
+    assert!(rig.desk.channels.iter().all(|c| c.mode == ControlMode::Automatic(2)), "every header back on its BIOS");
+    assert!(!rig.desk.gpu_manual);
+}
+
+#[test]
+fn a_busy_machine_waits_and_stop_is_at_once() {
+    let mut rig = Rig::new();
+    rig.load = Some(12.0);
+    for _ in 0..40 {
+        rig.tick();
+    }
+    let p = rig.setup.progress();
+    assert_eq!(p.step, Step::Idle);
+    assert_eq!(p.waiting.as_deref(), Some("The 1-minute load is 12.0; setup starts once it is under 8, a quarter of the threads."));
+    rig.load = Some(0.4);
+    rig.until(Step::Pairing, 120.0);
+    for _ in 0..8 {
+        rig.tick();
+    }
+    assert!(rig.desk.channels.iter().any(|c| c.mode == ControlMode::Manual), "setup holds the fans");
+    rig.setup.stop("You stopped setup.");
+    rig.tick();
+    rig.tick();
+    assert!(rig.desk.channels.iter().all(|c| c.mode == ControlMode::Automatic(2)));
+    assert_eq!(rig.setup.progress().stopped.as_deref(), Some("You stopped setup."));
+}
+
+#[test]
+fn an_emergency_outranks_setup() {
+    let mut rig = Rig::new();
+    rig.until(Step::Calibration, 200.0);
+    // A CPU at its TjMax: every fan Penna holds goes to 100 % that tick, measuring or not (§6.3). The guard stops setup too.
+    rig.desk.cpu_temp = 96.0;
+    let readings = rig.desk.readings();
+    rig.state.measuring = rig.setup.step(&readings, &rig.state, None, rig.now);
+    assert!(rig.setup.stopped().is_some());
+    let mut st = rig.state.clone();
+    st.measuring = BTreeMap::from([(pwm(1), 20.0)]);
+    let (next, cmds) = tick(&rig.plan, &st, &readings, rig.now);
+    assert_eq!(next.controls[&pwm(1)].state, penna_core::State::Emergency, "{cmds:?}");
+}

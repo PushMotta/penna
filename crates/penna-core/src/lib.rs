@@ -8,6 +8,7 @@
 //! * [`held::HeldEntry`] is the way back for one control, written before it leaves firmware (§6.1).
 //! * [`drivers`] is what Penna knows about each fan driver (§3.5, §3.6): data, not code paths.
 //! * [`boards::Board`] is what the board database knows about one motherboard (§3.6).
+//! * [`setup::Setup`] is setup's run (§5): readings in, the duty each measured control runs at out.
 pub mod boards;
 pub mod config;
 pub mod control;
@@ -17,6 +18,7 @@ pub mod key;
 pub mod model;
 pub mod plan;
 pub mod sanity;
+pub mod setup;
 pub mod starter;
 
 pub use control::{Command, LoopState, Outcome, Request, Scope, State, tick};

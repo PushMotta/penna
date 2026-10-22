@@ -131,6 +131,7 @@ fn fan_row(out: &mut String, c: &ControlTick, style: Style, now: f64) {
             }
             None => style.dim("full speed"),
         },
+        State::Measuring => style.dim("setup is measuring it"),
         State::Firmware => style.dim("firmware"),
         State::Absent => style.dim("not on this machine"),
         State::Failsafe | State::Emergency | State::Contested | State::Fault => {

@@ -362,10 +362,17 @@ impl ControlConfig {
     }
 }
 
-/// What pairing and calibration measured (DESIGN.md §5, `/var/lib/penna/measured.toml`).
+/// What setup measured (DESIGN.md §5, `/var/lib/penna/measured.toml`): facts about the hardware, kept whether or not any curve
+/// is saved. Everything but `key` may be left out, so a file from before setup grew a field still reads.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Measured {
+    /// Unix time of the last setup run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<f64>,
+    /// Each sensor's mean over the idle sample (§5.5's anchors).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub idle: BTreeMap<Key, f64>,
     #[serde(default, rename = "control")]
     pub controls: Vec<MeasuredControl>,
 }
@@ -374,18 +381,61 @@ pub struct Measured {
 #[serde(deny_unknown_fields)]
 pub struct MeasuredControl {
     pub key: Key,
+    /// The write test's result (§5.1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub write: Option<crate::setup::WriteResult>,
+    /// Pairing ran on it, so no `tachs` means no fan turns on this header.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub paired: bool,
     /// The lowest duty that still turns the fan.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop: Option<f64>,
     /// The first duty that spins a stopped fan.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start: Option<f64>,
+    /// Seconds from the start duty's write to a steady speed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spin_up: Option<f64>,
+    /// Calibration went no lower than this: a pump, a chipset fan, or a fan on a pump header not yet confirmed (§5.3, §5.4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lowest: Option<f64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tachs: Vec<Key>,
     /// Duty → RPM, ascending (§5.4): what calibration measured, for the editor's RPM axis. NVML fans have one too, over their
     /// settable range.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub calibration: Vec<[f64; 2]>,
+    /// The idle sample saw its firmware stop it (§5.3: a chipset fan may then stop).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub firmware_stops: bool,
+    /// What setup suggested it is, and why.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested: Option<crate::setup::Role>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// What the user confirmed it is (§5.3).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<crate::setup::Role>,
+}
+
+impl MeasuredControl {
+    pub fn new(key: Key) -> MeasuredControl {
+        MeasuredControl {
+            key,
+            write: None,
+            paired: false,
+            stop: None,
+            start: None,
+            spin_up: None,
+            lowest: None,
+            tachs: Vec::new(),
+            calibration: Vec::new(),
+            firmware_stops: false,
+            suggested: None,
+            reason: None,
+            role: None,
+        }
+    }
 }
 
 impl Measured {
@@ -395,6 +445,28 @@ impl Measured {
 
     pub fn get(&self, key: &Key) -> Option<&MeasuredControl> {
         self.controls.iter().find(|m| &m.key == key)
+    }
+
+    pub fn to_toml(&self) -> String {
+        toml::to_string(self).expect("measurements always serialize")
+    }
+
+    /// Takes in a newer run's results: a control measured again replaces what was known about it, keeping a role the user
+    /// confirmed while the hardware stays the same; the others stay.
+    pub fn merge(&mut self, newer: Measured) {
+        self.at = newer.at.or(self.at);
+        self.idle.extend(newer.idle);
+        for mut m in newer.controls {
+            match self.controls.iter_mut().find(|c| c.key == m.key) {
+                Some(old) => {
+                    if m.role.is_none() && old.tachs == m.tachs {
+                        m.role = old.role;
+                    }
+                    *old = m;
+                }
+                None => self.controls.push(m),
+            }
+        }
     }
 }
 

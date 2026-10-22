@@ -36,6 +36,8 @@ pub struct Plan {
     /// Controls in `controls` that the configuration no longer names but Penna still held when this plan replaced the last one
     /// ([`Plan::keep_held`]). Nothing assigns them, so the loop gives them back; then [`Plan::drop_released`] lets them go.
     pub carried: BTreeSet<Key>,
+    /// Controls in `controls` that setup measures and the configuration doesn't name ([`Plan::carry`]), kept while setup runs.
+    pub setup: BTreeSet<Key>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -142,7 +144,16 @@ impl Plan {
         let sources = config.physical_sources();
         let emergency = emergency_limits(inventory, cpu_model, &sources);
         let physical: BTreeSet<Key> = sources.into_iter().chain(emergency.keys().cloned()).collect();
-        Ok(Plan { config, curves, virtuals, controls, emergency, physical: physical.into_iter().collect(), carried: BTreeSet::new() })
+        Ok(Plan {
+            config,
+            curves,
+            virtuals,
+            controls,
+            emergency,
+            physical: physical.into_iter().collect(),
+            carried: BTreeSet::new(),
+            setup: BTreeSet::new(),
+        })
     }
 
     /// Keeps every control Penna holds that this plan, about to replace `prev`, doesn't name: a fan that only a discarded draft
@@ -150,25 +161,55 @@ impl Plan {
     /// comes over with nothing assigned, so the next tick gives it back, and with the kind it has now, so a fan whose device went
     /// away is `absent` and waits in `held.json` (§3.6).
     pub fn keep_held(&mut self, prev: &Plan, state: &LoopState, inventory: &Inventory) {
-        for (key, cs) in &state.controls {
-            if !cs.held || self.controls.contains_key(key) {
+        let held = state.controls.iter().filter(|(_, c)| c.held).map(|(k, _)| k);
+        let keys: BTreeSet<&Key> = held.chain(state.measuring.keys()).chain(prev.setup.iter()).collect();
+        for key in keys {
+            if self.controls.contains_key(key) {
                 continue;
             }
             let Some(old) = prev.controls.get(key) else { continue };
             let mut c = old.clone();
             c.kind = inventory.devices.iter().flat_map(|d| &d.controls).find(|i| &i.key == key).map(|i| i.kind);
             self.controls.insert(key.clone(), c);
-            self.carried.insert(key.clone());
+            if prev.setup.contains(key) {
+                self.setup.insert(key.clone());
+            } else {
+                self.carried.insert(key.clone());
+            }
         }
     }
 
     /// Lets go of carried controls once they are given back.
     pub fn drop_released(&mut self, state: &LoopState) {
-        let done: Vec<Key> = self.carried.iter().filter(|k| state.controls.get(*k).is_none_or(|c| !c.held)).cloned().collect();
+        let done: Vec<Key> = self
+            .carried
+            .iter()
+            .filter(|k| !state.measuring.contains_key(*k) && state.controls.get(*k).is_none_or(|c| !c.held))
+            .cloned()
+            .collect();
         for key in done {
             self.carried.remove(&key);
             self.controls.remove(&key);
         }
+    }
+
+    /// Brings in controls that setup measures and the configuration doesn't name (§5), unassigned. They stay while setup runs,
+    /// so the loop takes each when setup asks for a duty; [`Plan::end_setup`] then lets them be given back and go.
+    pub fn carry(&mut self, keys: &[Key], inventory: &Inventory, measured: &Measured) {
+        for key in keys {
+            if self.controls.contains_key(key) {
+                continue;
+            }
+            let present = inventory.devices.iter().flat_map(|d| &d.controls).find(|c| &c.key == key).map(|c| (c.kind, c.label.as_str()));
+            let (plan, _) = control_plan(&config::ControlConfig::defaults(key.clone()), present, measured);
+            self.controls.insert(key.clone(), plan);
+            self.setup.insert(key.clone());
+        }
+    }
+
+    /// Setup is over: its controls are given back like any carried control, then let go.
+    pub fn end_setup(&mut self) {
+        self.carried.append(&mut self.setup);
     }
 
     /// The curve a profile gives a control, or `None` for firmware. Defaults gives every control to its firmware (§4.7).

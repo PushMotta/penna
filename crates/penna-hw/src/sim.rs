@@ -440,11 +440,11 @@ impl Sim {
                     })
                     .collect();
                 controls.push(MeasuredControl {
-                    key: Key::hwmon(&chip.driver, &device, &format!("pwm{}", p.channel)),
                     stop,
                     start: fans.iter().map(|f| f.start).reduce(f64::max),
                     tachs: fans.iter().map(|f| Key::hwmon(&chip.driver, &device, &format!("fan{}", f.channel))).collect(),
                     calibration,
+                    ..MeasuredControl::new(Key::hwmon(&chip.driver, &device, &format!("pwm{}", p.channel)))
                 });
             }
         }
@@ -452,10 +452,10 @@ impl Sim {
         for g in &self.sc.gpus {
             for i in 0..g.fans {
                 let calibration = calibration_steps(g.min as f64).into_iter().map(|d| [d, gpu_rpm(g, d).round()]).collect();
-                controls.push(MeasuredControl { key: Key::nvml_fan(&g.uuid, i), stop: None, start: None, tachs: vec![], calibration });
+                controls.push(MeasuredControl { calibration, ..MeasuredControl::new(Key::nvml_fan(&g.uuid, i)) });
             }
         }
-        Measured { controls }
+        Measured { controls, ..Measured::default() }
     }
 
     /// Moves time on by `dt` seconds. Returns what happened, in words: faults starting and ending.

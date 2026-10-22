@@ -126,7 +126,10 @@ may_stop = true
 "#;
 
 pub fn measured(stop: f64, start: f64) -> Measured {
-    Measured { controls: vec![MeasuredControl { key: pwm(), stop: Some(stop), start: Some(start), tachs: vec![], calibration: vec![] }] }
+    Measured {
+        controls: vec![MeasuredControl { stop: Some(stop), start: Some(start), ..MeasuredControl::new(pwm()) }],
+        ..Measured::default()
+    }
 }
 
 pub fn plan(config: &str, measured: &Measured) -> Plan {
