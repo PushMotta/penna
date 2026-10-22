@@ -1,5 +1,5 @@
 # The development desk as M5 measured it (DESIGN.md §10, 22 Oct 2026): a Gigabyte X570 AORUS PRO with the it87 fork's IT8688E
-# and IT8792E, every header as pairing found it, and the RTX 3090. Each fan's top speed is the one measured; the stop and start
+# and IT8792E, every header as pairing found it, and the RTX 3090. it87 keeps its tach readings 1.5 s. Each fan's top speed is the one measured; the stop and start
 # duties are close to what the hardware test suggests. The BIOS keeps PCH_FAN stopped while the chipset is cool, and nothing is
 # plugged into SYS_FAN6_PUMP. For setup (§5), from a fresh install: the configuration is the one pennad writes on a first start.
 name = "x570-desk"
@@ -60,6 +60,7 @@ temp = [
 driver = "it8688_4008090b"
 path = "devices/platform/it87.2624"
 hwmon = 4
+cache = 1.5
 temp = [
   { channel = 1, body = "cpu", offset = -20.0, noise = 0.2 },
   { channel = 2, fixed = -55.0 },
@@ -138,6 +139,7 @@ start = 26
 driver = "it8792_4008090b"
 path = "devices/platform/it87.2656"
 hwmon = 5
+cache = 1.5
 temp = [{ channel = 1, body = "gpu", offset = -8.0, noise = 0.2 }, { channel = 2, fixed = -55.0 }, { channel = 3, body = "cpu", offset = -16.0, noise = 0.2 }]
 
 [[chip.pwm]]
@@ -172,13 +174,18 @@ max_rpm = 1000
 stop = 20
 start = 30
 
+# Raised, SYS_FAN4 overshoots and comes back slowly: 2,150 RPM a few seconds after 100 %, then about 1,800 (22 Oct 2026). M5's
+# 2,142 was the overshoot.
 [[chip.fan]]
 channel = 3
 id = "sys4"
 pwm = 3
-max_rpm = 2140
+max_rpm = 1800
 stop = 18
 start = 24
+tau = 1.0
+surge = 12.0
+surge_tau = 8.0
 
 [[gpu]]
 id = "gpu"

@@ -230,6 +230,30 @@ fn a_resume_resets_every_control_to_its_firmware_mode() {
     assert_eq!((read(&dir.join("pwm1_enable")), read(&dir.join("pwm3_enable"))), ("2".into(), "5".into()));
 }
 
+/// The x570 desk's tachs as setup found them on the real one (§5.4): it87 keeps a reading 1.5 s, so on a 1 s tick each shows
+/// twice, and SYS_FAN4 overshoots a raise to 100 % and comes back to its own speed over some 20 s.
+#[test]
+fn the_x570_desk_tachs_repeat_and_sys_fan4_overshoots() {
+    let (mut sim, mut machine) = desk("x570-tachs", "x570-desk");
+    let sys4 = Key::hwmon("it8792_4008090b", "it87.2656", "pwm3");
+    let tach = Key::hwmon("it8792_4008090b", "it87.2656", "fan3");
+    sim.advance(1.0).unwrap();
+    machine.take(&sys4).unwrap();
+    machine.write(&sys4, 153).unwrap();
+    sim.advance(30.0).unwrap();
+    machine.write(&sys4, 255).unwrap();
+    let mut seen = Vec::new();
+    for _ in 0..30 {
+        sim.advance(1.0).unwrap();
+        let Sample::Value(r) = machine.read().rpms[&tach] else { panic!() };
+        seen.push(r as f64);
+    }
+    assert!(seen.windows(3).all(|w| (w[0] == w[1]) != (w[1] == w[2])), "each reading twice: {seen:?}");
+    let peak = seen.iter().copied().fold(0.0, f64::max);
+    let last = *seen.last().unwrap();
+    assert!(peak > 2050.0 && (last - 1800.0).abs() < 1800.0 * 0.03, "up to {peak}, back to {last}: {seen:?}");
+}
+
 #[test]
 fn the_simulator_knows_what_pairing_would_find() {
     let (sim, _) = desk("measured", "render-burst");

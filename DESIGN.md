@@ -1,6 +1,6 @@
 # Penna — design specification
 
-Draft 3 · 21 October 2026 · status: decisions approved (§11), UI quality bar added (§8.6), M0–M6 done, design review 01 approved (milestone D, §11.1), design review 03 approved (milestone D2, §11.3). Penna 0.7.2 runs as a service on this desk and controls the 3090, and setup has measured every fan here (M7). Draft 3 widens Penna from this desk to any workstation or laptop, with automatic setup, generated curves and a Defaults profile: design review 02 (§11.2) was approved the same day. M5 was done on 22 Oct 2026: Penna drives every fan on this desk, and it87 is Verified.
+Draft 3 · 21 October 2026 · status: decisions approved (§11), UI quality bar added (§8.6), M0–M6 done, design review 01 approved (milestone D, §11.1), design review 03 approved (milestone D2, §11.3). Penna 0.7.3 runs as a service on this desk and controls the 3090, and setup has measured every fan here (M7). Draft 3 widens Penna from this desk to any workstation or laptop, with automatic setup, generated curves and a Defaults profile: design review 02 (§11.2) was approved the same day. M5 was done on 22 Oct 2026: Penna drives every fan on this desk, and it87 is Verified.
 
 Companion: design review 01 — mockups in real theme tokens, live motion prototypes, and eight calls before QML — is published as an artifact (https://claude.ai/artifact/DmFftUzWVBd11NNBv4e8aK). Its source is `design/penna-design-review.html`.
 
@@ -294,11 +294,11 @@ Setup is one automatic run that takes a machine from Defaults to proposed curves
 | 2. Write test | Take each control, write two values, read back (§5.1). | 5 s per control, all at once |
 | 3. Pairing | Find which tachs each control turns (§5.2). | 6 s to settle, then 12 s per control |
 | 4. Roles | Suggest what each fan does (§5.3). | — |
-| 5. Calibration | Measure each fan's duty → RPM (§5.4). | about 90 s, all fans at once |
+| 5. Calibration | Measure each fan's duty → RPM (§5.4). | about 3 min, all fans at once |
 | 6. Load check | Optional: run the CPU flat out for 3 minutes on the proposed curve (§5.5). | 3 min |
 | 7. Review | The user confirms roles and reviews the generated curves, which arrive as a draft (§5.5). | — |
 
-Without the load check, a desk with eight controls takes about four minutes.
+Without the load check, a desk with eight controls takes about five minutes. *(Four until 0.7.3, which reads each step for longer, §5.4.)*
 
 *(D2, §11.3.)* Setup opens on a start screen that says what will happen, how long it takes and what the guards are. The load check is its only option, on by default on a desktop and off on a laptop running on battery. While setup runs, its controls are `measuring` (§4.6) and the bar shows `fan-clock` (§8.1).
 
@@ -357,6 +357,8 @@ Per control, with its tach paired. Fans are calibrated all at once, each against
 - **A duty counts from the first tick the loop shows it written.** The fan is taken on one tick and written on the next, and it87 caches the tach for 1.5 s. Counting from the request, a re-measure read three ticks of the firmware's own speed as steady and recorded 938 RPM at 100 %.
 - **A step that turns the fan faster than the step above ends the descent there**, by as much as pairing calls a rise (§5.2). That step above becomes the fan's lowest duty, and the review says why. Written 0 %, this desk's SYS_FAN1 runs at full speed.
 - **Calibration after a confirmed role carries on from where the run stopped.** It keeps what the run measured above that point.
+
+*(M7, after the third run on this desk, 22 Oct 2026.)* "Stable" is judged on three readings 2 s apart. it87 reads the chip at most every 1.5 s, so on a 1 s tick every other reading repeats the last, and a repeat always passed "the last two within 1.5 %": a fan still slowing was read as steady. On the test rig this put CPU_FAN's points up to 4 % high. And a fan whose three readings all move one way at 10 s gets up to 30 s. This desk's SYS_FAN4 overshoots a raise: at 100 % it read 2,149 RPM, then 2,045, 1,934 and 1,854, still falling when the 10 s cap took it. A point now takes about 8 s, not 5, and calibration on this desk about 3 minutes.
 
 NVML fans skip steps 1–2: Penna records % → RPM over 30–100 % for the axis only. `levels` controls record the RPM at each level.
 
@@ -1080,7 +1082,13 @@ Milestones, each ending in something visible:
   - **Fixed in 0.7.2:** each reading is checked against the duty the loop shows it wrote on the tick before (§5.1), and a header the loop finds contested is `reverts`. The rig in `tests/setup.rs` can wake each tick up to 2 ms late and run a 2 s tick: on the old write test 12 of 24 late clocks and the 2 s tick fail as this desk did, and a whole run on 12 late clocks now measures the same as on an exact one. 164 Rust tests.
   - The GPU fans measured again: GPU fan 1 stops below 40 % as before, GPU fan 2 below 40 % where the first run found 35 %.
 
-  Still to do: run setup again on this desk with 0.7.2, and the simulated drivers when M9 adds them.
+  **The third run (22 Oct 2026, 0.7.2)** measured every fan. Every header passed the write test, pairing agreed with M5 again, and the four fixes held on the hardware: SYS_FAN1 is measured down to 5 % with no 0 % point, SYS_FAN5_PUMP reads 1,726 RPM at 100 % (M5: 1,726), and its re-measure took 63 s. SYS_FAN6_PUMP is saved as empty. The GPU fans stop below 40 %, both of them this time, and GPU fan 1 turned only 294 RPM at 40 %. Every point matched the first run's within about 3 %, except SYS_FAN4 at 100 %: 1,834 RPM, where the first run read 2,096 and M5 2,142.
+  - **SYS_FAN4, measured alone with `penna setup SYS_FAN4`** while its tach was recorded from the tick stream every second: raised to 100 %, it reads 1,607, 2,149, 2,045, 1,934 and 1,854 RPM, each twice. It overshoots, and comes back over some 20 s. The write test shows the same at 80 %: 1,890 RPM, where it holds about 1,610. So M5's 2,142 and the first run's 2,096 were the overshoot. The descent followed the fall, which is part of why SYS_FAN4 looks flat from 65 to 90 %.
+  - **Every reading twice** is it87's 1.5 s cache on a 1 s tick, on both chips. "Stable" compared the last two readings, and a repeat always passes.
+  - **Fixed in 0.7.3** (§5.4): "stable" is judged on readings 2 s apart, and a fan still moving one way at 10 s gets up to 30 s. The rig's tachs now repeat as it87's do, and it has a SYS_FAN4 that overshoots: every point of five fans must be within 3 % of the fan's steady speed, which the old rule failed by 4 % on CPU_FAN. `x570-desk` has the cache and the overshoot too. Calibration takes 177 s on the rig where it took 99, and `penna setup` and the plugin say about five minutes. 165 Rust tests.
+  - The journal and the studio said "below its 30 % floor" for the GPU fans, whose floor is now 40 %. Both name the real floor.
+
+  Still to do: run setup again on this desk with 0.7.3, and the simulated drivers when M9 adds them.
 - **M8** — **Generated curves** (§5.5): per role and profile from setup's measurements, the CPU load check, and the review step.
 - **M9** — **Laptops and other drivers:**
   - `levels`, `firmware-curve`, `modes` and `platform` controls, amdgpu included;

@@ -705,7 +705,7 @@ fn setup_measures_the_x570_desk_from_a_fresh_install() {
     // Roles confirmed in the review are kept with the measurements. The case fan on a pump header, held at 50 % until now, is
     // measured below it at once, on this connection (§11.3 call 7).
     let r = c.call(json!({"op": "setup.roles", "roles": {format!("{it8792}/pwm1"): "case", "PCH_FAN": "chipset"}}));
-    assert_eq!(r["result"]["text"], "2 roles confirmed; measuring SYS_FAN5_PUMP below 50 %, about a minute", "{r}");
+    assert_eq!(r["result"]["text"], "2 roles confirmed; measuring SYS_FAN5_PUMP below 50 %, about a minute and a half", "{r}");
     let measured = fs::read_to_string(dir.join("tree/var/lib/penna/measured.toml")).unwrap();
     let m: toml::Value = toml::from_str(&measured).unwrap();
     let first = m["control"].as_array().unwrap().iter().find(|c| c["key"].as_str() == Some(&format!("{it8792}/pwm1"))).unwrap().clone();

@@ -53,6 +53,10 @@ struct FanModel {
     g: f64,
     /// Full speed at 0 %, as this desk's SYS_FAN1 runs.
     races_at_zero: bool,
+    /// Raised, it overshoots by this many RPM per % and comes back over `surge_tau` seconds, as this desk's SYS_FAN4 does: 2,150
+    /// RPM a few seconds after 100 %, 1,850 ten seconds later and still falling (22 Oct 2026).
+    surge: f64,
+    surge_tau: f64,
 }
 
 impl FanModel {
@@ -72,14 +76,21 @@ struct Channel {
     mode: ControlMode,
     raw: u32,
     rpm: f64,
-    /// What the tach reads: a second behind, as it87 caches the chip for 1.5 s.
+    /// What the tach reads: it87 reads the chip at most every 1.5 s, so on a 1 s tick a reading is a second or two old, and
+    /// every other one repeats the last.
     shown: f64,
     spinning: bool,
     writes: u32,
+    /// The duty it last ran at, and the overshoot still to come back from.
+    duty: f64,
+    boost: f64,
 }
 
 struct Desk {
     channels: Vec<Channel>,
+    /// Seconds since the desk was built, and when it87 last read the chip.
+    clock: f64,
+    read_at: f64,
     gpu_manual: bool,
     gpu_percent: f64,
     gpu_rpm: f64,
@@ -87,7 +98,7 @@ struct Desk {
 }
 
 fn headers() -> Vec<Header> {
-    let f = |max, stop, start, min, g| Some(FanModel { max, stop, start, min, g, races_at_zero: false });
+    let f = |max, stop, start, min, g| Some(FanModel { max, stop, start, min, g, races_at_zero: false, surge: 0.0, surge_tau: 1.0 });
     vec![
         Header { n: 1, name: "CPU_FAN", role: Some("cpu"), fan: f(1660.0, 18.0, 24.0, 360.0, 0.95), firmware: 27.0, reverts: false },
         // Never stops: 830 RPM down to 5 %, and full speed at 0 % (setup on this desk, 22 Oct 2026).
@@ -95,7 +106,7 @@ fn headers() -> Vec<Header> {
             n: 2,
             name: "SYS_FAN1",
             role: None,
-            fan: Some(FanModel { max: 2190.0, stop: 0.0, start: 0.0, min: 830.0, g: 1.2, races_at_zero: true }),
+            fan: Some(FanModel { races_at_zero: true, ..f(2190.0, 0.0, 0.0, 830.0, 1.2).unwrap() }),
             firmware: 27.0,
             reverts: false,
         },
@@ -109,9 +120,17 @@ fn headers() -> Vec<Header> {
             reverts: false,
         },
         Header { n: 5, name: "SYS_FAN6_PUMP", role: Some("pump-header"), fan: None, firmware: 60.0, reverts: false },
-        Header { n: 6, name: "SYS_FAN4", role: None, fan: f(2140.0, 18.0, 24.0, 520.0, 0.69), firmware: 40.0, reverts: true },
+        Header { n: 6, name: "SYS_FAN3", role: None, fan: f(2140.0, 18.0, 24.0, 520.0, 0.69), firmware: 40.0, reverts: true },
         // A liquid cooler's pump on CPU_OPT: fast, and flat across most duties.
         Header { n: 7, name: "CPU_OPT", role: Some("cpu-opt"), fan: f(2600.0, 20.0, 26.0, 1600.0, 0.8), firmware: 70.0, reverts: false },
+        Header {
+            n: 8,
+            name: "SYS_FAN4",
+            role: None,
+            fan: Some(FanModel { surge: 9.0, surge_tau: 8.0, ..f(1800.0, 20.0, 24.0, 700.0, 0.8).unwrap() }),
+            firmware: 40.0,
+            reverts: false,
+        },
     ]
 }
 
@@ -121,10 +140,21 @@ impl Desk {
             .into_iter()
             .map(|h| {
                 let rpm = h.fan.map_or(0.0, |f| f.rpm(h.firmware, true));
-                Channel { raw: raw(h.firmware), mode: ControlMode::Automatic(2), rpm, shown: rpm, spinning: rpm > 0.0, writes: 0, h }
+                let spinning = rpm > 0.0;
+                Channel {
+                    raw: raw(h.firmware),
+                    mode: ControlMode::Automatic(2),
+                    rpm,
+                    shown: rpm,
+                    spinning,
+                    writes: 0,
+                    duty: h.firmware,
+                    boost: 0.0,
+                    h,
+                }
             })
             .collect();
-        Desk { channels, gpu_manual: false, gpu_percent: 0.0, gpu_rpm: 0.0, cpu_temp: 45.0 }
+        Desk { channels, clock: 0.0, read_at: -2.0, gpu_manual: false, gpu_percent: 0.0, gpu_rpm: 0.0, cpu_temp: 45.0 }
     }
 
     fn inventory(&self) -> Inventory {
@@ -264,6 +294,11 @@ impl Desk {
 
     /// One second passes: firmware that takes headers back does, and every fan moves a second towards its duty.
     fn advance(&mut self) {
+        let read = self.clock - self.read_at >= 1.5;
+        if read {
+            self.read_at = self.clock;
+        }
+        self.clock += 1.0;
         for c in &mut self.channels {
             if c.h.reverts && c.mode != ControlMode::Automatic(2) {
                 c.mode = ControlMode::Automatic(2);
@@ -274,14 +309,19 @@ impl Desk {
                 ControlMode::Manual => c.raw as f64 * 100.0 / 255.0,
                 _ => c.h.firmware,
             };
-            c.shown = c.rpm;
+            if read {
+                c.shown = c.rpm;
+            }
             let Some(f) = c.h.fan else { continue };
             if c.spinning && duty < f.stop {
                 c.spinning = false;
             } else if !c.spinning && duty >= f.start {
                 c.spinning = true;
             }
+            c.boost = (c.boost + f.surge * (duty - c.duty).max(0.0)) * (-1.0 / f.surge_tau).exp();
+            c.duty = duty;
             let target = f.rpm(duty, c.spinning);
+            let target = if target > 0.0 { target + c.boost } else { 0.0 };
             c.rpm += (target - c.rpm) * (1.0 - (-1.0f64 / 1.4).exp());
             if target == 0.0 && c.rpm < 20.0 {
                 c.rpm = 0.0;
@@ -392,9 +432,9 @@ fn setup_measures_this_desk_and_hands_every_fan_back() {
 
     rig.until(Step::Pairing, 50.0);
     assert_eq!(rig.progress(&pwm(1)).write, Some(WriteResult::Ok), "{:?}", rig.progress(&pwm(1)));
-    let sys4 = rig.progress(&pwm(6));
-    assert_eq!(sys4.write, Some(WriteResult::Reverts), "{sys4:?}");
-    assert!(sys4.write_detail.as_deref().unwrap().contains("its firmware took it back (pwm_enable 2"), "{sys4:?}");
+    let sys3 = rig.progress(&pwm(6));
+    assert_eq!(sys3.write, Some(WriteResult::Reverts), "{sys3:?}");
+    assert!(sys3.write_detail.as_deref().unwrap().contains("its firmware took it back (pwm_enable 2"), "{sys3:?}");
 
     rig.until(Step::Calibration, 200.0);
     let p = rig.setup.progress();
@@ -416,7 +456,8 @@ fn setup_measures_this_desk_and_hands_every_fan_back() {
     assert!(pch.role == Role::Chipset && pch.may_stop, "the BIOS stopped it during the idle sample: {pch:?}");
     let pump = role(4);
     assert!(pump.role == Role::Case && pump.confirm, "{pump:?}");
-    assert!(pump.reason.starts_with("On a pump header, but 1,7"), "{pump:?}");
+    // Pairing's highest reading in its 6 s at 100 %, a little under the fan's top: the tach reads 2 s at a time.
+    assert!(pump.reason.starts_with("On a pump header, but 1,6") && pump.reason.contains(": a case fan."), "{pump:?}");
     assert_eq!(rig.progress(&gpu_fan()).suggestion.unwrap().role, Role::Gpu);
     assert_eq!(rig.progress(&pwm(4)).lowest, Some(50.0), "held at 50 % until confirmed");
     let opt = role(7);
@@ -429,7 +470,7 @@ fn setup_measures_this_desk_and_hands_every_fan_back() {
     assert_eq!(rig.progress(&pwm(3)).lowest, None, "measured to a stop, as its BIOS stops it");
 
     rig.until(Step::Review, 400.0);
-    assert!(rig.now < 330.0, "about four minutes without the load check; took {} s", rig.now);
+    assert!(rig.now < 330.0, "about five minutes without the load check; took {} s", rig.now);
     let m = rig.setup.measured(1.0e9);
     let cal = |n: u32| m.get(&pwm(n)).unwrap().clone();
     // The stop duty is the lowest 5 % step that still turns the fan; the start is the first 2 % step up that spins it.
@@ -442,12 +483,15 @@ fn setup_measures_this_desk_and_hands_every_fan_back() {
     assert_eq!((cal(4).stop, cal(4).lowest), (None, Some(50.0)), "the pump header stops at 50 %");
     assert!(cal(7).stop.is_none() && cal(7).calibration.iter().all(|p| p[0] >= 50.0), "the pump is never taken below 50 %: {:?}", cal(7));
     assert_eq!(cal(4).calibration.first().unwrap()[0], 50.0);
-    for n in [1, 2, 3, 4] {
+    // Each point is the fan's steady speed: SYS_FAN4's 100 % too, which it overshoots by 400 RPM and comes back from slowly.
+    for n in [1, 2, 3, 4, 8] {
         let t = &cal(n).calibration;
+        let f = headers()[n as usize - 1].fan.unwrap();
         assert!(t.windows(2).all(|w| w[0][0] < w[1][0] && w[0][1] < w[1][1] + 30.0), "pwm{n}'s table rises: {t:?}");
-        let top = t.last().unwrap();
-        let max = headers()[n as usize - 1].fan.unwrap().max;
-        assert!(top[0] == 100.0 && (top[1] - max).abs() < max * 0.03, "pwm{n} reaches {max} RPM at 100 %: {top:?}");
+        for p in t {
+            let steady = f.rpm(p[0], true);
+            assert!((p[1] - steady).abs() < steady * 0.03, "pwm{n} at {} %: {} RPM, where it settles at {steady:.0}: {t:?}", p[0], p[1]);
+        }
     }
     assert!(cal(1).spin_up.is_some_and(|s| s > 0.0 && s <= 10.0), "{:?}", cal(1));
     let gpu = m.get(&gpu_fan()).unwrap();
@@ -488,7 +532,7 @@ fn the_write_test_reads_back_what_the_loop_wrote_whenever_the_tick_wakes() {
     for seed in 0..24 {
         let mut rig = Rig::late(seed);
         rig.until(Step::Pairing, 50.0);
-        for n in [1, 2, 3, 4, 5, 7] {
+        for n in [1, 2, 3, 4, 5, 7, 8] {
             let c = rig.progress(&pwm(n));
             assert_eq!(c.write, Some(WriteResult::Ok), "seed {seed}, pwm{n}: {c:?}");
         }
@@ -501,7 +545,7 @@ fn the_write_test_reads_back_what_the_loop_wrote_whenever_the_tick_wakes() {
 fn the_write_test_holds_on_a_two_second_tick() {
     let mut rig = Rig { dt: 2.0, ..Rig::new() };
     rig.until(Step::Pairing, 60.0);
-    for n in [1, 2, 3, 4, 5, 7] {
+    for n in [1, 2, 3, 4, 5, 7, 8] {
         let c = rig.progress(&pwm(n));
         assert_eq!(c.write, Some(WriteResult::Ok), "pwm{n}: {c:?}");
     }
@@ -526,7 +570,7 @@ fn a_case_fan_confirmed_on_a_pump_header_is_measured_on_below_50_percent() {
     rig.setup = Setup::calibrate(rig.desk.input(), std::slice::from_ref(&sys5), rig.now);
     let start = rig.now;
     rig.until(Step::Review, start + 120.0);
-    assert!(rig.now - start <= 60.0, "about a minute, from where the first run stopped; took {} s", rig.now - start);
+    assert!(rig.now - start <= 90.0, "about a minute and a half, from where the first run stopped; took {} s", rig.now - start);
     let again = rig.setup.measured(1.0e9 + 300.0);
     let after = again.get(&pwm(4)).unwrap();
     let above = |t: &[[f64; 2]]| t.iter().filter(|p| p[0] > 50.0).copied().collect::<Vec<_>>();
@@ -537,7 +581,7 @@ fn a_case_fan_confirmed_on_a_pump_header_is_measured_on_below_50_percent() {
     assert!((now - was).abs() < was * 0.03, "50 %: {now} RPM, where the first run read {was}");
     assert_eq!((after.stop, after.start, after.lowest), (Some(20.0), Some(26.0), None), "{after:?}");
     assert_eq!(after.role, Some(Role::Case));
-    assert!(after.reason.as_deref().is_some_and(|r| r.starts_with("On a pump header, but 1,7")), "its reason stays: {after:?}");
+    assert!(after.reason.as_deref().is_some_and(|r| r.starts_with("On a pump header, but 1,6")), "its reason stays: {after:?}");
     for _ in 0..3 {
         rig.tick();
     }

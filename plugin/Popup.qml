@@ -331,7 +331,7 @@ Panel {
           Text {
             anchors.verticalCenter: parent.verticalCenter
             width: parent.width - setupButton.width - parent.spacing
-            text: "Measures every fan in about four minutes. Nothing changes until you save."
+            text: "Measures every fan in about five minutes. Nothing changes until you save."
             wrapMode: Text.Wrap
             color: root.dimColor
             font.family: root.fam

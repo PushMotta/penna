@@ -224,7 +224,7 @@ Item {
           Text {
             width: parent.width
             wrapMode: Text.Wrap
-            text: "About four minutes, and you will hear the fans. The machine should be idle: setup waits while it is busy."
+            text: "About five minutes, and you will hear the fans. The machine should be idle: setup waits while it is busy."
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption

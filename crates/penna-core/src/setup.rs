@@ -36,10 +36,18 @@ pub const CAL_DOWN: f64 = 5.0;
 pub const CAL_UP: f64 = 2.0;
 pub const CAL_SETTLE_MIN: f64 = 2.0;
 pub const CAL_SETTLE_MAX: f64 = 10.0;
-/// Stable: the last three readings within this share of their mean, and the last two this close.
+/// A fan still moving one way at `CAL_SETTLE_MAX` gets this long: this desk's SYS_FAN4 overshoots a raise to 100 % by 300 RPM
+/// and is still coming back 10 s later.
+pub const CAL_DRIFT_MAX: f64 = 30.0;
+/// Readings are judged this far apart: it87 reads the chip at most every 1.5 s, so on a 1 s tick every other reading repeats
+/// the last, and two that are equal say nothing about whether the fan has stopped moving.
+pub const CAL_SPAN: f64 = 2.0;
+/// Stable: three readings `CAL_SPAN` apart within this share of their mean, and the last two this close. Moving: all three
+/// one way, the first and last further apart than this share or `CAL_STILL_RPM`.
 pub const CAL_STABLE: f64 = 0.03;
 pub const CAL_STILL: f64 = 0.015;
 pub const CAL_STILL_RPM: f64 = 20.0;
+pub const CAL_DRIFT: f64 = 0.01;
 /// Seconds at each duty while a stopped fan is stepped up.
 pub const CAL_UP_WAIT: f64 = 2.0;
 /// A CPU fan is never stopped longer than this (§5.3); other fans get up to the second.
@@ -58,7 +66,7 @@ pub const FIRMWARE_STOP_SECONDS: f64 = 10.0;
 pub const GUARD_CPU: f64 = 85.0;
 pub const GUARD_GPU: f64 = 80.0;
 /// What the last step of calibration usually takes on a desk: for the time left.
-const CAL_ESTIMATE: f64 = 90.0;
+const CAL_ESTIMATE: f64 = 180.0;
 /// Read-back tolerance, as in the control loop (§6.4).
 const READBACK_TOLERANCE: f64 = 0.02;
 
@@ -216,7 +224,8 @@ struct Ctl {
     rise: Option<[f64; 3]>,
     suggestion: Option<Suggestion>,
     cal: Cal,
-    samples: Vec<f64>,
+    /// The tach since the duty was written: when, and what it read.
+    samples: Vec<(f64, f64)>,
     table: Vec<[f64; 2]>,
     stop: Option<f64>,
     start: Option<f64>,
@@ -951,7 +960,7 @@ impl Setup {
                 c.status = "its tach didn't read".to_owned();
                 continue;
             };
-            c.samples.push(r);
+            c.samples.push((now, r));
             match c.cal {
                 Cal::Waiting | Cal::Done => {}
                 Cal::Down { duty, since } => {
@@ -1007,7 +1016,7 @@ impl Setup {
                         c.start = Some(duty);
                         c.cal = Cal::Spin { duty, since };
                         c.samples.clear();
-                        c.samples.push(r);
+                        c.samples.push((now, r));
                         c.status = format!("spinning up at {duty:.0} %");
                         continue;
                     }
@@ -1229,21 +1238,26 @@ fn tach_rpm(readings: &Readings, tachs: &[Key]) -> Option<f64> {
     (!vals.is_empty()).then(|| vals.iter().sum::<f64>() / vals.len() as f64)
 }
 
-/// A steady reading once a duty has had time to settle (§5.4): the last three within 3 % of their mean and no longer moving,
-/// after at least 2 s, or after 10 s whatever they do; then the latest of them. A fan still closing on its speed can pass the 3 %
-/// while it reads low.
-fn settled(samples: &[f64], held: f64) -> Option<f64> {
-    if held < CAL_SETTLE_MIN || samples.len() < 3 {
-        return None;
-    }
-    let last = &samples[samples.len() - 3..];
-    let mean = last.iter().sum::<f64>() / 3.0;
-    let stable = if mean < STOPPED_RPM {
-        last.iter().all(|r| *r < STOPPED_RPM)
-    } else {
-        last.iter().all(|r| (r - mean).abs() <= mean * CAL_STABLE) && (last[2] - last[1]).abs() <= (last[2] * CAL_STILL).max(CAL_STILL_RPM)
+/// A steady reading once a duty has had time to settle (§5.4), judged on three readings `CAL_SPAN` apart, the latest last: all
+/// within 3 % of their mean and the last two within 1.5 %, after at least 2 s. A fan still closing on its speed can pass the 3 %
+/// while it reads low. After 10 s the latest reading counts whatever it is, unless the three move one way: then up to 30 s.
+/// `samples` are (seconds, RPM), `held` the seconds since the duty was asked for.
+fn settled(samples: &[(f64, f64)], held: f64) -> Option<f64> {
+    let &(t, a) = samples.last()?;
+    // Ticks wake a little late, by a different amount each time: a reading 1.9 s before is the one 2 s before.
+    let before = |t: f64| samples.iter().rev().find(|(s, _)| *s <= t - CAL_SPAN + 0.1).copied();
+    let Some([c, b]) = before(t).and_then(|(tb, b)| before(tb).map(|(_, c)| [c, b])) else {
+        return (held >= CAL_SETTLE_MAX).then_some(a);
     };
-    (stable || held >= CAL_SETTLE_MAX).then_some(last[2])
+    let mean = (a + b + c) / 3.0;
+    let moving = ((c < b && b < a) || (c > b && b > a)) && (a - c).abs() > (a * CAL_DRIFT).max(CAL_STILL_RPM);
+    let stable = if mean < STOPPED_RPM {
+        [a, b, c].iter().all(|r| *r < STOPPED_RPM)
+    } else {
+        !moving && [a, b, c].iter().all(|r| (r - mean).abs() <= mean * CAL_STABLE) && (a - b).abs() <= (a * CAL_STILL).max(CAL_STILL_RPM)
+    };
+    let done = (stable && held >= CAL_SETTLE_MIN) || (held >= CAL_SETTLE_MAX && !moving) || held >= CAL_DRIFT_MAX;
+    done.then_some(a)
 }
 
 fn rpm(v: f64) -> String {
@@ -1268,15 +1282,26 @@ fn mmss(s: f64) -> String {
 mod tests {
     use super::*;
 
+    /// Readings a second apart from `t`.
+    fn tach(t: f64, rpms: &[f64]) -> Vec<(f64, f64)> {
+        rpms.iter().enumerate().map(|(i, r)| (t + i as f64, *r)).collect()
+    }
+
     #[test]
-    fn settling_waits_for_three_close_readings_or_ten_seconds() {
-        assert_eq!(settled(&[1000.0, 1000.0], 3.0), None, "three readings first");
-        assert_eq!(settled(&[900.0, 1000.0, 1010.0], 1.0), None, "two seconds first");
-        assert_eq!(settled(&[1500.0, 1200.0, 1000.0], 3.0), None, "still falling");
-        assert_eq!(settled(&[1537.0, 1586.0, 1616.0], 5.0), None, "within 3 %, but still rising");
-        assert_eq!(settled(&[1000.0, 1010.0, 995.0], 3.0), Some(995.0));
-        assert_eq!(settled(&[1500.0, 1200.0, 1000.0], 10.0), Some(1000.0), "after 10 s, whatever it reads");
-        assert_eq!(settled(&[0.0, 0.0, 0.0], 2.0), Some(0.0));
+    fn settling_waits_for_three_close_readings_2_s_apart() {
+        assert_eq!(settled(&tach(1.0, &[1000.0, 1000.0, 1000.0]), 3.0), None, "three readings 2 s apart first");
+        assert_eq!(settled(&tach(1.0, &[900.0, 1000.0, 1010.0, 1005.0, 1000.0]), 1.0), None, "two seconds first");
+        assert_eq!(settled(&tach(1.0, &[1000.0, 1000.0, 1010.0, 1010.0, 995.0]), 5.0), Some(995.0));
+        assert_eq!(settled(&tach(1.0, &[1500.0, 1400.0, 1200.0, 1100.0, 1000.0]), 5.0), None, "still falling");
+        assert_eq!(settled(&tach(1.0, &[1537.0, 1560.0, 1586.0, 1600.0, 1616.0]), 5.0), None, "within 3 %, but still rising");
+        assert_eq!(settled(&tach(1.0, &[0.0, 0.0, 0.0, 0.0, 0.0]), 5.0), Some(0.0));
+        // it87 on a 1 s tick: each reading twice. The last two are equal, and the fan is still falling.
+        let sys4 = tach(1.0, &[1607.0, 1607.0, 2149.0, 2149.0, 2045.0, 2045.0, 1934.0, 1934.0, 1854.0, 1854.0]);
+        assert_eq!(settled(&sys4[..9], 9.0), None, "a repeat isn't a fan that stopped moving");
+        assert_eq!(settled(&sys4, 10.0), None, "still coming back from its overshoot at 10 s: it gets longer");
+        assert_eq!(settled(&sys4, 30.0), Some(1854.0), "after 30 s, whatever it reads");
+        let noisy = tach(1.0, &[1500.0, 1400.0, 1560.0, 1420.0, 1550.0, 1410.0, 1540.0, 1430.0, 1560.0, 1400.0]);
+        assert_eq!(settled(&noisy, 10.0), Some(1400.0), "one that only wanders counts at 10 s");
     }
 
     #[test]

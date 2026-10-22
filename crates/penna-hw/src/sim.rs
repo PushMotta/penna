@@ -145,6 +145,10 @@ pub struct Chip {
     pub pwms: Vec<PwmSpec>,
     #[serde(default, rename = "fan")]
     pub fans: Vec<FanSpec>,
+    /// Seconds the driver keeps its tach readings: it87 reads the chip at most every 1.5 s, so on a 1 s tick every other reading
+    /// repeats the last (§5.4). 0: every read is fresh.
+    #[serde(default)]
+    pub cache: f64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -203,6 +207,12 @@ pub struct FanSpec {
     /// Full speed when written 0 %, as the development desk's SYS_FAN1 runs (§5.4).
     #[serde(default)]
     pub races_at_zero: bool,
+    /// Raised, it overshoots by this many RPM per % and comes back over `surge_tau` seconds, as the development desk's SYS_FAN4
+    /// does (§5.4).
+    #[serde(default)]
+    pub surge: f64,
+    #[serde(default = "two")]
+    pub surge_tau: f64,
 }
 
 fn two() -> f64 {
@@ -322,6 +332,10 @@ impl Scenario {
 struct FanState {
     rpm: f64,
     spinning: bool,
+    /// The duty it last ran at, the overshoot still to come back from, and what its tach shows now.
+    duty: f64,
+    boost: f64,
+    shown: f64,
 }
 
 pub struct Sim {
@@ -331,6 +345,8 @@ pub struct Sim {
     rng: u64,
     temps: BTreeMap<String, f64>,
     fans: BTreeMap<String, FanState>,
+    /// When each chip with a cache last read its tachs.
+    read_at: BTreeMap<usize, f64>,
     gpu_on: Vec<bool>,
     boosts: BTreeMap<(usize, u32), f64>,
     active: BTreeSet<usize>,
@@ -358,6 +374,7 @@ impl Sim {
             t: 0.0,
             temps,
             fans: BTreeMap::new(),
+            read_at: BTreeMap::new(),
             boosts: BTreeMap::new(),
             active: BTreeSet::new(),
             fired: BTreeSet::new(),
@@ -500,8 +517,25 @@ impl Sim {
             self.step(h)?;
             self.t += h;
         }
+        self.read_cached()?;
         self.write_sensors(dt)?;
         Ok(events)
+    }
+
+    /// A chip with a cache reads its tachs when the daemon does, if its last reading is old enough; otherwise it shows that.
+    fn read_cached(&mut self) -> Result<()> {
+        for (ci, chip) in self.sc.chips.clone().iter().enumerate() {
+            if chip.cache <= 0.0 || self.read_at.get(&ci).is_some_and(|at| self.t - at < chip.cache - 1e-9) {
+                continue;
+            }
+            self.read_at.insert(ci, self.t);
+            let dir = self.chip_dir(chip);
+            for f in &chip.fans {
+                let shown = self.fans.get(&f.id).map_or(0.0, |st| st.shown);
+                put(&dir.join(format!("fan{}_input", f.channel)), &(shown.round() as i64).to_string())?;
+            }
+        }
+        Ok(())
     }
 
     fn faults(&mut self, events: &mut Vec<String>) -> Result<()> {
@@ -619,9 +653,14 @@ impl Sim {
                 } else {
                     0.0
                 };
+                st.boost = (st.boost + f.surge * (duty - st.duty).max(0.0)) * (-h / f.surge_tau).exp();
+                st.duty = duty;
+                let target = if target > 0.0 { target + st.boost } else { 0.0 };
                 st.rpm += (target - st.rpm) * (1.0 - (-h / f.tau).exp());
-                let shown = if stuck { 0.0 } else { st.rpm };
-                put(&dir.join(format!("fan{}_input", f.channel)), &(shown.round() as i64).to_string())?;
+                st.shown = if stuck { 0.0 } else { st.rpm };
+                if chip.cache <= 0.0 {
+                    put(&dir.join(format!("fan{}_input", f.channel)), &(st.shown.round() as i64).to_string())?;
+                }
             }
         }
         // GPUs.

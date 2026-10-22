@@ -79,7 +79,7 @@ enum Command {
     Release { control: String },
     /// Rename a sensor, tach or control (by key or current name).
     Label { key: String, label: String },
-    /// Measure every fan (DESIGN.md §5): write test, pairing, roles and calibration, about four minutes. Ctrl-C stops it and
+    /// Measure every fan (DESIGN.md §5): write test, pairing, roles and calibration, about five minutes. Ctrl-C stops it and
     /// hands every fan back.
     Setup {
         /// Only these controls (names or keys), to measure one fan again.

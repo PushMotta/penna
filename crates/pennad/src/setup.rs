@@ -189,7 +189,7 @@ pub fn roles(live: &mut Live, inventory: &Inventory, out: &mut Trace, conn: u64,
         live.plan.carry(&keys, inventory, &live.measured);
         live.setup =
             Some(SetupRun { owner: conn, run: Setup::calibrate(input, &below, live.now), saved: false, last_step: Step::Calibration });
-        text = format!("{text}; measuring {} below 50 %, about a minute", names.join(" and "));
+        text = format!("{text}; measuring {} below 50 %, about a minute and a half", names.join(" and "));
         out.note(live.now, Level::Info, None, format!("Setup: measuring {} below 50 %", names.join(" and ")));
     }
     Ok(text)
