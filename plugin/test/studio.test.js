@@ -55,6 +55,7 @@ test("the inspector says what the output is doing", () => {
   assert.equal(M.inspector({ held: false }, gpuFan, { state: "handback", rpm: 0 }, {}), "Below the 40 % floor: the driver runs this fan (0 RPM)")
   assert.equal(M.inspector({ held: false }, cooler, { state: "curve", trend: "steady" }, {}), "Following the curve")
   assert.equal(M.limitsLine(cooler), "min 30 % · stalls below 20 % · steps ↑20 ↓5 %/s")
+  assert.equal(M.limitsLine(gpuFan), "Driver below 40 %, which may stop it · steps ↑20 ↓5 %/s", "the measured stop, not the driver's 30 %")
 })
 
 test("triggers and flats edit through the same handles", () => {

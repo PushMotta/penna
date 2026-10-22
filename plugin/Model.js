@@ -145,7 +145,7 @@ function hero(tick, connected, nowSec, lastTickSec) {
 
 // ---------------------------------------------------------------- setup and Defaults (design review 03, §11.3)
 
-var STEP_NAME = { "idle": "Idle sample", "write-test": "Write test", "pairing": "Pairing", "roles": "Roles", "calibration": "Calibration", "review": "Review" }
+var STEP_NAME = { "idle": "Idle sample", "write-test": "Write test", "pairing": "Pairing", "roles": "Roles", "calibration": "Calibration", "load-check": "Load check", "review": "Review" }
 
 function isNvmlKey(key) { return String(key).indexOf("nvml/") === 0 }
 
@@ -545,7 +545,7 @@ function inspector(curveLive, control, controlLive, tick) {
 
 function limitsLine(control) {
   if (!control) return ""
-  if (control.nvml) return "Driver below " + control.nvml.min + " %" + (control.may_stop ? ", which may stop it" : "") + " · steps ↑" + control.step_up + " ↓" + control.step_down + " %/s"
+  if (control.nvml) return "Driver below " + nvmlFloor(control) + " %" + (control.may_stop ? ", which may stop it" : "") + " · steps ↑" + control.step_up + " ↓" + control.step_down + " %/s"
   var parts = ["min " + Math.round(control.floor) + " %"]
   if (control.stop !== null && control.stop !== undefined) parts.push((control.may_stop ? "stops below " : "stalls below ") + Math.round(control.stop) + " %")
   parts.push("steps ↑" + control.step_up + " ↓" + control.step_down + " %/s")

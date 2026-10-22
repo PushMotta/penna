@@ -127,6 +127,9 @@ pub enum Op {
     DraftSave,
     #[serde(rename = "draft.discard")]
     DraftDiscard,
+    /// Curves generated from what setup measured (§5.5), as this connection's draft: what setup proposes, without measuring again.
+    #[serde(rename = "draft.generate")]
+    DraftGenerate,
     /// Setup (§5): measures every fan Penna can drive, or the ones named. Bound to this connection: when it closes, setup stops.
     #[serde(rename = "setup.start")]
     SetupStart {
@@ -167,6 +170,7 @@ impl Op {
         "draft.limits",
         "draft.save",
         "draft.discard",
+        "draft.generate",
         "setup.start",
         "setup.stop",
         "setup.roles",
@@ -203,6 +207,7 @@ impl Op {
             Op::DraftLimits { .. } => "draft.limits",
             Op::DraftSave => "draft.save",
             Op::DraftDiscard => "draft.discard",
+            Op::DraftGenerate => "draft.generate",
             Op::SetupStart { .. } => "setup.start",
             Op::SetupStop => "setup.stop",
             Op::SetupRoles { .. } => "setup.roles",

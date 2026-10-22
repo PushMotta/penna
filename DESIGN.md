@@ -1,6 +1,6 @@
 # Penna — design specification
 
-Draft 3 · 21 October 2026 · status: decisions approved (§11), UI quality bar added (§8.6), M0–M6 done, design review 01 approved (milestone D, §11.1), design review 03 approved (milestone D2, §11.3). Penna 0.7.3 runs as a service on this desk and controls the 3090, and setup has measured every fan here (M7). Draft 3 widens Penna from this desk to any workstation or laptop, with automatic setup, generated curves and a Defaults profile: design review 02 (§11.2) was approved the same day. M5 was done on 22 Oct 2026: Penna drives every fan on this desk, and it87 is Verified.
+Draft 3 · 21 October 2026 · status: decisions approved (§11), UI quality bar added (§8.6), M0–M6 done, design review 01 approved (milestone D, §11.1), design review 03 approved (milestone D2, §11.3). Penna 0.8.0 runs as a service on this desk and controls the 3090, and setup has measured every fan here (M7). Draft 3 widens Penna from this desk to any workstation or laptop, with automatic setup, generated curves and a Defaults profile: design review 02 (§11.2) was approved the same day. M5 was done on 22 Oct 2026: Penna drives every fan on this desk, and it87 is Verified.
 
 Companion: design review 01 — mockups in real theme tokens, live motion prototypes, and eight calls before QML — is published as an artifact (https://claude.ai/artifact/DmFftUzWVBd11NNBv4e8aK). Its source is `design/penna-design-review.html`.
 
@@ -404,6 +404,17 @@ On this desk, Balanced CPU comes out as: floor to 55 °C, 50 % airflow at 70 °C
 
 **Generated, then yours.** Once saved, generated curves are ordinary curves. Running setup again proposes a new draft. It never overwrites a saved edit unless the user saves the draft. The table above is the starting point to be tuned on real machines, not a promise; the load check is how it is held to account.
 
+*(M8, as built, 22 Oct 2026.)*
+- **A role's fans share its curve through their mean airflow.** The curve's duty gives them, on average, the airflow it was placed at. Its floor is the lowest of theirs, and the plan lifts each fan to its own (§4.5). Each fan's maximum is the lowest duty at which its monotonic table reaches 98 % of its top speed: this desk's SYS_FAN4 gets 70 %.
+- **Five points per graph:** the floor, then 25, 50, 75 and 100 % airflow at temperatures spread evenly between the anchors. A GPU curve adds a 0 % point 1 °C below its floor, so below it the fan goes back to the driver.
+- **Case fans** ramp from 15 °C above each source's idle to their cap, which they reach where that source's own curve of the same profile reaches 100 %.
+- **The chipset curve is one curve for all three profiles.** Its only anchor is idle: its temperatures are fixed.
+- **The GPU's target is NVML's acoustic threshold:** 83 °C on the 3090, which `nvidia-smi` calls its "Target Temperature Specification". Without one, the target is the limit less 10 °C.
+- **Ids and labels:** `cpu-quiet`, "CPU · Quiet"; `case-balanced` mixes `case-balanced-cpu` and `case-balanced-gpu`. Generating replaces curves with these ids, the starter's `cpu-quiet` included, and leaves every other curve alone.
+- **The draft keeps the profile that was on,** so it runs nothing until it is saved, and remembers what it was generated from. Confirmed roles generate it again from there, so a role given up leaves no curve behind. `draft.generate` makes the same draft from measurements already saved (§7.3).
+- **The load check** saves what setup measured before it starts. During it the Balanced profile runs on the draft; the review switches back to the profile that was on, and stopping setup takes the draft back. Passing the limit less 5 °C ends a pass in place of setup's 85 °C guard: the emergency rule (§6.3) stands behind it. A second pass waits until the CPU is within 10 °C of idle, or 2 minutes. Only Balanced's CPU curve moves. The plateau is the mean of the last 30 s. pennad loads its own threads, each at nice 19; the mock desk loads its simulated CPU. It is off for a run that measures only some fans again.
+- Not yet: firmware curves fitted to a firmware's own points, and laptop fans (M9).
+
 ### 5.6 Drift
 
 Once a fan is calibrated, Penna compares its RPM at the current duty with the table as it runs. A fan that turns more than 25 % slower than calibrated, steadily for 10 minutes, gets a `warn` event and a line on its card: "Front intake turns 30 % slower than when it was set up: dust, or a tired bearing." *Recalibrate* on the card measures it again.
@@ -639,9 +650,11 @@ A draft is validated like `penna check`; a refused change leaves the draft as it
 | ✎ `setup.start` | `controls` (omitted = all), `load_check` (bool) | `ok`; then `setup` events. Bound to this connection (§5) |
 | ✎ `setup.stop` | — | Every fan back to its original mode at once |
 | ✎ `setup.roles` | `roles` (control → role) | Confirms roles; the generated draft follows them |
-| ✎ `draft.generate` | `profiles` (omitted = all) | The studio body, with generated curves as this connection's draft (§5.5) |
+| ✎ `draft.generate` | — | The studio body, with generated curves as this connection's draft (§5.5). *(M8: always all three profiles.)* |
 
 A `setup` event carries the step, the control being measured, live readings ("Raising PWM 3 to 100 % — fan 4 rose 610 → 1,790 RPM"), the guard temperatures and, at the end, the results. Ticks gain `controls[].kind` with the kinds of §3.5, `controls[].tier` (§3.6), and `controls[].drift`.
+
+*(M8, as built.)* Setup's progress in the tick carries `load` while the load check runs (its pass, °C, the CPU fans' duty, and its result) and `proposed` once measuring is over: the curves setup generated, the anchors of their sources, the fans left alone and why, or why there is no draft. The studio's `draft` gains `generated`, the curves still as setup made them. Saving a generated draft switches to Balanced (§11.3 call 9). `$PENNA_SOCKET`, when set, is the only socket a client tries.
 
 **`tick` event.** UI-shaped: everything a surface draws, with no second request.
 
@@ -1101,6 +1114,14 @@ Milestones, each ending in something visible:
 
   Still to do: the simulated drivers when M9 adds them.
 - **M8** — **Generated curves** (§5.5): per role and profile from setup's measurements, the CPU load check, and the review step.
+
+  **In progress since 22 Oct 2026.** Built and tested on the mock desk and against this desk's own measurements, now a fixture (`test/fixtures/measured/x570-desk.toml`): 175 Rust tests, 24 plugin logic tests.
+  - **The generator** (`penna-core/src/generate.rs`): every curve of §5.5 but firmware and laptop curves, every fan's limits, all three profiles. Calibration tables are made monotonic here (§5.4, step 3, moved from M7).
+  - **The daemon** proposes the draft when measuring is over and again for confirmed roles. It runs the load check, and saving switches to Balanced. `draft.generate` is in the protocol.
+  - **`penna setup`** keeps one connection from start to save. It shows the load check's result, describes the proposed curves per group of fans and profile, and asks to save them. `--no-load-check` skips the check.
+  - **Two fixes on the way:** a client given `$PENNA_SOCKET` no longer falls back to this machine's daemon, and the GPU's limits line and inspector name its measured floor.
+
+  Still to do: the plugin's review of the proposed curves, the *Generated* marks and the anchors on the axis (§8.3, §11.3 call 9), and a run on this desk with the load check.
 - **M9** — **Laptops and other drivers:**
   - `levels`, `firmware-curve`, `modes` and `platform` controls, amdgpu included;
   - a Documented fixture per driver;

@@ -241,6 +241,24 @@ pub fn handle(live: &mut Live, inventory: &Inventory, out: &mut Trace, op: Op, u
             }
             return Ok(Some(studio(live, inventory, conn)));
         }
+        Op::DraftGenerate => {
+            if live.measured.controls.is_empty() {
+                return Err("Nothing has been measured yet: run setup first.".into());
+            }
+            let base = match &live.draft {
+                Some(d) if d.owner != conn => return Err(DRAFT_TAKEN.into()),
+                Some(d) => d.generated.clone().unwrap_or_else(|| d.config.clone()),
+                None => live.saved.clone(),
+            };
+            let g = penna_core::generate::generate(&base, inventory, &live.measured, live.cpu_model.as_deref());
+            if run_draft(live, inventory, conn, g.config)? {
+                note(out, None, format!("Generated {} curves, as a draft: nothing changes until it is saved", g.curves.len()));
+            }
+            if let Some(d) = live.draft.as_mut() {
+                d.generated = Some(base);
+            }
+            return Ok(Some(studio(live, inventory, conn)));
+        }
         Op::SetupStart { controls, load_check } => {
             let only = match controls {
                 Some(names) => {

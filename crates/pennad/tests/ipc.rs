@@ -788,6 +788,31 @@ fn setup_runs_the_load_check_on_the_proposed_balanced_curves() {
     d.stop();
 }
 
+/// `draft.generate` (§5.5): setup's curves from what it measured before, without measuring again, as this connection's draft.
+#[test]
+fn curves_are_generated_from_saved_measurements() {
+    let dir = fresh("generate");
+    fs::create_dir_all(&dir).unwrap();
+    let measured = dir.join("measured.toml");
+    fs::copy(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/fixtures/measured/x570-desk.toml"), &measured).unwrap();
+    let d = Daemon::start_scenario(&dir, "x570-desk", "tree", &["--speed", "20", "--measured", measured.to_str().unwrap()]);
+    let mut c = d.connect();
+    c.line();
+    let r = c.call(json!({"op": "draft.generate"}));
+    assert_eq!(r["ok"], true, "{r}");
+    let draft = &r["result"]["draft"];
+    assert_eq!((draft["mine"].as_bool(), draft["generated"].as_array().map(Vec::len)), (Some(true), Some(19)), "{draft}");
+    assert_eq!(r["result"]["profile"], "defaults", "nothing runs until it is saved");
+    let mut other = d.connect();
+    other.line();
+    assert_eq!(other.call(json!({"op": "draft.generate"}))["error"], "Another studio has unsaved changes.");
+    drop(other);
+    assert_eq!(c.call(json!({"op": "draft.save"}))["ok"], true);
+    let saved = fs::read_to_string(dir.join("tree/etc/penna/config.toml")).unwrap();
+    assert!(saved.contains("profile = \"balanced\"") && saved.contains("id = \"pump-balanced\""), "{saved}");
+    d.stop();
+}
+
 /// Setup's draft belongs to its connection: closing it leaves the curves unsaved and Defaults on, and keeps the measurements.
 #[test]
 fn setup_curves_go_with_their_connection() {
