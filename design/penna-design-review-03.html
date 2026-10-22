@@ -1,0 +1,2137 @@
+<title>Penna Design Review 03</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@600;700;800&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+  /* Layout: review 01's 1240px reading column and page tokens, so the two reviews read as one series. Mock frames take the
+     full column; callouts sit beside a frame on wide screens and stack under it on narrow ones. */
+  :root {
+    --ground: #ECEEF0;
+    --ground-2: #E1E5E9;
+    --ink: #1A1F25;
+    --ink-2: #5F6873;
+    --rule: #CDD3D9;
+    --page-accent: #2B5873;
+    --note: #C35F26;
+    --note-ink: #FFFFFF;
+    --frame: #D8DDE2;
+    --display: "Schibsted Grotesk", "IBM Plex Sans", system-ui, sans-serif;
+    --sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    --mono: "JetBrains Mono", "JetBrainsMono Nerd Font", ui-monospace, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #121518; --ground-2: #1A1E22; --ink: #E3E7EA; --ink-2: #97A0A9; --rule: #283038;
+      --page-accent: #8FBCD6; --note: #E27B3E; --note-ink: #121518; --frame: #1E2328; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #121518; --ground-2: #1A1E22; --ink: #E3E7EA; --ink-2: #97A0A9; --rule: #283038;
+    --page-accent: #8FBCD6; --note: #E27B3E; --note-ink: #121518; --frame: #1E2328; color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { background: var(--ground); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.5; }
+  .wrap { max-width: 1240px; margin: 0 auto; padding-block: 40px 88px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  h1, h2, h3 { font-family: var(--display); letter-spacing: -0.02em; text-wrap: balance; margin: 0; }
+  h1 { font-size: clamp(40px, 7vw, 64px); font-weight: 800; line-height: 1; }
+  h2 { font-size: 26px; font-weight: 700; }
+  h3 { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
+  p { margin: 0; max-width: 68ch; }
+  .eyebrow { font-weight: 600; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-2); }
+  .dek { font-size: 19px; line-height: 1.45; max-width: 62ch; margin-top: 16px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 6px 22px; margin-top: 20px; font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .meta b { color: var(--ink); font-weight: 600; }
+  section { margin-top: 60px; padding-top: 28px; border-top: 1px solid var(--rule); }
+  section > .eyebrow { margin-bottom: 6px; }
+  .lede { margin-top: 10px; color: var(--ink-2); font-size: 15px; }
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 28px; margin-top: 18px; }
+  .cols h3 { margin-bottom: 6px; }
+  a { color: var(--page-accent); }
+  code { font-family: var(--mono); font-size: 0.88em; background: var(--ground-2); padding: 1px 5px; border-radius: 3px; }
+  .small { font-size: 13px; color: var(--ink-2); }
+  h3.sub { margin-top: 46px; }
+
+  table { border-collapse: collapse; width: 100%; font-size: 14px; margin-top: 16px; }
+  th, td { text-align: left; padding: 9px 14px 9px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { font-weight: 600; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-2); }
+  td code { font-size: 12.5px; }
+  .tabnum { font-variant-numeric: tabular-nums; }
+  .tablewrap { overflow-x: auto; }
+
+  /* switchers */
+  .switcher { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px; margin-top: 18px; padding: 10px 14px; background: var(--ground-2); border: 1px solid var(--rule); }
+  .simbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px; margin-top: 18px; padding: 10px 14px; background: var(--ground-2); border: 1px solid var(--rule); }
+  .lbl { font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); }
+  .grp { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .seg { display: flex; flex-wrap: wrap; border: 1px solid var(--rule); }
+  .seg button, .pbtn { font: 500 13px var(--sans); background: transparent; color: var(--ink); border: 0; border-right: 1px solid var(--rule); padding: 6px 12px; cursor: pointer; }
+  .seg button:last-child { border-right: 0; }
+  .seg button[aria-pressed="true"] { background: var(--page-accent); color: var(--ground); }
+  .pbtn { border: 1px solid var(--rule); }
+  .pbtn:hover, .seg button:hover { background: color-mix(in srgb, var(--page-accent) 12%, transparent); }
+  .seg button[aria-pressed="true"]:hover { background: var(--page-accent); }
+  button:focus-visible, input:focus-visible, svg:focus-visible { outline: 2px solid var(--note); outline-offset: 2px; }
+  .swatch { display: inline-block; width: 10px; height: 10px; margin-right: 6px; vertical-align: -1px; border: 1px solid rgba(0,0,0,.25); }
+  body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 30; background: var(--ground); }
+
+  /* boards and callouts */
+  .board { margin-top: 22px; display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 28px; align-items: start; }
+  @media (max-width: 960px) { .board { grid-template-columns: minmax(0, 1fr); } }
+  .frame { position: relative; background: var(--frame); border: 1px solid var(--rule); padding: 26px; overflow-x: auto; }
+  .frame.flush { padding: 0; }
+  .frame-cap { margin-top: 10px; font-size: 13px; color: var(--ink-2); max-width: 90ch; }
+  .callouts { font-size: 14px; min-width: 0; }
+  .callouts h3 { margin-bottom: 10px; }
+  .callouts ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 11px; }
+  .callouts li { display: grid; grid-template-columns: 22px 1fr; gap: 10px; align-items: start; }
+  .callouts.wide { margin-top: 16px; }
+  .callouts.wide ol { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px 28px; }
+  .callouts .n { width: 22px; height: 22px; border-radius: 50%; background: var(--note); color: var(--note-ink); font: 700 12px/22px var(--sans); text-align: center; }
+  .try { margin-top: 14px; padding: 10px 12px; border-left: 3px solid var(--note); background: var(--ground-2); font-size: 14px; max-width: 100ch; }
+
+  /* =============================================================== mock: shell tokens */
+  .mock {
+    --m-bg: #222222; --m-fg: #c2c2b0; --m-accent: #78824b; --m-urgent: #685742; --m-muted: #666666;
+    --m-dim: color-mix(in srgb, var(--m-fg) 71%, black);
+    --m-fill-n: color-mix(in srgb, var(--m-fg) 4%, transparent);
+    --m-fill-h: color-mix(in srgb, var(--m-fg) 8%, transparent);
+    --m-fill-s: color-mix(in srgb, var(--m-fg) 18%, transparent);
+    --m-border-n: color-mix(in srgb, var(--m-fg) 40%, transparent);
+    --m-border-h: color-mix(in srgb, var(--m-fg) 25%, transparent);
+    --m-sep: color-mix(in srgb, var(--m-fg) 12%, transparent);
+    font-family: var(--mono); font-size: 12px; line-height: 1.25; color: var(--m-fg);
+  }
+  .mock[data-mtheme="tokyo-night"] { --m-bg: #1a1b26; --m-fg: #a9b1d6; --m-accent: #7aa2f7; --m-urgent: #f7768e; --m-muted: #414868; }
+  .mock[data-mtheme="catppuccin-latte"] { --m-bg: #eff1f5; --m-fg: #4c4f69; --m-accent: #1e66f5; --m-urgent: #d20f39; --m-muted: #acb0be; }
+  .mock[data-mtheme="vantablack"] { --m-bg: #000000; --m-fg: #ffffff; --m-accent: #8d8d8d; --m-urgent: #a4a4a4; --m-muted: #7a7a7a; }
+  .mock * { box-sizing: border-box; }
+  .mock p { max-width: none; }
+  .mock .dim { color: var(--m-dim); }
+  .mock .num { font-variant-numeric: tabular-nums; }
+  .mock .sec { font-size: 10px; font-weight: 700; color: var(--m-dim); text-transform: uppercase; padding-top: 2px; }
+  .mock .sepl { height: 1px; background: var(--m-sep); }
+  .mock .caption { font-size: 10px; color: var(--m-dim); line-height: 1.45; }
+  .mock .badge { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 700; padding: 1px 5px; border: 1px solid var(--m-border-n); color: var(--m-dim); white-space: nowrap; }
+  .mock .badge.accent { border-color: var(--m-accent); color: var(--m-accent); }
+  .mock .badge.urgent { border-color: var(--m-urgent); color: var(--m-urgent); }
+  .mock .badge svg { width: 11px; height: 11px; }
+  .mock .btn { font: inherit; font-size: 12px; padding: 6px 12px; border: 1px solid var(--m-border-n); background: transparent; color: var(--m-fg); cursor: pointer; }
+  .mock .btn:hover { background: var(--m-fill-h); border-color: var(--m-border-h); }
+  .mock .btn.primary { background: var(--m-fill-s); border-color: transparent; font-weight: 700; }
+  .mock .btn.on { background: var(--m-fill-s); border-color: var(--m-accent); }
+  .mock .btn.sm { font-size: 10px; padding: 3px 7px; }
+  .mock .btn[disabled] { opacity: .5; cursor: default; }
+  .mock .lnk { font: inherit; font-size: inherit; background: none; border: 0; padding: 0; color: var(--m-fg); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+  .glyph { width: 14px; height: 14px; color: var(--m-fg); flex: none; }
+  .glyph.accent { color: var(--m-accent); }
+  .glyph.urgent { color: var(--m-urgent); }
+  .glyph.dimg { color: var(--m-dim); }
+
+  /* callout pins on the mocks */
+  .pinned { position: relative; }
+  .pinned::before { content: attr(data-pin); position: absolute; left: var(--pl, -34px); top: var(--pt, 0px); z-index: 6; width: 22px; height: 22px; border-radius: 50%; background: var(--note); color: var(--note-ink); font: 700 12px/22px var(--sans); text-align: center; box-shadow: 0 0 0 2px var(--frame); pointer-events: none; }
+
+  /* desk + bar */
+  .desk { background: linear-gradient(160deg, color-mix(in srgb, var(--m-bg) 90%, var(--m-accent)) 0%, color-mix(in srgb, var(--m-bg) 78%, black) 100%); position: relative; min-width: 480px; }
+  .bar { height: 26px; background: var(--m-bg); display: flex; align-items: center; justify-content: space-between; padding: 0 10px; font-size: 12px; gap: 12px; }
+  .bar .grp { gap: 14px; flex-wrap: nowrap; }
+  .bar .ws { display: flex; gap: 8px; align-items: center; }
+  .bar .ws i { width: 9px; height: 9px; border: 1px solid var(--m-fg); display: inline-block; }
+  .bar .ws i.on { background: var(--m-fg); }
+  .bar .ico { display: inline-flex; align-items: center; gap: 5px; padding: 2px 5px; }
+  .bar .ico.active { background: var(--m-fill-s); }
+  .bar .ico svg.line { width: 14px; height: 14px; fill: none; stroke: var(--m-fg); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* popup */
+  .pops { display: grid; grid-template-columns: repeat(auto-fit, minmax(480px, 1fr)); gap: 1px; background: var(--rule); }
+  .poplab { font: 600 13px var(--sans); color: var(--ink); padding: 12px 34px 0; background: var(--frame); }
+  .poplab span { display: block; font-weight: 400; color: var(--ink-2); font-size: 12.5px; }
+  .popup { position: relative; margin: 5px 34px 30px auto; width: 408px; background: var(--m-bg); border: 2px solid var(--m-accent); padding: 14px; display: grid; gap: 13px; }
+  .hero { display: grid; grid-template-columns: 30px 1fr auto; gap: 12px; align-items: center; }
+  .hero .glyph { width: 26px; height: 26px; }
+  .hero .title { font-size: 14px; font-weight: 700; }
+  .hero .meta2 { font-size: 10px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; color: var(--m-dim); margin-top: 3px; }
+  .hero .meta2.urgent { color: var(--m-urgent); }
+  .group { display: flex; gap: 6px; }
+  .group .gap { width: 10px; flex: none; }
+  .group .pill { flex: 1; font: inherit; font-size: 12px; text-align: center; padding: 6px 8px; border: 1px solid var(--m-border-n); background: transparent; color: var(--m-fg); cursor: pointer; white-space: nowrap; }
+  .group .pill:hover { background: var(--m-fill-h); border-color: var(--m-border-h); }
+  .group .pill[aria-pressed="true"] { background: var(--m-fill-s); border-color: transparent; }
+  .setupcta { display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: center; }
+  .trow { display: grid; grid-template-columns: 1fr 150px 56px; gap: 10px; align-items: center; padding: 3px 0; }
+  .trow svg { width: 150px; height: 20px; display: block; overflow: hidden; }
+  .trow .v { text-align: right; font-variant-numeric: tabular-nums; }
+  .frow { display: grid; grid-template-columns: minmax(0, 1fr) auto 76px 40px; gap: 10px; align-items: center; padding: 4px 0 5px; position: relative; }
+  .frow .nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .frow .cv { font-size: 10px; color: var(--m-dim); display: flex; gap: 6px; align-items: center; justify-content: flex-end; }
+  .frow .rpm { text-align: right; font-variant-numeric: tabular-nums; }
+  .frow .dt { text-align: right; font-variant-numeric: tabular-nums; color: var(--m-dim); }
+  .frow .track { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--m-fill-n); }
+  .frow .track i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--m-fg); opacity: .55; width: 0; }
+  .fold { display: flex; align-items: center; gap: 8px; padding: 4px 0; color: var(--m-dim); font-size: 12px; }
+  .fold .chev { width: 10px; display: inline-block; }
+  .fold-body { padding: 0 0 4px 18px; display: grid; gap: 3px; font-size: 11px; color: var(--m-dim); }
+  .acts { display: flex; justify-content: space-between; gap: 8px; }
+
+  /* studio */
+  .studio-scrim { background: color-mix(in srgb, var(--m-bg) 55%, transparent); padding: 30px; min-width: 1160px; }
+  .studio { width: 1100px; margin: 0 auto; background: var(--m-bg); border: 2px solid var(--m-accent); padding: 16px 18px; display: grid; grid-template-rows: auto 1fr auto; gap: 14px; }
+  .studio .head { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+  .studio .head .t { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 700; }
+  .studio .head .t .glyph { width: 18px; height: 18px; }
+  .studio .head .sub2 { font-weight: 400; color: var(--m-dim); }
+  .unsaved { font-size: 11px; color: var(--m-accent); display: flex; align-items: center; gap: 6px; }
+  .unsaved i { width: 7px; height: 7px; border-radius: 50%; background: var(--m-accent); display: inline-block; }
+  .sbody { display: grid; grid-template-columns: 250px minmax(0, 1fr) 250px; gap: 18px; min-height: 0; }
+  .sbody.rv { grid-template-columns: 318px minmax(0, 1fr) 232px; }
+  .col { display: grid; gap: 8px; align-content: start; min-width: 0; }
+  .card { display: grid; gap: 5px; padding: 9px 10px 10px; border: 1px solid var(--m-border-n); background: var(--m-fill-n); text-align: left; font: inherit; color: var(--m-fg); position: relative; }
+  .card[aria-pressed="true"] { border: 2px solid var(--m-accent); padding: 8px 9px 9px; background: var(--m-fill-h); }
+  .card .r1 { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-weight: 700; }
+  .card .r2 { display: flex; justify-content: space-between; font-size: 11px; font-variant-numeric: tabular-nums; }
+  .card .r3 { font-size: 10px; color: var(--m-dim); display: flex; justify-content: space-between; gap: 8px; }
+  .card .track { height: 2px; background: var(--m-fill-s); position: relative; }
+  .card .track i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--m-fg); width: 0; }
+  .card .track.steps { background: repeating-linear-gradient(90deg, var(--m-fill-s) 0 calc(100% / 7 - 2px), transparent calc(100% / 7 - 2px) calc(100% / 7)); }
+  .card .kl { font-size: 10px; line-height: 1.4; color: var(--m-fg); }
+  .card .drift { font-size: 10px; line-height: 1.4; color: var(--m-fg); border-top: 1px solid var(--m-sep); padding-top: 5px; }
+  .card .alert { font-size: 10px; line-height: 1.4; color: var(--m-urgent); }
+  .devh { display: flex; justify-content: space-between; gap: 8px; font-size: 10px; font-weight: 700; text-transform: uppercase; color: var(--m-dim); padding-top: 6px; }
+  .devh .tier { font-weight: 700; }
+  .devh .tier.doc { color: var(--m-fg); }
+  .devnote { font-size: 10px; color: var(--m-dim); margin-top: -4px; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip { font-size: 10px; padding: 3px 7px; border: 1px solid var(--m-border-n); background: var(--m-fill-n); }
+  .chip.gen { border-color: var(--m-accent); color: var(--m-accent); font-weight: 700; }
+  .ed-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; }
+  .ed-head .nm { font-size: 14px; font-weight: 700; }
+  .editor { width: 100%; height: auto; display: block; touch-action: none; }
+  .editor .gridl { stroke: var(--m-sep); stroke-width: 1; }
+  .editor .axis { fill: var(--m-dim); font-size: 10px; font-family: var(--mono); }
+  .editor .curve { fill: none; stroke: var(--m-fg); stroke-width: 2; stroke-linejoin: round; }
+  .editor .band { fill: var(--m-fill-h); }
+  .editor .lim { stroke: var(--m-border-n); stroke-dasharray: 4 4; stroke-width: 1; }
+  .editor .anc { stroke: var(--m-accent); stroke-dasharray: 2 4; stroke-width: 1; opacity: .7; }
+  .editor .anct { fill: var(--m-accent); font-size: 9.5px; font-family: var(--mono); }
+  .editor .limt { fill: var(--m-dim); font-size: 9.5px; font-family: var(--mono); }
+  .editor .floor { fill: var(--m-fill-n); }
+  .editor .pt { fill: var(--m-bg); stroke: var(--m-fg); stroke-width: 2; }
+  .editor .pt.sel { stroke: var(--m-accent); stroke-width: 2.5; }
+  .editor .hit { fill: transparent; cursor: grab; }
+  .editor .hit:active { cursor: grabbing; }
+  .editor .mk { fill: var(--m-accent); stroke: var(--m-bg); stroke-width: 2; }
+  .editor .cross { stroke: var(--m-accent); stroke-width: 1; stroke-dasharray: 2 3; opacity: .55; }
+  .editor .ro rect { fill: var(--m-bg); stroke: var(--m-border-n); }
+  .editor .ro text { fill: var(--m-fg); font-size: 11px; font-family: var(--mono); }
+  .insp { font-size: 11px; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-variant-numeric: tabular-nums; min-height: 15px; }
+  .insp .what { color: var(--m-dim); }
+  .mix { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--m-sep); min-height: 380px; align-content: start; }
+  .mixrow { display: grid; grid-template-columns: 140px 1fr 48px; gap: 10px; align-items: center; padding: 6px 8px; }
+  .mixrow.win { background: var(--m-fill-s); }
+  .mixrow .track { height: 6px; background: var(--m-fill-n); position: relative; }
+  .mixrow .track i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--m-fg); width: 0; }
+  .mixrow .track b { position: absolute; top: -4px; bottom: -4px; width: 0; border-left: 1px dashed var(--m-accent); }
+  .mixrow .v { text-align: right; font-variant-numeric: tabular-nums; }
+  .sacts { display: flex; justify-content: space-between; align-items: center; gap: 12px; border-top: 1px solid var(--m-sep); padding-top: 12px; }
+  .sacts .hint { font-size: 10px; color: var(--m-dim); }
+  .sacts .btns { display: flex; gap: 8px; }
+  .spark .line { fill: none; stroke: var(--m-fg); stroke-width: 1.25; stroke-linejoin: round; opacity: .85; }
+  .spark .area { fill: var(--m-fill-h); }
+  .spark .dot { fill: var(--m-fg); }
+
+  /* setup view */
+  .rail { display: flex; flex-wrap: wrap; gap: 4px; }
+  .rail span { font-size: 10px; padding: 3px 7px; border: 1px solid var(--m-sep); color: var(--m-dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .rail span.on { border-color: var(--m-accent); color: var(--m-fg); font-weight: 700; }
+  .rail span.done { color: var(--m-dim); }
+  .rail span.skip { text-decoration: line-through; }
+  .spanel { min-height: 476px; display: grid; gap: 12px; align-content: start; border: 1px solid var(--m-sep); padding: 14px; }
+  .sp-title { font-size: 14px; font-weight: 700; }
+  .steps { display: grid; gap: 2px; }
+  .stp { display: grid; grid-template-columns: 22px 104px 44px minmax(0, 1fr); gap: 10px; padding: 5px 0; border-bottom: 1px solid var(--m-sep); align-items: baseline; }
+  .stp .k { color: var(--m-dim); }
+  .stp .num { text-align: right; }
+  .chk { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+  .chk input { accent-color: var(--m-accent); width: 14px; height: 14px; margin: 0; }
+  .srows { display: grid; gap: 6px; }
+  .srow2 { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 8px; padding: 6px 8px 7px; border: 1px solid var(--m-border-n); background: var(--m-fill-n); }
+  .srow2.hot { border-color: var(--m-accent); }
+  .srow2.empty { opacity: .6; }
+  .srow2 .nm { font-weight: 700; display: flex; gap: 6px; align-items: center; min-width: 0; overflow: hidden; white-space: nowrap; }
+  .srow2 .rc { font-size: 9.5px; font-weight: 400; padding: 0 4px; border: 1px solid var(--m-border-n); color: var(--m-dim); }
+  .srow2 .rpm { text-align: right; font-variant-numeric: tabular-nums; }
+  .srow2 .st { font-size: 10px; color: var(--m-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .srow2 .dt { font-size: 10px; text-align: right; color: var(--m-dim); font-variant-numeric: tabular-nums; }
+  .guard { display: grid; gap: 4px; padding: 6px 0 8px; border-bottom: 1px solid var(--m-sep); }
+  .guard .h { display: flex; justify-content: space-between; gap: 8px; }
+  .guard .gt { height: 6px; background: var(--m-fill-n); position: relative; }
+  .guard .gt i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--m-fg); width: 0; }
+  .guard.trip .gt i { background: var(--m-urgent); }
+  .guard.trip .h .num { color: var(--m-urgent); }
+  .wt { display: grid; grid-template-columns: minmax(0, 1fr) 74px 74px 56px; gap: 4px 12px; font-variant-numeric: tabular-nums; }
+  .wt > span { padding: 3px 0; border-bottom: 1px solid var(--m-sep); white-space: nowrap; }
+  .wt .hd { font-size: 10px; font-weight: 700; color: var(--m-dim); text-transform: uppercase; }
+  .pk { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+  .prog { height: 3px; background: var(--m-fill-s); position: relative; }
+  .prog i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--m-accent); }
+  .tb { display: grid; grid-template-columns: 112px minmax(0, 1fr) 84px; gap: 10px; align-items: center; padding: 2px 0; }
+  .tb .track { height: 8px; background: var(--m-fill-n); position: relative; }
+  .tb .track i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--m-fg); opacity: .55; }
+  .tb.hot .track i { background: var(--m-accent); opacity: 1; }
+  .tb.hot .nm, .tb.hot .v { color: var(--m-accent); font-weight: 700; }
+  .tb .v { text-align: right; font-variant-numeric: tabular-nums; }
+  .tbscale { display: grid; grid-template-columns: 112px minmax(0, 1fr) 84px; gap: 10px; font-size: 9.5px; color: var(--m-dim); }
+  .tbscale span:nth-child(2) { display: flex; justify-content: space-between; }
+  .found { display: flex; flex-wrap: wrap; gap: 6px; min-height: 22px; }
+  .calg { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .calc { border: 1px solid var(--m-sep); padding: 6px 6px 4px; display: grid; gap: 2px; min-width: 0; }
+  .calc .h { display: flex; justify-content: space-between; gap: 6px; font-size: 10px; }
+  .calc .h b { white-space: nowrap; }
+  .calc .st { font-size: 9.5px; color: var(--m-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 12px; }
+  .calc svg { width: 100%; height: auto; display: block; }
+  .plot .gridl { stroke: var(--m-sep); stroke-width: 1; }
+  .plot .axis { fill: var(--m-dim); font-size: 8.5px; font-family: var(--mono); }
+  .plot .ln { fill: none; stroke: var(--m-fg); stroke-width: 1.5; stroke-linejoin: round; }
+  .plot .ln.acc { stroke: var(--m-accent); }
+  .plot .pd { fill: var(--m-fg); }
+  .plot .cur { fill: var(--m-accent); stroke: var(--m-bg); stroke-width: 1.5; }
+  .plot .lim { stroke: var(--m-urgent); stroke-dasharray: 3 3; stroke-width: 1; }
+  .plot .limt { fill: var(--m-urgent); font-size: 9px; font-family: var(--mono); }
+  .plot .fence { fill: var(--m-fill-n); }
+  .kv { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; font-variant-numeric: tabular-nums; }
+  .rl { display: grid; grid-template-columns: 118px 92px minmax(0, 1fr); gap: 6px 10px; align-items: baseline; }
+  .rl > span { padding: 3px 0; border-bottom: 1px solid var(--m-sep); }
+  .rl .why { font-size: 10px; color: var(--m-dim); }
+  .cl { display: grid; grid-template-columns: 118px minmax(0, 1fr); gap: 4px 10px; }
+  .cl > span { padding: 3px 0; }
+  .msg { display: grid; gap: 10px; align-content: start; padding-top: 40px; max-width: 60ch; }
+  .msg .big { font-size: 16px; font-weight: 700; }
+
+  /* review */
+  .rrow { display: grid; gap: 4px; padding: 7px 8px 8px; border: 1px solid var(--m-border-n); background: var(--m-fill-n); }
+  .rrow .a { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px; align-items: center; }
+  .rrow .b { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: baseline; }
+  .rrow .why { font-size: 10px; color: var(--m-dim); line-height: 1.4; }
+  .rrow .rpm { font-size: 11px; font-variant-numeric: tabular-nums; text-align: right; }
+  .nmi { font: inherit; font-weight: 700; color: var(--m-fg); background: transparent; border: 1px solid transparent; padding: 2px 4px; margin-left: -5px; min-width: 0; width: 100%; }
+  .nmi:hover { border-color: var(--m-border-h); }
+  .nmi:focus { border-color: var(--m-accent); outline: none; }
+  .rolec { font: inherit; font-size: 10px; padding: 3px 7px; border: 1px solid var(--m-border-n); background: var(--m-fill-s); color: var(--m-fg); cursor: pointer; white-space: nowrap; }
+  .rolec.q { border-style: dashed; border-color: var(--m-accent); color: var(--m-accent); background: transparent; }
+  .rolec[disabled] { cursor: default; background: var(--m-fill-n); }
+  .mt { display: grid; grid-template-columns: minmax(0, 1fr) 40px 40px 46px; gap: 3px 8px; font-size: 10.5px; font-variant-numeric: tabular-nums; }
+  .mt > span { padding: 2px 0; border-bottom: 1px solid var(--m-sep); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mt .r { text-align: right; }
+  .mt .hd { font-size: 9.5px; font-weight: 700; color: var(--m-dim); text-transform: uppercase; }
+  .box { border: 1px solid var(--m-sep); padding: 8px; display: grid; gap: 6px; }
+
+  /* card gallery */
+  .states { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 22px; margin-top: 22px; }
+  .states .frame { padding: 22px; }
+  .card2 { background: var(--m-bg); border: 2px solid var(--m-accent); padding: 12px; display: grid; gap: 8px; }
+  .state-t { margin-top: 10px; font: 600 14px var(--sans); color: var(--ink); }
+  .state-t span { display: block; font-weight: 400; color: var(--ink-2); font-size: 13px; margin-top: 2px; max-width: 60ch; }
+  .deskcol { width: 250px; background: var(--m-bg); padding: 14px; display: grid; gap: 8px; border: 2px solid var(--m-accent); }
+
+  /* terminal */
+  .term { background: var(--m-bg); color: var(--m-fg); padding: 18px 20px; font: 12px/1.55 var(--mono); white-space: pre; overflow-x: auto; margin: 0; }
+  .term .p { color: var(--m-accent); }
+  .term .d { color: var(--m-dim); }
+
+  .decisions ol { margin: 16px 0 0; padding-left: 22px; display: grid; gap: 12px; max-width: 82ch; }
+  .decisions li strong { font-weight: 600; }
+  .rec { color: var(--ink-2); }
+  footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid var(--rule); font-size: 13px; color: var(--ink-2); display: grid; gap: 4px; }
+  @media (prefers-reduced-motion: no-preference) { .seg button, .group .pill, .mock .btn, .rolec { transition: background-color .14s cubic-bezier(.33,1,.68,1), border-color .14s cubic-bezier(.33,1,.68,1); } }
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="blades" viewBox="0 0 24 24">
+      <g fill="currentColor">
+        <path d="M12 12C10.4 9.6 10.9 4.9 14 4.6c2.5-.2 3.2 2.8 1.2 4.6C14.2 10.1 13.1 10.9 12 12Z"/>
+        <path d="M12 12C10.4 9.6 10.9 4.9 14 4.6c2.5-.2 3.2 2.8 1.2 4.6C14.2 10.1 13.1 10.9 12 12Z" transform="rotate(120 12 12)"/>
+        <path d="M12 12C10.4 9.6 10.9 4.9 14 4.6c2.5-.2 3.2 2.8 1.2 4.6C14.2 10.1 13.1 10.9 12 12Z" transform="rotate(240 12 12)"/>
+        <circle cx="12" cy="12" r="2.1"/>
+      </g>
+    </symbol>
+    <symbol id="g-fan" viewBox="0 0 24 24"><use href="#blades"/></symbol>
+    <symbol id="g-fan-alert" viewBox="0 0 24 24"><use href="#blades" x="-2.2" y="1.6" width="20" height="20"/><g fill="currentColor"><rect x="19.4" y="4.5" width="2.4" height="10" rx="1"/><circle cx="20.6" cy="18.4" r="1.45"/></g></symbol>
+    <symbol id="g-fan-off" viewBox="0 0 24 24"><use href="#blades"/><path d="M3.5 3.5 20.5 20.5" stroke="var(--m-bg)" stroke-width="4.2" stroke-linecap="round"/><path d="M3.5 3.5 20.5 20.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="g-fan-up" viewBox="0 0 24 24"><use href="#blades" x="-2.2" y="3" width="19" height="19"/><path d="M16.2 8.6 19.6 5.2 23 8.6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="g-fan-auto" viewBox="0 0 24 24"><use href="#blades" x="-2.6" y="-2" width="19" height="19"/><path d="M15.6 22.4 18.9 13.6 22.2 22.4M16.8 19.4H21" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="g-fan-clock" viewBox="0 0 24 24"><use href="#blades" x="-2.6" y="-2" width="19" height="19"/><circle cx="18.6" cy="18.2" r="4.6" fill="var(--m-bg)" stroke="currentColor" stroke-width="1.7"/><path d="M18.6 15.9V18.4L20.2 19.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  </defs>
+</svg>
+
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">Design review 03 · milestone D2 · 22 October 2026 · against DESIGN.md draft 3</div>
+  <h1 style="margin-top:12px">Penna</h1>
+  <p class="dek">Draft 3's new surfaces: the Defaults pill, the setup run that measures every fan and proposes curves, and fan cards that say what each fan can do. Shown in the shell's own tokens, on this desk's measured fans.</p>
+  <div class="meta">
+    <span><b>Omarchy</b> 4.0.6 · Quickshell 0.3.2 · Qt 6.12.0</span>
+    <span><b>Desk</b> Ryzen 9 5950X · Gigabyte X570 AORUS PRO (IT8688E + IT8792E) · RTX 3090</span>
+    <span><b>Fans</b> 7 on the board, 2 on the GPU, 1 empty header</span>
+    <span><b>Data</b> simulated, shaped on the M5 hardware test</span>
+  </div>
+</header>
+
+<section>
+  <div class="cols">
+    <div><h3>What review 01 settled</h3><p>The glyph vocabulary, the popup and studio layouts, RPM before duty, and the motion constants. All of it stands. This review only adds to it, and reuses its parts.</p></div>
+    <div><h3>What is new</h3><p>Draft 3 made Penna for any machine. Defaults is a built-in profile, setup measures every fan and proposes curves, and fans come in seven kinds. §8.2 and §8.3 name the new UI; none of it has QML yet.</p></div>
+    <div><h3>What this desk taught</h3><p>M5 put the board's fans under Penna. Three findings shape this review. The BIOS's live duty can't be read on the IT8688E. A header named PUMP carries a case fan. And the BIOS stops the chipset fan when it's cool.</p></div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">A · Defaults</div>
+  <h2>Before setup, and after it</h2>
+  <p class="lede">Colours come from each theme's <code>colors.toml</code>. The popups are live: a simulated desk runs at the daemon's 1 s tick. Left is a new install, which starts in Defaults. Right is the same desk once setup has filled Quiet, Balanced and Render.</p>
+
+  <div class="switcher" role="group" aria-label="Preview settings">
+    <div class="grp"><span class="lbl">Theme</span>
+      <div class="seg" id="themeSeg">
+        <button type="button" data-mt="miasma" aria-pressed="true"><span class="swatch" style="background:#78824b"></span>miasma</button>
+        <button type="button" data-mt="tokyo-night" aria-pressed="false"><span class="swatch" style="background:#7aa2f7"></span>tokyo-night</button>
+        <button type="button" data-mt="catppuccin-latte" aria-pressed="false"><span class="swatch" style="background:#1e66f5"></span>catppuccin-latte</button>
+        <button type="button" data-mt="vantablack" aria-pressed="false"><span class="swatch" style="background:#8d8d8d"></span>vantablack</button>
+      </div>
+    </div>
+    <div class="grp"><span class="lbl">Animations</span>
+      <div class="seg" id="animSeg">
+        <button type="button" data-anim="on" aria-pressed="true">On</button>
+        <button type="button" data-anim="off" aria-pressed="false">Off</button>
+      </div>
+      <span class="small">Off previews Hyprland's <code>animations:enabled = false</code>.</span>
+    </div>
+  </div>
+
+  <div class="frame flush" style="margin-top:22px">
+    <div class="pops">
+      <div style="background:var(--frame)">
+        <div class="poplab">New install<span>Defaults, nothing measured yet.</span></div>
+        <div class="mock desk" id="pop1">
+          <div class="bar">
+            <div class="grp"><div class="ws"><i class="on"></i><i></i><i></i></div></div>
+            <div class="grp"><span>15:42</span></div>
+            <div class="grp"><span class="ico active"><svg class="glyph"><use href="#g-fan-auto"/></svg></span></div>
+          </div>
+          <div class="popup">
+            <div class="hero pinned" data-pin="1">
+              <svg class="glyph"><use href="#g-fan-auto"/></svg>
+              <div><div class="title">Defaults</div><div class="meta2">The BIOS and drivers run every fan</div></div>
+              <span></span>
+            </div>
+            <div class="setupcta">
+              <button type="button" class="btn primary">Set up fans…</button>
+              <span class="caption">Measures every fan in about 4 minutes and proposes curves. Nothing changes until you save.</span>
+            </div>
+            <div class="sepl"></div>
+            <div class="sec">Temperatures</div>
+            <div style="display:grid;gap:2px">
+              <div class="trow"><span>CPU <span class="dim">· Tctl</span></span><svg class="spark" data-spark="cpu" data-n="60" viewBox="0 0 150 20" preserveAspectRatio="none"></svg><span class="v" data-temp="cpu">46 °C</span></div>
+              <div class="trow"><span>GPU <span class="dim">· RTX 3090</span></span><svg class="spark" data-spark="gpu" data-n="60" viewBox="0 0 150 20" preserveAspectRatio="none"></svg><span class="v" data-temp="gpu">40 °C</span></div>
+              <div class="trow"><span>NVMe <span class="dim">· Composite</span></span><svg class="spark" data-spark="nvme" data-n="60" viewBox="0 0 150 20" preserveAspectRatio="none"></svg><span class="v" data-temp="nvme">37 °C</span></div>
+            </div>
+            <div class="sepl"></div>
+            <div class="sec">Fans</div>
+            <div id="p1Fans" class="pinned" data-pin="2"></div>
+            <div>
+              <div class="fold"><span class="chev">▸</span>Not reachable <span class="num">(1)</span></div>
+            </div>
+            <div class="acts">
+              <button type="button" class="btn">Full speed</button>
+              <button type="button" class="btn">Curves…</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div style="background:var(--frame)">
+        <div class="poplab">After setup<span>Press the pills. Defaults is one press away.</span></div>
+        <div class="mock desk" id="pop2">
+          <div class="bar">
+            <div class="grp"><div class="ws"><i class="on"></i><i></i><i></i></div></div>
+            <div class="grp"><span>15:42</span></div>
+            <div class="grp"><span class="ico active"><svg class="glyph" id="p2Bar"><use href="#g-fan"/></svg></span></div>
+          </div>
+          <div class="popup">
+            <div class="hero">
+              <svg class="glyph" id="p2Glyph"><use href="#g-fan"/></svg>
+              <div><div class="title" id="p2Title">Balanced</div><div class="meta2" id="p2Meta">9 fans · CPU 46 °C · GPU 40 °C</div></div>
+              <span></span>
+            </div>
+            <div class="group pinned" data-pin="4" id="p2Profiles">
+              <button type="button" class="pill" data-prof="Defaults" aria-pressed="false">Defaults</button>
+              <span class="gap" aria-hidden="true"></span>
+              <button type="button" class="pill" data-prof="Quiet" aria-pressed="false">Quiet</button>
+              <button type="button" class="pill" data-prof="Balanced" aria-pressed="true">Balanced</button>
+              <button type="button" class="pill" data-prof="Render" aria-pressed="false">Render</button>
+            </div>
+            <div class="sepl"></div>
+            <div class="sec">Temperatures</div>
+            <div style="display:grid;gap:2px">
+              <div class="trow"><span>CPU <span class="dim">· Tctl</span></span><svg class="spark" data-spark="cpu" data-n="60" viewBox="0 0 150 20" preserveAspectRatio="none"></svg><span class="v" data-temp="cpu">46 °C</span></div>
+              <div class="trow"><span>GPU <span class="dim">· RTX 3090</span></span><svg class="spark" data-spark="gpu" data-n="60" viewBox="0 0 150 20" preserveAspectRatio="none"></svg><span class="v" data-temp="gpu">40 °C</span></div>
+              <div class="trow"><span>PCH <span class="dim">· chipset</span></span><svg class="spark" data-spark="pch" data-n="60" viewBox="0 0 150 20" preserveAspectRatio="none"></svg><span class="v" data-temp="pch">45 °C</span></div>
+            </div>
+            <div class="sepl"></div>
+            <div class="sec">Fans</div>
+            <div id="p2Fans" class="pinned" data-pin="3"></div>
+            <div class="pinned" data-pin="6">
+              <div class="fold"><span class="chev">▾</span>Empty header <span class="num">(1)</span></div>
+              <div class="fold-body"><span>SYS_FAN6_PUMP · no fan turns on it</span></div>
+              <div class="fold"><span class="chev">▸</span>Not reachable <span class="num">(1)</span></div>
+            </div>
+            <div class="acts">
+              <button type="button" class="btn">Full speed</button>
+              <button type="button" class="btn">Curves…</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="callouts wide">
+    <ol>
+      <li><span class="n">1</span><p>A new install has no profile pills. Quiet, Balanced and Render would all do what Defaults does until setup fills them, so <b>Set up fans…</b> is the one thing to press.</p></li>
+      <li><span class="n">2</span><p>Every fan stays listed in Defaults, named for its header from the board database, with its RPM and who runs it. Before pairing Penna lists tachs, because it doesn't yet know which control turns which fan.</p></li>
+      <li><span class="n">3</span><p>The duty column is empty in Defaults. On the IT8688E, while the BIOS runs a fan, its PWM register reads the BIOS curve's start value, not the duty (M5). Penna shows only what it can measure.</p></li>
+      <li><span class="n">4</span><p>Defaults is the first pill, set apart by a wider gap: it hands every fan back, where the others choose curves. It counts toward the five pills of review 01.</p></li>
+      <li><span class="n">5</span><p>Choosing Defaults needs no confirmation. Handing back is always safe, Penna keeps showing every temperature and RPM, and the last profile is one press away.</p></li>
+      <li><span class="n">6</span><p>A control that turned no fan in pairing folds away under its header name. It stays with the BIOS.</p></li>
+    </ol>
+  </div>
+  <p class="try"><b>Try it.</b> On the right, press Defaults and then Balanced. The bar glyph and hero change at once; the RPMs move to the BIOS's speeds at the fans' own pace. PCH_FAN sits at 0 RPM either way: the BIOS stops it when the chipset is cool, and so does the generated curve (call 8).</p>
+</section>
+
+<section>
+  <div class="eyebrow">B · Fan cards</div>
+  <h2>Every fan says what it can do</h2>
+  <p class="lede">§8.3 asks each card to show its kind and tier. Shown on every card, they would repeat "PWM, Verified" ten times on this desk. Here the tier goes on the device heading, once, and a card adds a line only when its kind isn't plain duty.</p>
+
+  <h3 class="sub" style="margin-top:30px">This desk, in the studio's controls column</h3>
+  <div class="board">
+    <div>
+      <div class="frame">
+        <div class="mock deskcol" id="deskCol">
+          <div class="sec">Controls</div>
+          <div class="devh pinned" data-pin="1" style="--pl:-38px;--pt:2px"><span>IT8688E · motherboard</span><span class="tier">Verified</span></div>
+          <div class="card" aria-pressed="true"><div class="r1"><span>CPU_FAN</span><span></span></div><div class="r2"><span>490 RPM</span><span class="dim">25 %</span></div><div class="track"><i style="width:25%"></i></div><div class="r3"><span>CPU · Balanced</span><span></span></div></div>
+          <div class="card"><div class="r1"><span>CPU_OPT</span><span></span></div><div class="r2"><span>720 RPM</span><span class="dim">25 %</span></div><div class="track"><i style="width:25%"></i></div><div class="r3"><span>CPU · Balanced</span><span></span></div></div>
+          <div class="card pinned" data-pin="2" style="--pl:-48px;--pt:6px"><div class="r1"><span>SYS_FAN1</span><span></span></div><div class="r2"><span>530 RPM</span><span class="dim">25 %</span></div><div class="track"><i style="width:25%"></i></div><div class="r3"><span>Case · Balanced</span><span></span></div><div class="drift">Turns 30 % slower than when it was set up: dust, or a tired bearing. <button type="button" class="lnk">Recalibrate</button></div></div>
+          <div class="card"><div class="r1"><span>SYS_FAN2</span><span></span></div><div class="r2"><span>380 RPM</span><span class="dim">20 %</span></div><div class="track"><i style="width:20%"></i></div><div class="r3"><span>Case · Balanced</span><span></span></div></div>
+          <div class="card"><div class="r1"><span>PCH_FAN</span><span></span></div><div class="r2"><span>0 RPM</span><span class="dim">0 %</span></div><div class="track"><i style="width:0%"></i></div><div class="r3"><span>Chipset · Balanced</span><span>stopped</span></div></div>
+          <div class="devh"><span>IT8792E · motherboard</span><span class="tier">Verified</span></div>
+          <div class="card"><div class="r1"><span>SYS_FAN5_PUMP</span><span></span></div><div class="r2"><span>940 RPM</span><span class="dim">50 %</span></div><div class="track"><i style="width:50%"></i></div><div class="r3"><span>Case · Balanced</span><span></span></div></div>
+          <div class="card"><div class="r1"><span>SYS_FAN4</span><span></span></div><div class="r2"><span>820 RPM</span><span class="dim">25 %</span></div><div class="track"><i style="width:25%"></i></div><div class="r3"><span>Case · Balanced</span><span></span></div></div>
+          <div class="devh"><span>RTX 3090 · NVML</span><span class="tier">Verified</span></div>
+          <div class="card pinned" data-pin="3" style="--pl:-48px;--pt:6px"><div class="r1"><span>GPU fan 1</span><span class="badge">Driver</span></div><div class="r2"><span>0 RPM</span><span class="dim">driver</span></div><div class="track"><i style="width:0%"></i></div><div class="r3"><span>GPU · Balanced</span><span></span></div></div>
+          <div class="card"><div class="r1"><span>GPU fan 2</span><span class="badge">Driver</span></div><div class="r2"><span>0 RPM</span><span class="dim">driver</span></div><div class="track"><i style="width:0%"></i></div><div class="r3"><span>GPU · Balanced</span><span></span></div></div>
+          <div class="caption pinned" data-pin="4" style="margin-top:4px;--pl:-48px;--pt:-2px">Empty header: SYS_FAN6_PUMP. No fan turned on it in setup.</div>
+        </div>
+      </div>
+      <p class="frame-cap">Idle values on the Balanced draft from section D: every fan at its floor, the GPU on its driver, the chipset fan stopped. SYS_FAN5_PUMP holds 50 % until its role is confirmed (call 7).</p>
+    </div>
+    <div class="callouts">
+      <h3>Callouts</h3>
+      <ol>
+        <li><span class="n">1</span><p>The device heading names the chip and its tier once. Every control under it shares the driver, so the cards don't repeat it.</p></li>
+        <li><span class="n">2</span><p>Drift is a line on the card with <b>Recalibrate</b>. It is not a badge, and the bar and hero don't change: it's a reason to look, not an alarm.</p></li>
+        <li><span class="n">3</span><p>NVML is plain duty with a floor, so it needs no kind line. The DRIVER badge already says who runs it below 30 %.</p></li>
+        <li><span class="n">4</span><p>Fans are named as the board prints them until you rename them in setup's review.</p></li>
+      </ol>
+    </div>
+  </div>
+
+  <h3 class="sub">Other machines</h3>
+  <p class="lede">Each kind of §3.5, on the kind of machine it comes from; the numbers are illustrative. Until M9 drives these kinds, the card shows the sentence Penna already prints instead of a curve, for example "This fan takes 8 fixed steps; Penna drives these from M9."</p>
+  <div class="states">
+    <div>
+      <div class="frame"><div class="mock card2">
+        <div class="devh"><span>ThinkPad · laptop</span><span class="tier doc">Documented</span></div>
+        <div class="devnote">Nobody has verified this driver with Penna yet.</div>
+        <div class="card"><div class="r1"><span>Fan</span><span></span></div><div class="r2"><span>2,890 RPM</span><span class="dim">level 3</span></div><div class="track steps"><i style="width:42.8%"></i></div><div class="r3"><span>Laptop · Balanced</span><span></span></div><div class="kl">8 levels. The curve is rounded to a level, with 3 °C between levels.</div></div>
+      </div></div>
+      <div class="state-t">Levels<span><code>thinkpad</code>: the level replaces the %, and the bar under it has steps.</span></div>
+    </div>
+    <div>
+      <div class="frame"><div class="mock card2">
+        <div class="devh"><span>Lenovo Legion · laptop</span><span class="tier doc">Documented</span></div>
+        <div class="devnote">Nobody has verified this driver with Penna yet.</div>
+        <div class="card"><div class="r1"><span>CPU fan</span><span></span></div><div class="r2"><span>3,000 RPM</span><span class="dim">50 %</span></div><div class="track"><i style="width:50%"></i></div><div class="r3"><span>CPU · Balanced</span><span></span></div><div class="kl">Target speed: 50 % = 3,000 RPM, from 1,600 to 4,400.</div></div>
+      </div></div>
+      <div class="state-t">Speed<span><code>lenovo_wmi_other</code>: % maps onto the driver's RPM range, and the card says what it means.</span></div>
+    </div>
+    <div>
+      <div class="frame"><div class="mock card2">
+        <div class="devh"><span>ASUS ROG · laptop</span><span class="tier doc">Documented</span></div>
+        <div class="devnote">Nobody has verified this driver with Penna yet.</div>
+        <div class="card"><div class="r1"><span>CPU fan</span><span></span></div><div class="r2"><span>2,350 RPM</span><span class="dim">41 %</span></div><div class="track"><i style="width:41%"></i></div><div class="r3"><span>CPU · Balanced, fitted</span><span></span></div><div class="kl">8-point firmware curve, on the CPU sensor. The firmware runs it, so it keeps running if Penna stops.</div></div>
+      </div></div>
+      <div class="state-t">Firmware curve<span><code>asus_custom_fan_curve</code>: Penna fits its curve to the firmware's 8 points and writes them only when the curve changes.</span></div>
+    </div>
+    <div>
+      <div class="frame"><div class="mock card2">
+        <div class="devh"><span>ASUS ROG · laptop</span><span class="tier doc">Documented</span></div>
+        <div class="card"><div class="r1"><span>GPU fan</span><span></span></div><div class="r2"><span>2,100 RPM</span><span class="dim">auto</span></div><div class="track"><i style="width:0%"></i></div><div class="r3"><span>Automatic</span><span></span></div><div class="kl">Automatic or full speed only. Each profile picks one; there is no curve.</div></div>
+      </div></div>
+      <div class="state-t">Modes<span><code>asus</code>: its GPU fan takes only full speed or automatic.</span></div>
+    </div>
+    <div>
+      <div class="frame"><div class="mock card2">
+        <div class="devh"><span>Laptop · platform profile</span><span class="tier doc">Documented</span></div>
+        <div class="card"><div class="r1"><span>System fans</span><span></span></div><div class="r2"><span>3,100 RPM</span><span class="dim">balanced</span></div><div class="track"><i style="width:0%"></i></div><div class="r3"><span>Power profile</span><span></span></div><div class="kl">Power profile: balanced. Quiet picks power-saver and Render picks performance. It changes power as well as the fans.</div></div>
+      </div></div>
+      <div class="state-t">Platform<span>A laptop whose only fan lever is <code>platform_profile</code>, switched through power-profiles-daemon when it runs.</span></div>
+    </div>
+    <div>
+      <div class="frame"><div class="mock card2">
+        <div class="devh"><span>Lenovo Legion · laptop</span><span class="tier doc">Documented</span></div>
+        <div class="card"><div class="r1"><span>GPU fan</span><span></span></div><div class="r2"><span>2,600 RPM</span><span class="dim"></span></div><div class="track"><i style="width:0%"></i></div><div class="r3"><span>Read only</span><span></span></div><div class="kl">Penna only reads this fan. Writing its curve files has powered Legion laptops off.</div></div>
+      </div></div>
+      <div class="state-t">Read-only<span><code>legion_hwmon</code>: shown with its RPM, never written, and the reason in one line.</span></div>
+    </div>
+    <div>
+      <div class="frame"><div class="mock card2">
+        <div class="devh"><span>IT8792E · motherboard</span><span class="tier">Verified</span></div>
+        <div class="sec" style="margin-top:2px">Firmware (1)</div>
+        <div class="card" style="border-style:dashed"><div class="r1"><span>SYS_FAN5_PUMP</span><span class="badge">Not offered</span></div><div class="r2"><span>1,380 RPM</span><span class="dim"></span></div><div class="kl">Penna wrote 60 %, and the board's own fan firmware put it back to 100 % within a second. <span class="dim">penna doctor says what can change that.</span></div></div>
+      </div></div>
+      <div class="state-t">Reverts<span>The write test's <code>reverts</code>, as the it87 community reports it on Gigabyte boards without the fork's workaround. This desk's IT8792E held in M5.</span></div>
+    </div>
+    <div>
+      <div class="frame"><div class="mock card2">
+        <div class="devh"><span>IT8688E · motherboard</span><span class="tier">Verified</span></div>
+        <div class="card"><div class="r1"><span>CPU_OPT</span><span class="badge urgent"><svg><use href="#g-fan-alert"/></svg>Stalled</span></div><div class="r2"><span>0 RPM</span><span class="dim">35 %</span></div><div class="track"><i style="width:35%"></i></div><div class="r3"><span>CPU · Balanced</span><span></span></div><div class="alert">Isn't turning at 35 %. A 2 s kick at 100 % didn't start it. Check the fan and its cable.</div></div>
+      </div></div>
+      <div class="state-t">Stalled<span>Urgent: <code>fan-alert</code> in the bar and the hero, the badge, and what Penna tried. The curve keeps running, and the emergency rule still protects the CPU.</span></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">C · Setup</div>
+  <h2>One run, every fan, about four minutes</h2>
+  <p class="lede">The setup view takes the studio over: the editor's place shows the step, the controls column shows each fan, and the sensors column becomes the guards. A simulated run of this desk plays below, faster than real time. Pairing uses the RPMs measured in M5; the rest of each fan's curve is simulated.</p>
+  <div class="simbar" role="group" aria-label="Setup simulation">
+    <div class="grp"><span class="lbl">Jump to</span>
+      <div class="seg" id="jumpSeg">
+        <button type="button" data-jump="start" aria-pressed="false">Start</button>
+        <button type="button" data-jump="idle" aria-pressed="false">Idle</button>
+        <button type="button" data-jump="write" aria-pressed="false">Write test</button>
+        <button type="button" data-jump="pair" aria-pressed="true">Pairing</button>
+        <button type="button" data-jump="cal" aria-pressed="false">Calibration</button>
+        <button type="button" data-jump="load" aria-pressed="false">Load check</button>
+        <button type="button" data-jump="review" aria-pressed="false">Review</button>
+      </div>
+    </div>
+    <div class="grp"><span class="lbl">Speed</span>
+      <div class="seg" id="speedSeg">
+        <button type="button" data-speed="1" aria-pressed="false">1×</button>
+        <button type="button" data-speed="4" aria-pressed="true">4×</button>
+        <button type="button" data-speed="16" aria-pressed="false">16×</button>
+      </div>
+    </div>
+    <button type="button" class="pbtn" id="tripBtn">Trip a guard</button>
+  </div>
+  <div class="frame flush" style="margin-top:14px">
+    <div class="mock studio-scrim" id="setupView">
+      <div class="studio">
+        <div class="head">
+          <div class="t"><svg class="glyph"><use href="#g-fan-clock"/></svg>Penna <span class="sub2">Setting up fans</span></div>
+          <div style="display:flex;gap:16px;align-items:center"><span class="num dim" id="suClock">about 6:45</span><span class="dim">esc</span></div>
+        </div>
+        <div class="sbody">
+          <div class="col pinned" data-pin="1" style="--pl:52px;--pt:-5px">
+            <div class="sec">Fans</div>
+            <div class="srows" id="suRows"></div>
+          </div>
+          <div class="col" style="gap:10px">
+            <div class="rail pinned" id="suRail" data-pin="2" style="--pl:-30px;--pt:-1px"></div>
+            <div class="spanel pinned" id="suPanel" data-pin="3" style="--pl:calc(100% - 26px);--pt:-11px"></div>
+            <div class="insp"><span id="suSay">&nbsp;</span></div>
+          </div>
+          <div class="col pinned" data-pin="4" style="--pl:60px;--pt:-5px">
+            <div class="sec">Guards</div>
+            <div id="suGuards"></div>
+            <div class="caption">If a guard trips, setup stops and every fan goes back to its BIOS or driver, as it was found. The emergency rule stays in force throughout.</div>
+          </div>
+        </div>
+        <div class="sacts pinned" data-pin="5" style="--pl:calc(100% - 236px);--pt:16px">
+          <span class="hint" id="suHint">Setup belongs to this window: closing it stops setup and hands every fan back.</span>
+          <div class="btns" id="suActs"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="callouts wide">
+    <ol>
+      <li><span class="n">1</span><p>Each fan's row: its name, live RPM, and what is happening to it now. Controls are named by chip and channel until pairing finds their header; then the row takes the header's name.</p></li>
+      <li><span class="n">2</span><p>The seven steps of §5 with their times on this desk. Done steps stay readable; a skipped load check is struck through.</p></li>
+      <li><span class="n">3</span><p>One panel per step. Pairing shows every tach on one scale with the one that moves in the accent. Calibration draws each fan's duty → RPM table on its own scale as it measures it.</p></li>
+      <li><span class="n">4</span><p>Guards, live: CPU against 85 °C, GPU against 80 °C, and the load. A tripped guard turns urgent and ends the run.</p></li>
+      <li><span class="n">5</span><p>One way out, where Save sits in the studio: <b>Stop and hand back</b>. Every fan returns at once, as it was found.</p></li>
+    </ol>
+  </div>
+  <p class="try"><b>Try it.</b> Jump to Start and run it from the beginning, or switch the load check off on the start screen. <b>Trip a guard</b> during any step shows what a stop looks like. In the bar, a running setup shows <code>fan-clock</code>, the timed-override glyph, because setup holds every fan for a while and then lets go.</p>
+</section>
+
+<section>
+  <div class="eyebrow">D · Review</div>
+  <h2>Setup ends on a draft, never a change</h2>
+  <p class="lede">Roles with their reasons, a name for each fan, and the generated curves in the editor, marked Generated. This is the end of the run in C, shown here at rest. Points drag as in review 01, and the marker rides the live simulated desk.</p>
+  <div class="frame flush" style="margin-top:22px">
+    <div class="mock studio-scrim" id="reviewView">
+      <div class="studio">
+        <div class="head">
+          <div class="t"><svg class="glyph"><use href="#g-fan"/></svg>Penna <span class="sub2">Setup · review</span></div>
+          <div style="display:flex;gap:16px;align-items:center"><span class="unsaved"><i></i><span id="rvState">Draft from setup · not saved</span></span><span class="dim">esc</span></div>
+        </div>
+        <div class="sbody rv">
+          <div class="col pinned" data-pin="1" style="--pl:72px;--pt:-5px">
+            <div class="sec">Fans · roles</div>
+            <div id="rvRoles" style="display:grid;gap:6px"></div>
+          </div>
+          <div class="col" style="gap:10px">
+            <div class="ed-head">
+              <div class="group pinned" id="rvProf" data-pin="2" style="width:260px;--pl:-30px;--pt:3px">
+                <button type="button" class="pill" data-prof="Quiet" aria-pressed="false">Quiet</button>
+                <button type="button" class="pill" data-prof="Balanced" aria-pressed="true">Balanced</button>
+                <button type="button" class="pill" data-prof="Render" aria-pressed="false">Render</button>
+              </div>
+              <div class="chips" id="rvTabs"></div>
+            </div>
+            <div class="ed-head">
+              <div class="nm" id="rvName">CPU · Balanced</div>
+              <div class="chips pinned" id="rvChips" data-pin="3" style="--pl:-30px;--pt:0px"></div>
+            </div>
+            <div id="rvGraphWrap" class="pinned" data-pin="4" style="--pl:62px;--pt:40px">
+              <svg class="editor" id="rvEditor" viewBox="0 0 600 440" tabindex="0" role="application" aria-label="Generated curve editor. Use the bracket keys to select a point, h and l to move it by one degree, j and k by one percent, Shift for five."></svg>
+            </div>
+            <div id="rvMix" class="mix" hidden></div>
+            <div class="insp"><span id="rvNow">46.0 °C → 25 %</span><span class="what" id="rvWhat">At the floor</span></div>
+          </div>
+          <div class="col pinned" data-pin="5" style="--pl:60px;--pt:-5px">
+            <div class="sec">Measured</div>
+            <div class="mt" id="rvMeasured"></div>
+            <div class="caption">Written to <span style="color:var(--m-fg)">measured.toml</span>. Facts about the hardware, kept whether or not you save the curves.</div>
+            <div class="sec" style="margin-top:8px">Load check</div>
+            <div class="box"><span id="rvLoad">Under 3 minutes of full load the CPU levelled at 74 °C, with CPU_FAN at 74 %.</span><span class="caption">Below 85 °C, so the 100 % point stays where it was generated.</span></div>
+          </div>
+        </div>
+        <div class="sacts pinned" data-pin="6" style="--pl:calc(100% - 226px);--pt:16px">
+          <span class="hint">[ ] point · h/l °C · j/k % · ⇧ ×5 · Discard leaves Defaults on · Save keeps all three profiles and switches to Balanced</span>
+          <div class="btns">
+            <button type="button" class="btn" id="rvDiscard">Discard</button>
+            <button type="button" class="btn primary" id="rvSave">Save curves</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="callouts wide">
+    <ol>
+      <li><span class="n">1</span><p>Each fan gets a suggested role and the reason for it. Name a fan for what it cools; the header name stays underneath. A dashed chip still needs your yes. <b>Identify</b> spins that fan to 100 % for 3 s.</p></li>
+      <li><span class="n">2</span><p>All three profiles are in the draft. Switch between them to check each before saving.</p></li>
+      <li><span class="n">3</span><p><b>Generated</b> marks a curve setup made. Edit it and it says so; once saved, it's an ordinary curve.</p></li>
+      <li><span class="n">4</span><p>The anchors the curve was placed on are drawn on the temperature axis: measured idle, and the limit (and NVML's acoustic target for the GPU).</p></li>
+      <li><span class="n">5</span><p>What setup measured, per fan, and the load check's plateau, the evidence for the CPU curve.</p></li>
+      <li><span class="n">6</span><p>Save keeps the whole draft and switches to Balanced. Discard leaves Defaults on and keeps only the measurements.</p></li>
+    </ol>
+  </div>
+  <p class="try"><b>Try it.</b> Press the dashed <b>Case?</b> chip on SYS_FAN5_PUMP to confirm it as a case fan: it is then measured below 50 %. Press PCH_FAN's chip to see the chipset curve; GPU fan 1 for the driver's region; SYS_FAN1 for the Case mix.</p>
+</section>
+
+<section>
+  <div class="eyebrow">E · penna setup</div>
+  <h2>The same run, in a terminal</h2>
+  <p class="lede">The CLI holds its own connection, like the studio: Ctrl-C stops setup and hands every fan back. It prints one line per step, then asks two questions.</p>
+  <div class="frame flush" style="margin-top:18px"><pre class="mock term" id="cliOut"></pre></div>
+</section>
+
+<section>
+  <div class="eyebrow">F · Vocabulary</div>
+  <h2>What each new thing looks like</h2>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Kind (§3.5)</th><th>Card line</th><th>In place of the %</th><th>Example</th></tr></thead>
+      <tbody>
+        <tr><td><code>duty</code></td><td>none</td><td>%</td><td>CPU_FAN, this desk</td></tr>
+        <tr><td><code>nvml</code></td><td>none; DRIVER badge below the floor</td><td>% or "driver"</td><td>GPU fan 1, this desk</td></tr>
+        <tr><td><code>speed</code></td><td>"Target speed: 50 % = 3,000 RPM, from 1,600 to 4,400."</td><td>%</td><td>Legion, <code>lenovo_wmi_other</code></td></tr>
+        <tr><td><code>levels</code></td><td>"8 levels. The curve is rounded to a level…"</td><td>"level 3"; a stepped bar</td><td>ThinkPad</td></tr>
+        <tr><td><code>firmware-curve</code></td><td>"8-point firmware curve, on the CPU sensor…"</td><td>%</td><td>ASUS, <code>asus_custom_fan_curve</code></td></tr>
+        <tr><td><code>modes</code></td><td>"Automatic or full speed only…"</td><td>the mode</td><td>ASUS GPU fan</td></tr>
+        <tr><td><code>platform</code></td><td>"Power profile: balanced…"</td><td>the profile</td><td>a laptop with only <code>platform_profile</code></td></tr>
+        <tr><td>read-only</td><td>"Penna only reads this fan." and why</td><td>nothing</td><td><code>legion_hwmon</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="tablewrap" style="margin-top:24px">
+    <table>
+      <thead><tr><th>New</th><th>Bar glyph</th><th>Popup and studio</th><th>Colour</th></tr></thead>
+      <tbody>
+        <tr><td>Defaults</td><td><code>fan-auto</code></td><td>Hero "Defaults · the BIOS and drivers run every fan"; rows show BIOS or Driver, no duty</td><td>text</td></tr>
+        <tr><td>setup running (<code>measuring</code>)</td><td><code>fan-clock</code></td><td>Popup hero "Setting up fans · pairing, 2 of 8"; studio in the setup view</td><td>accent</td></tr>
+        <tr><td>Generated curve</td><td>none</td><td>GENERATED chip on the curve until it's saved</td><td>accent</td></tr>
+        <tr><td><code>stalled</code></td><td><code>fan-alert</code></td><td>STALLED badge and "isn't turning at 35 %"</td><td>urgent</td></tr>
+        <tr><td>drift</td><td>no change</td><td>A line on the card with Recalibrate; a <code>warn</code> event</td><td>text</td></tr>
+        <tr><td>empty header</td><td>no change</td><td>Folded under Empty header, by header name</td><td>dim</td></tr>
+        <tr><td>tier Verified</td><td>no change</td><td>On the device heading</td><td>dim</td></tr>
+        <tr><td>tier Captured, Documented</td><td>no change</td><td>On the device heading, with one sentence under it</td><td>text</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="decisions">
+  <div class="eyebrow">G · Decisions</div>
+  <h2>Ten calls before QML</h2>
+  <p class="lede">Each is a recommendation. Approved calls go into DESIGN.md as §11.3 and change §5, §8.2 and §8.3 where they differ.</p>
+  <ol>
+    <li><strong>Defaults is the first pill, set apart by a wider gap.</strong> It counts toward the five pills. Choosing it needs no confirmation. <span class="rec">Recommended: handing back is always safe, and the gap says it is a different kind of choice.</span></li>
+    <li><strong>A profile shows as a pill once it runs at least one fan.</strong> A new install shows Defaults and <b>Set up fans…</b> only. <span class="rec">Recommended: three pills that all do what Defaults does would mislead.</span></li>
+    <li><strong>In Defaults, every fan stays listed</strong> with its RPM and who runs it, named for its header, and its duty left blank. Before pairing the rows are tachs. <span class="rec">Recommended, from M5: the IT8688E's PWM register reads the BIOS curve's start value while the BIOS runs the fan. Needs the tick to carry tachs with their board names (protocol v2, additive).</span></li>
+    <li><strong>Setup takes the studio over</strong>, opens on a start screen with the load check as its only option, and puts <b>Stop and hand back</b> where Save sits. The bar shows <code>fan-clock</code> while it runs. <span class="rec">Recommended.</span></li>
+    <li><strong>Pairing settles every fan at 60 % first, and pairs on the rise.</strong> A tach pairs with a control when its highest reading in the 6 s at 100 % is 15 % and 150 RPM above its reading just before; the drop to 40 % confirms. <span class="rec">Recommended, from M5: this paired all seven fans by hand, where a single reading against an unsettled baseline paired one. The smallest rise from 60 % was 31 %, the PCH fan's. From the write test's 80 %, rises are smaller still. §5.2 changes to match.</span></li>
+    <li><strong>Calibration draws each fan's table on its own scale,</strong> in small multiples, as it measures. <span class="rec">Recommended: on one shared scale the PCH fan's 5,620 RPM flattens every other fan.</span></li>
+    <li><strong>Roles are chips with their reason, and each fan can be named in the review.</strong> A fan on a pump header that turns out to be a case fan is held at 50 % or more until you confirm it, then measured below. <span class="rec">Recommended, from this desk: SYS_FAN5_PUMP tops out at 1,730 RPM, under §5.3's 2,000.</span></li>
+    <li><strong>A chipset fan may stop when the idle sample saw its firmware stop it.</strong> Calibration then measures it to a stop, and its curve rests below about 64 °C. Otherwise chipset fans never stop, as §5.3 says. <span class="rec">Recommended, from this desk: PCH_FAN reads 0 RPM under the BIOS with the PCH at 45 °C. A never-stop curve would run it near 2,700 RPM where the BIOS keeps it silent.</span></li>
+    <li><strong>Generated curves arrive as one draft</strong> holding all three profiles, each curve marked Generated, with its anchors drawn on the axis. Save keeps everything and switches to Balanced; Discard leaves Defaults on and keeps the measurements. <span class="rec">Recommended.</span></li>
+    <li><strong>Cards carry kind and tier only when they say something.</strong> The tier goes on the device heading; a card adds a kind line unless it is plain duty or NVML. Drift is a line with Recalibrate; stalled is urgent; an empty header folds away. <span class="rec">Recommended: narrows §8.3's "each card shows its kind and tier" to what tells the user something.</span></li>
+  </ol>
+</section>
+
+<footer>
+  <span>Source: <code>~/Projects/penna/design/penna-design-review-03.html</code> · Spec: <code>~/Projects/penna/DESIGN.md</code>, draft 3, §4.7, §5, §8.2, §8.3 · Review 01: <code>design/penna-design-review.html</code></span>
+  <span>Each motherboard fan's RPM at 60 % and 100 %, the empty SYS_FAN6_PUMP and the stopped PCH fan come from the M5 hardware test and this desk on 22 October 2026. The rest of each duty → RPM curve, the stop and start duties and the load check are simulated.</span>
+</footer>
+
+</div>
+
+<script>
+(() => {
+  const TICK = 1000;
+  const NS = 'http://www.w3.org/2000/svg';
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const clamp01 = (k) => clamp(k, 0, 1);
+  const fmt = (n) => Math.round(n).toLocaleString('en-US');
+  const r10 = (n) => fmt(Math.round(n / 10) * 10);
+  const mmss = (s) => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* storage unavailable */ } },
+  };
+  const el = (tag, attrs, parent) => {
+    const n = document.createElementNS(NS, tag);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(n);
+    return n;
+  };
+  const h = (tag, cls, text, parent) => {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    if (parent) parent.appendChild(n);
+    return n;
+  };
+  const setText = (node, s) => { if (node && node.textContent !== s) node.textContent = s; };
+  const mkRand = (s) => () => { s |= 0; s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+
+  // ------------------------------------------------------------- preview settings
+  const reduceMQ = window.matchMedia('(prefers-reduced-motion: reduce)');
+  let animationsOn = (store.get('penna.anim') || (reduceMQ.matches ? 'off' : 'on')) === 'on';
+  let mtheme = store.get('penna.mtheme') || 'miasma';
+  function applyTheme() {
+    $$('.mock').forEach((m) => m.setAttribute('data-mtheme', mtheme));
+    $$('#themeSeg button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.mt === mtheme)));
+  }
+  function applyAnim() { $$('#animSeg button').forEach((b) => b.setAttribute('aria-pressed', String((b.dataset.anim === 'on') === animationsOn))); }
+  $$('#themeSeg button').forEach((b) => b.addEventListener('click', () => { mtheme = b.dataset.mt; store.set('penna.mtheme', mtheme); applyTheme(); }));
+  $$('#animSeg button').forEach((b) => b.addEventListener('click', () => { animationsOn = b.dataset.anim === 'on'; store.set('penna.anim', animationsOn ? 'on' : 'off'); applyAnim(); kick(); }));
+  applyTheme();
+  applyAnim();
+
+  // ------------------------------------------------------------- the desk
+  // Each motherboard fan's RPM at 60 % and 100 % was measured in the M5 hardware test (22 Oct 2026). The stop and start
+  // duties and the shape of the curve between are simulated. GPU fans follow the 3090: 600 RPM at its 30 % floor, 1,820 at 100 %.
+  const FANS = [
+    { id: 'c1', chip: 'IT8688E', pwm: 'pwm1', header: 'CPU_FAN', role: 'cpu', bios: 1200, max: 1660, r60: 1048, pstop: 18, start: 24, rmin: 360 },
+    { id: 'c2', chip: 'IT8688E', pwm: 'pwm2', header: 'SYS_FAN1', role: 'case', bios: 1090, max: 2190, r60: 1562, pstop: 20, start: 26, rmin: 480 },
+    { id: 'c3', chip: 'IT8688E', pwm: 'pwm3', header: 'SYS_FAN2', role: 'case', bios: 600, max: 1660, r60: 1044, pstop: 14, start: 20, rmin: 260 },
+    { id: 'c4', chip: 'IT8688E', pwm: 'pwm4', header: 'PCH_FAN', role: 'chipset', bios: 0, max: 5620, r60: 4300, pstop: 22, start: 28, rmin: 1500 },
+    { id: 'c5', chip: 'IT8688E', pwm: 'pwm5', header: 'CPU_OPT', role: 'cpu', bios: 1570, max: 2180, r60: 1374, pstop: 20, start: 26, rmin: 640 },
+    { id: 'c6', chip: 'IT8792E', pwm: 'pwm1', header: 'SYS_FAN5_PUMP', role: 'case', pumpHeader: true, bios: 1360, max: 1730, r60: 1106, pstop: 20, start: 26, rmin: 420, low: 50 },
+    { id: 'c7', chip: 'IT8792E', pwm: 'pwm2', header: 'SYS_FAN6_PUMP', empty: true, pumpHeader: true, bios: 0 },
+    { id: 'c8', chip: 'IT8792E', pwm: 'pwm3', header: 'SYS_FAN4', role: 'case', bios: 1050, max: 2140, r60: 1544, pstop: 18, start: 24, rmin: 520 },
+    { id: 'g1', nvml: true, header: 'GPU fan 1', role: 'gpu', bios: 0, max: 1820, rmin: 600, pstop: 30, start: 30, g: 1 },
+    { id: 'g2', nvml: true, header: 'GPU fan 2', role: 'gpu', bios: 0, max: 1820, rmin: 600, pstop: 30, start: 30, g: 1 },
+  ];
+  const byId = {};
+  FANS.forEach((f) => { byId[f.id] = f; });
+  const REAL = FANS.filter((f) => !f.empty);
+  const HW = FANS.filter((f) => !f.nvml);
+  const ROLE_ORDER = ['c1', 'c5', 'c2', 'c3', 'c8', 'c6', 'c4', 'g1', 'g2'].map((id) => byId[id]);
+  const ROLE_NAME = { cpu: 'CPU cooler', case: 'Case', pump: 'Pump', chipset: 'Chipset', gpu: 'GPU' };
+  const WHY = {
+    c1: 'The board calls this header CPU_FAN.',
+    c5: 'The board calls this header CPU_OPT.',
+    c2: 'A system fan header.',
+    c3: 'A system fan header.',
+    c8: 'A system fan header.',
+    c6: 'On a pump header, but 1,730 RPM at 100 %: a case fan. Held at 50 % or more until you confirm.',
+    c4: 'The board calls this header PCH_FAN. The BIOS stops it when cool, so it may stop.',
+    g1: 'An NVIDIA GPU fan.',
+    g2: 'An NVIDIA GPU fan.',
+  };
+  REAL.forEach((f) => {
+    if (!f.g) f.g = Math.log((f.r60 - f.rmin) / (f.max - f.rmin)) / Math.log((60 - f.pstop) / (100 - f.pstop));
+  });
+  // Steady RPM at a duty. A stopped fan starts only at its start duty; a turning one stops below its stop duty.
+  function steady(f, d, spinning) {
+    if (f.empty) return 0;
+    if (d < f.pstop || (!spinning && d < f.start)) return 0;
+    return f.rmin + (f.max - f.rmin) * Math.pow((d - f.pstop) / (100 - f.pstop), f.g);
+  }
+  // Calibration (§5.4): down from 100 % in 5 % steps, then up in 2 % steps from where it stopped. A pump header stops the
+  // descent at 50 % until its role is confirmed. NVML records 30–100 % for the axis only.
+  function calSchedule(f) {
+    const segs = [];
+    let t = 0;
+    if (f.nvml) {
+      for (let d = 100; d >= 30; d -= 5) { segs.push({ t0: t, t1: t + 3, d, ph: 'down' }); t += 3; }
+      return { segs, dur: t };
+    }
+    const low = f.low || 0;
+    let last = 100;
+    for (let d = 100; d >= low; d -= 5) { segs.push({ t0: t, t1: t + 4, d, ph: 'down' }); t += 4; last = d; if (d < f.pstop) break; }
+    if (!f.low) {
+      for (let d = last + 2; ; d += 2) {
+        segs.push({ t0: t, t1: t + 1.2, d, ph: 'up' }); t += 1.2;
+        if (d >= f.start) { segs.push({ t0: t, t1: t + 3, d, ph: 'spin' }); t += 3; break; }
+      }
+    }
+    return { segs, dur: t };
+  }
+  REAL.forEach((f) => {
+    f.cal = calSchedule(f);
+    const turning = f.cal.segs.filter((x) => x.ph === 'down' && steady(f, x.d, true) > 0);
+    f.mStop = f.nvml || f.low ? null : turning[turning.length - 1].d;
+    const sp = f.cal.segs.find((x) => x.ph === 'spin');
+    f.mStart = sp ? sp.d : null;
+    f.floor = f.nvml ? 30 : f.low ? f.low : f.mStop + 5; // §4.5: the stop duty plus 5 %
+    f.mMax = Math.round(steady(f, 100, true) / 10) * 10;
+  });
+  const PUMP_FULL = (() => {
+    const f = Object.assign({}, byId.c6, { low: 0 });
+    const s = calSchedule(f);
+    const turning = s.segs.filter((x) => x.ph === 'down' && steady(f, x.d, true) > 0);
+    const stop = turning[turning.length - 1].d;
+    return { stop, start: s.segs.find((x) => x.ph === 'spin').d, floor: stop + 5 };
+  })();
+  const CAL_DUR = Math.ceil(Math.max(...REAL.map((f) => f.cal.dur)));
+  const dutyForRpm = (f, r) => { let lo = f.floor, hi = 100; for (let i = 0; i < 40; i++) { const m = (lo + hi) / 2; if (steady(f, m, true) < r) lo = m; else hi = m; } return (lo + hi) / 2; };
+  const airflow = (f, a) => { const r0 = steady(f, f.floor, true); return dutyForRpm(f, r0 + a * (f.max - r0)); };
+  const evalPts = (pts, x) => {
+    if (x <= pts[0][0]) return pts[0][1];
+    for (let i = 1; i < pts.length; i++) {
+      const [x1, y1] = pts[i];
+      if (x <= x1) { const [x0, y0] = pts[i - 1]; return y0 + ((y1 - y0) * (x - x0)) / (x1 - x0); }
+    }
+    return pts[pts.length - 1][1];
+  };
+  const clonePts = (p) => p.map((q) => q.slice());
+
+  // ------------------------------------------------------------- generated curves (§5.5)
+  const IDLE = { cpu: 45, gpu: 40, pch: 45 };
+  const PROFS = ['Quiet', 'Balanced', 'Render'];
+  const CPU_T = { Quiet: [15, -15, -3], Balanced: [10, -20, -8], Render: [5, -30, -15] };
+  const GPU_T = { Quiet: [73, 83, 90], Balanced: [68, 78, 88], Render: [63, 73, 83] };
+  const CAP = { Quiet: 0.5, Balanced: 0.75, Render: 1 };
+  function generate(prof) {
+    const [u, a50, a100] = CPU_T[prof];
+    const [gb, g50, g100] = GPU_T[prof];
+    const cpuF = byId.c1, gpuF = byId.g1, caseF = byId.c2, pchF = byId.c4;
+    return {
+      cpu: { id: 'cpu', role: 'CPU', name: 'CPU · ' + prof, src: 'cpu', srcName: 'CPU · Tctl', tau: 5, hyst: 3, fan: cpuF,
+        pts: [[IDLE.cpu + u, cpuF.floor], [90 + a50, Math.round(airflow(cpuF, 0.5))], [90 + a100, 100]], anchors: [[45, 'idle 45'], [90, 'limit 90']] },
+      gpu: { id: 'gpu', role: 'GPU', name: 'GPU · ' + prof, src: 'gpu', srcName: 'GPU · RTX 3090', tau: 0, hyst: 2, fan: gpuF, nvml: true,
+        pts: [[gb - 1, 0], [gb, 30], [g50, Math.round(airflow(gpuF, 0.5))], [g100, 100]], anchors: [[40, 'idle 40'], [83, 'target 83'], [93, 'limit 93']] },
+      chip: { id: 'chip', role: 'Chipset', name: 'Chipset · ' + prof, src: 'pch', srcName: 'PCH', tau: 0, hyst: 3, fan: pchF, mayStop: true,
+        pts: [[60, 0], [65, pchF.floor], [80, 100]], anchors: [[45, 'idle 45']] },
+      case: { id: 'case', role: 'Case', name: 'Case · ' + prof, kind: 'mix', cap: CAP[prof], capDuty: Math.round(airflow(caseF, CAP[prof])), from: { cpu: IDLE.cpu + 15, gpu: IDLE.gpu + 15 } },
+    };
+  }
+  const GEN = {};
+  PROFS.forEach((p) => { GEN[p] = generate(p); });
+  // A fan's duty on a draft: each role's curve, each fan's own floor.
+  function draftDuty(f, g, T) {
+    if (f.role === 'cpu') return Math.max(f.floor, evalPts(g.cpu.pts, T.cpu));
+    if (f.role === 'gpu') return evalPts(g.gpu.pts, T.gpu);
+    if (f.role === 'chipset') { const o = evalPts(g.chip.pts, T.pch); return o < f.mStop ? 0 : Math.max(o, f.floor); }
+    const c = g.case;
+    const on = T.cpu >= c.from.cpu || T.gpu >= c.from.gpu;
+    const o = on ? Math.min(c.capDuty, Math.max(evalPts(g.cpu.pts, T.cpu), evalPts(g.gpu.pts, T.gpu))) : 0;
+    return Math.max(f.floor, o);
+  }
+  // The load check, run once without noise: every CPU thread busy, fans on the Balanced draft.
+  const LOADRES = (() => {
+    let T = 46, s = 46, d = 0;
+    for (let i = 0; i < 180; i++) {
+      d = Math.max(byId.c1.floor, evalPts(GEN.Balanced.cpu.pts, s));
+      T += (84 - 0.14 * d - T) * (1 - Math.exp(-1 / 22));
+      s += (T - s) * (1 - Math.exp(-1 / 5));
+    }
+    return { T: Math.round(T), d: Math.round(d) };
+  })();
+  const PCH_REST = Math.round(60 + (5 * byId.c4.mStop) / byId.c4.floor);
+
+  // ------------------------------------------------------------- sensors
+  function makeSensors(seed) {
+    const rand = mkRand(seed);
+    const S = {
+      rand,
+      cpu: { raw: 45, base: 45, boost: 0, s: 45, lo: 30, hi: 95, hist: [] },
+      gpu: { raw: 40, base: 40, lo: 30, hi: 90, hist: [] },
+      nvme: { raw: 37, base: 37, lo: 30, hi: 60, hist: [] },
+      pch: { raw: 45, base: 45, lo: 30, hi: 80, hist: [] },
+      t: 0,
+    };
+    S.step = (heat, cpuDuty) => {
+      S.t += 1;
+      const p = ((S.t % 70) + 70) % 70;
+      const L = heat ? 0 : p < 40 ? 0 : p < 46 ? (p - 40) / 6 : p < 60 ? 1 : p < 66 ? 1 - (p - 60) / 6 : 0;
+      const c = S.cpu;
+      const target = heat ? 84 - 0.14 * (cpuDuty || 30) : 45 + 7 * L;
+      c.base += (target - c.base) * (1 - Math.exp(-1 / (heat ? 22 : 5)));
+      const spike = !heat && rand() < 0.22 ? 1.5 + rand() * 4 : 0;
+      c.boost = c.boost * 0.4 + spike;
+      c.raw = c.base + c.boost + (rand() - 0.5) * (heat ? 0.6 : 1.0);
+      c.s += (c.raw - c.s) * (1 - Math.exp(-1 / 5));
+      S.gpu.base += (40 + 2 * L - S.gpu.base) * (1 - Math.exp(-1 / 15));
+      S.gpu.raw = S.gpu.base + (rand() - 0.5) * 0.4;
+      S.nvme.base += (37 + 3 * L + 3 * heat - S.nvme.base) * (1 - Math.exp(-1 / 60));
+      S.nvme.raw = S.nvme.base + (rand() - 0.5) * 0.2;
+      S.pch.base += (45 + 3 * heat - S.pch.base) * (1 - Math.exp(-1 / 40));
+      S.pch.raw = S.pch.base + (rand() - 0.5) * 0.3;
+      for (const k of ['cpu', 'gpu', 'nvme', 'pch']) { const s = S[k]; s.hist.push(s.raw); if (s.hist.length > 320) s.hist.shift(); }
+    };
+    S.T = () => ({ cpu: S.cpu.s, gpu: S.gpu.raw, pch: S.pch.raw });
+    for (let i = 0; i < 320; i++) S.step(0, 30);
+    return S;
+  }
+
+  // ------------------------------------------------------------- display primitives
+  class Glide {
+    constructor(v) { this.from = v; this.to = v; this.t0 = -1e9; this.dur = TICK; }
+    set(v, now, dur) { this.from = this.at(now); this.to = v; this.t0 = now; if (dur) this.dur = dur; }
+    jump(v) { this.from = this.to = v; this.t0 = -1e9; }
+    at(now) { if (!animationsOn) return this.to; const k = clamp01((now - this.t0) / this.dur); return this.from + (this.to - this.from) * k; }
+  }
+  class Shown {
+    constructor(step, ease) { this.step = step; this.ease = ease; this.to = null; this.from = 0; this.t0 = -1e9; }
+    feed(v, now) {
+      const s = this.step;
+      if (this.to === null) { this.to = this.from = Math.round(v / s) * s; return; }
+      if (Math.abs(v - this.to) >= 0.6 * s) { this.from = this.cur(now); this.to = Math.round(v / s) * s; this.t0 = now; }
+    }
+    cur(now) {
+      if (!animationsOn || !this.ease) return this.to;
+      const k = clamp01((now - this.t0) / this.ease);
+      const e = 1 - Math.pow(1 - k, 3);
+      return this.from + (this.to - this.from) * e;
+    }
+    val(now) { return Math.round(this.cur(now) / this.step) * this.step; }
+  }
+  class Spark {
+    constructor(svg, sens) {
+      this.svg = svg;
+      this.sens = sens;
+      this.N = +svg.dataset.n;
+      const vb = svg.viewBox.baseVal;
+      this.W = vb.width; this.H = vb.height;
+      this.dx = this.W / (this.N - 1);
+      this.g = el('g', {}, svg);
+      this.area = el('path', { class: 'area' }, this.g);
+      this.line = el('path', { class: 'line' }, this.g);
+      this.headArea = el('polygon', { class: 'area' }, svg);
+      this.head = el('line', { class: 'line' }, svg);
+      this.dot = el('circle', { class: 'dot', r: '1.8' }, svg);
+      this.glide = new Glide(sens.raw);
+      this.t0 = -1e9; this.dur = TICK; this.lastY = 0; this.n = 0;
+    }
+    y(v) { const { lo, hi } = this.sens; return this.H - 2 - ((clamp(v, lo, hi) - lo) / (hi - lo)) * (this.H - 4); }
+    onTick(now, dur) {
+      this.dur = dur || TICK;
+      this.glide.set(this.sens.raw, now, this.dur);
+      this.t0 = now;
+      const pts = this.sens.hist.slice(-(this.N + 2), -1);
+      const n = pts.length;
+      let d = '';
+      let a = '';
+      pts.forEach((v, i) => {
+        const x = (i * this.dx).toFixed(2);
+        const y = this.y(v).toFixed(2);
+        d += (i ? 'L' : 'M') + x + ' ' + y;
+        a += (i ? 'L' : 'M' + x + ' ' + this.H + 'L') + x + ' ' + y;
+      });
+      a += 'L' + ((n - 1) * this.dx).toFixed(2) + ' ' + this.H + 'Z';
+      this.line.setAttribute('d', d);
+      this.area.setAttribute('d', a);
+      this.n = n;
+      this.lastY = this.y(pts[n - 1]);
+    }
+    frame(now) {
+      const frac = animationsOn ? clamp01((now - this.t0) / this.dur) : 1;
+      const xk = this.W - frac * this.dx;
+      this.g.setAttribute('transform', 'translate(' + (xk - (this.n - 1) * this.dx).toFixed(2) + ' 0)');
+      const yh = this.y(this.glide.at(now));
+      this.head.setAttribute('x1', xk.toFixed(2)); this.head.setAttribute('y1', this.lastY.toFixed(2));
+      this.head.setAttribute('x2', this.W); this.head.setAttribute('y2', yh.toFixed(2));
+      this.headArea.setAttribute('points', xk.toFixed(2) + ',' + this.H + ' ' + xk.toFixed(2) + ',' + this.lastY.toFixed(2) + ' ' + this.W + ',' + yh.toFixed(2) + ' ' + this.W + ',' + this.H);
+      this.dot.setAttribute('cx', this.W - 1.8); this.dot.setAttribute('cy', yh.toFixed(2));
+    }
+  }
+
+  // ------------------------------------------------------------- views and frame loop
+  const views = [];
+  let rafId = 0;
+  function frame(now) {
+    rafId = 0;
+    let any = false;
+    for (const v of views) if (v.visible) { v.frame(now); any = true; }
+    if (any && !document.hidden) rafId = requestAnimationFrame(frame);
+  }
+  function kick() { if (!rafId && !document.hidden) rafId = requestAnimationFrame(frame); }
+  const io = 'IntersectionObserver' in window ? new IntersectionObserver((entries) => {
+    for (const e of entries) { const v = views.find((x) => x.root === e.target); if (v) v.visible = e.isIntersecting; }
+    kick();
+  }) : null;
+  function addView(v) { v.visible = !io; views.push(v); if (io) io.observe(v.root); }
+
+  // A fan on the desk: its duty, its RPM with the fan's own lag, and whether it turns.
+  function physics(f) { return { f, d: null, rpm: f.bios, spinning: f.bios > 0, handback: false }; }
+  function stepFan(s, d, rand) {
+    const f = s.f;
+    s.d = d;
+    let target;
+    if (d === null) { target = f.bios ? f.bios * (1 + (rand() - 0.5) * 0.02) : 0; s.handback = false; }
+    else if (f.nvml && d < 30) { target = 0; s.handback = true; }
+    else { s.handback = false; target = steady(f, d, s.spinning); }
+    if (d !== null && !f.empty) { if (d >= f.start) s.spinning = true; else if (d < f.pstop) s.spinning = false; }
+    else s.spinning = target > 0;
+    s.rpm += (target - s.rpm) * (1 - Math.exp(-1 / 1.4));
+    if (target === 0 && s.rpm < 20) s.rpm = 0;
+  }
+  function stepLimited(prev, target) { return prev === null ? target : prev + clamp(target - prev, -5, 20); }
+
+  // ------------------------------------------------------------- A · popups
+  const deskA = makeSensors(22102026);
+  const popupA = (() => {
+    const root = $('#pop1').closest('.frame');
+    const rand = deskA.rand;
+    function popupParts(box) {
+      const sparks = $$('svg[data-spark]', box).map((s) => new Spark(s, deskA[s.dataset.spark]));
+      const temps = $$('[data-temp]', box).map((n) => ({ node: n, id: n.dataset.temp, g: new Glide(deskA[n.dataset.temp].raw), s: new Shown(1, 140) }));
+      return { sparks, temps };
+    }
+    function row(box, name) {
+      const r = h('div', 'frow', null, box);
+      r.innerHTML = '<span class="nm"></span><span class="cv"></span><span class="rpm"></span><span class="dt"></span><span class="track"><i></i></span>';
+      r.children[0].textContent = name;
+      return { r, cv: r.children[1], rpm: r.children[2], dt: r.children[3], bar: r.children[4].firstChild, g: new Glide(0), gd: new Glide(0), sr: new Shown(10, 140), sd: new Shown(1, 140), lastCv: null };
+    }
+    function setCv(x, badge, text) {
+      const key = badge + '|' + text;
+      if (key === x.lastCv) return;
+      x.lastCv = key;
+      x.cv.innerHTML = '';
+      if (badge) h('span', 'badge', badge, x.cv);
+      if (text) h('span', null, text, x.cv);
+    }
+    // New install: tachs, named for their headers, in the board's order.
+    const p1 = popupParts($('#pop1'));
+    const p1rows = FANS.map((f) => { const x = row($('#p1Fans'), f.header); x.s = physics(f); x.g.jump(f.bios); return x; });
+    // After setup: controls by role.
+    const p2 = popupParts($('#pop2'));
+    const p2rows = ROLE_ORDER.map((f) => { const x = row($('#p2Fans'), f.header); x.s = physics(f); x.dd = null; return x; });
+    let prof = 'Balanced';
+    const title = $('#p2Title'), meta = $('#p2Meta'), glyphUse = $('#p2Glyph use'), barUse = $('#p2Bar use');
+    $$('#p2Profiles .pill').forEach((b) => b.addEventListener('click', () => {
+      prof = b.dataset.prof;
+      $$('#p2Profiles .pill').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      const dflt = prof === 'Defaults';
+      glyphUse.setAttribute('href', dflt ? '#g-fan-auto' : '#g-fan');
+      barUse.setAttribute('href', dflt ? '#g-fan-auto' : '#g-fan');
+      setText(title, prof);
+      if (dflt) setText(meta, 'The BIOS and drivers run every fan');
+    }));
+    function physicsTick() {
+      deskA.step(0, 30);
+      p1rows.forEach((x) => stepFan(x.s, null, rand));
+      const T = deskA.T();
+      p2rows.forEach((x) => {
+        if (prof === 'Defaults') { x.dd = null; stepFan(x.s, null, rand); return; }
+        x.dd = stepLimited(x.dd, draftDuty(x.s.f, GEN[prof], T));
+        stepFan(x.s, x.dd, rand);
+      });
+    }
+    // Start from a settled desk.
+    for (let i = 0; i < 30; i++) physicsTick();
+    p2rows.forEach((x) => { x.g.jump(x.s.rpm); x.gd.jump(x.dd || 0); });
+    p1rows.forEach((x) => x.g.jump(x.s.rpm));
+    return {
+      root,
+      onTick(now) {
+        physicsTick();
+        [p1, p2].forEach((p) => { p.sparks.forEach((s) => s.onTick(now)); p.temps.forEach((t) => t.g.set(deskA[t.id].raw, now)); });
+        p1rows.forEach((x) => { x.g.set(x.s.rpm, now); setCv(x, '', x.s.f.nvml ? 'Driver' : 'BIOS'); });
+        p2rows.forEach((x) => {
+          x.g.set(x.s.rpm, now);
+          x.gd.set(x.dd === null ? 0 : x.dd, now);
+          if (prof === 'Defaults') setCv(x, '', x.s.f.nvml ? 'Driver' : 'BIOS');
+          else setCv(x, x.s.handback ? 'Driver' : '', GEN[prof][x.s.f.role === 'chipset' ? 'chip' : x.s.f.role === 'case' ? 'case' : x.s.f.role].name);
+        });
+        this.frame(now);
+      },
+      frame(now) {
+        const shown = {};
+        [p1, p2].forEach((p) => {
+          p.sparks.forEach((s) => s.frame(now));
+          p.temps.forEach((t) => { t.s.feed(t.g.at(now), now); shown[t.id] = t.s.val(now); setText(t.node, shown[t.id] + ' °C'); });
+        });
+        if (prof !== 'Defaults') setText(meta, '9 fans · CPU ' + shown.cpu + ' °C · GPU ' + shown.gpu + ' °C');
+        p1rows.forEach((x) => { x.sr.feed(x.g.at(now), now); setText(x.rpm, fmt(x.sr.val(now)) + ' RPM'); setText(x.dt, ''); x.bar.style.width = '0%'; });
+        p2rows.forEach((x) => {
+          x.sr.feed(x.g.at(now), now);
+          setText(x.rpm, fmt(x.sr.val(now)) + ' RPM');
+          if (prof === 'Defaults') { setText(x.dt, ''); x.bar.style.width = '0%'; return; }
+          x.sd.feed(x.gd.at(now), now);
+          setText(x.dt, x.s.handback ? '—' : x.sd.val(now) + ' %');
+          x.bar.style.width = (x.s.handback ? 0 : x.gd.at(now)).toFixed(2) + '%';
+        });
+      },
+    };
+  })();
+  addView(popupA);
+
+  // ------------------------------------------------------------- C · setup
+  const PHASES = [['idle', 'Idle sample', 30], ['write', 'Write test', 5], ['pair', 'Pairing', 6 + 12 * 8], ['roles', 'Roles', 0], ['cal', 'Calibration', CAL_DUR], ['load', 'Load check', 180], ['review', 'Review', 0]];
+  const PAIR_ORDER = HW; // IT8688E pwm1–5, then IT8792E pwm1–3
+  const setup = (() => {
+    const root = $('#setupView');
+    const C = { mode: 'start', t: 0, speed: 4, load: true, reason: '', trip: false, stoppedIn: '' };
+    let rand, sens, fans, pairs;
+    function reset() {
+      rand = mkRand(7);
+      sens = makeSensors(4242);
+      fans = FANS.map((f) => physics(f));
+      pairs = PAIR_ORDER.map((f) => ({ f, base: 0, peak: 0, low: 0, done: false, found: null }));
+      C.mode = 'start'; C.t = 0; C.reason = ''; C.trip = false; C.stoppedIn = '';
+      for (let i = 0; i < 20; i++) step();
+    }
+    const phases = () => {
+      let t = 0;
+      return PHASES.map(([id, name, dur]) => { const d = id === 'load' && !C.load ? 0 : dur; const p = { id, name, dur: d, t0: t }; t += d; return p; });
+    };
+    const total = () => { const ps = phases(); const l = ps[ps.length - 1]; return l.t0; };
+    function phaseAt(t) {
+      const ps = phases();
+      let cur = ps[0];
+      for (const p of ps) if (p.t0 <= t && (p.dur > 0 || p.id === 'review')) cur = p;
+      return cur;
+    }
+    const cur = () => (C.mode === 'run' ? phaseAt(C.t) : { id: C.mode, t0: 0, dur: 0 });
+    function dutyFor(s, p, u) {
+      const f = s.f;
+      switch (p.id) {
+        case 'write': return u < 2.5 ? 60 : 80;
+        case 'pair': {
+          if (u < 6 || f.nvml) return 60;
+          const i = Math.floor((u - 6) / 12), k = (u - 6) % 12;
+          const done = pairs.findIndex((x) => x.f === f);
+          if (f.empty && done < i) return null;
+          return PAIR_ORDER[i] === f ? (k < 6 ? 100 : 40) : 60;
+        }
+        case 'cal': {
+          if (f.empty) return null;
+          const seg = f.cal.segs.find((x) => u >= x.t0 && u < x.t1);
+          return seg ? seg.d : 60;
+        }
+        case 'load': case 'review': return f.empty ? null : draftDuty(f, GEN.Balanced, sens.T());
+        default: return null;
+      }
+    }
+    function step() {
+      const running = C.mode === 'run';
+      if (running) C.t += 1;
+      const p = cur();
+      const u = C.t - p.t0;
+      sens.step(p.id === 'load' ? 1 : 0, fans[0].d);
+      if (C.trip) { sens.cpu.raw = 85.4; sens.cpu.hist[sens.cpu.hist.length - 1] = 85.4; }
+      const pi = running && p.id === 'pair' && u >= 6 ? Math.floor((u - 6) / 12) : -1;
+      const pk = pi >= 0 ? (u - 6) % 12 : -1;
+      if (pairs[pi] && pk === 0) { const pr = pairs[pi]; pr.base = fans.find((x) => x.f === pr.f).rpm; pr.peak = pr.base; pr.low = pr.base; }
+      const draftOn = C.mode === 'review' || C.mode === 'saved';
+      fans.forEach((s) => stepFan(s, running || draftOn ? dutyFor(s, running ? p : { id: 'review' }, u) : null, rand));
+      if (pairs[pi]) {
+        const pr = pairs[pi];
+        const r = fans.find((x) => x.f === pr.f).rpm;
+        if (pk < 6) pr.peak = Math.max(pr.peak, r); else pr.low = Math.min(pr.low, r);
+        if (pk === 11) { pr.done = true; pr.found = !pr.f.empty && pr.peak - pr.base >= 150 && pr.peak >= pr.base * 1.15 ? pr.f : null; }
+      }
+      if (running && sens.cpu.raw >= 85) stop('CPU · Tctl reached 85 °C during ' + p.name.toLowerCase() + '.');
+      if (running && p.id === 'review') C.mode = 'review';
+    }
+    function stop(reason) { C.stoppedIn = cur().id; C.mode = 'stopped'; C.reason = reason; C.trip = false; }
+    function jump(id) {
+      reset();
+      if (id === 'start') return;
+      C.mode = 'run';
+      const p = phases().find((x) => x.id === id);
+      const off = { idle: 12, write: 2, pair: 6 + 12 + 5, cal: 34, load: 70, review: 0 }[id] || 0;
+      const target = p.t0 + off;
+      while (C.t < target && C.mode === 'run') step();
+    }
+
+    // ---- view
+    const rowsBox = $('#suRows'), panel = $('#suPanel'), rail = $('#suRail'), clock = $('#suClock'), say = $('#suSay'), acts = $('#suActs'), guardsBox = $('#suGuards');
+    const rows = FANS.map((f) => {
+      const r = h('div', 'srow2', null, rowsBox);
+      const nm = h('span', 'nm', null, r);
+      const name = h('span', null, null, nm);
+      const rc = h('span', 'rc', null, nm);
+      const rpm = h('span', 'rpm', null, r);
+      const st = h('span', 'st', null, r);
+      const dt = h('span', 'dt', null, r);
+      return { f, r, name, rc, rpm, st, dt, g: new Glide(f.bios), sr: new Shown(10, 140) };
+    });
+    const guards = [['cpu', 'CPU · Tctl', 85], ['gpu', 'GPU · RTX 3090', 80]].map(([id, label, limit]) => {
+      const g = h('div', 'guard', null, guardsBox);
+      const hd = h('div', 'h', null, g);
+      h('span', null, label, hd);
+      const v = h('span', 'num', null, hd);
+      const tr = h('div', 'gt', null, g);
+      const bar = h('i', null, null, tr);
+      return { id, limit, g, v, bar, gl: new Glide(45), s: new Shown(0.1, 140) };
+    });
+    const loadG = h('div', 'guard', null, guardsBox);
+    const loadH = h('div', 'h', null, loadG);
+    h('span', null, 'Load, 1 minute', loadH);
+    const loadV = h('span', 'num', null, loadH);
+    const reads = h('div', 'caption', 'Every sensor reads.', guardsBox);
+    reads.style.padding = '6px 0';
+
+    let built = '';
+    let P = {};
+    const dur = () => 1000 / C.speed;
+    const nameOf = (f) => {
+      if (f.nvml) return f.header;
+      const pr = pairs.find((x) => x.f === f);
+      return pr && pr.done ? f.header : f.chip + ' ' + f.pwm;
+    };
+    function railBuild() {
+      rail.innerHTML = '';
+      const p = cur();
+      const ps = phases();
+      const idx = C.mode === 'run' ? ps.findIndex((x) => x.id === p.id) : C.mode === 'review' || C.mode === 'saved' || C.mode === 'discarded' ? ps.length : -1;
+      ps.forEach((x, i) => {
+        const tm = x.id === 'load' && !C.load ? '' : x.dur ? (x.dur < 60 ? x.dur + ' s' : mmss(x.dur)) : '';
+        const sp = h('span', null, (i + 1) + ' ' + x.name + (tm ? ' · ' + tm : ''), rail);
+        if (x.id === 'load' && !C.load) sp.classList.add('skip');
+        if (i < idx || (x.id === 'roles' && idx > i)) sp.classList.add('done');
+        if (i === idx || (C.mode === 'review' && x.id === 'review')) sp.classList.add('on');
+      });
+    }
+    function actsBuild() {
+      acts.innerHTML = '';
+      const b = (label, cls, fn) => { const x = h('button', 'btn' + (cls ? ' ' + cls : ''), label, acts); x.type = 'button'; x.addEventListener('click', fn); return x; };
+      if (C.mode === 'start') { b('Cancel', '', () => {}); b('Start setup', 'primary', () => { C.mode = 'run'; C.t = 0; rebuild(); }); }
+      else if (C.mode === 'run') b('Stop and hand back', '', () => { stop('You stopped setup.'); rebuild(); });
+      else if (C.mode === 'review') { b('Discard', '', () => { C.mode = 'discarded'; rebuild(); }); b('Save curves', 'primary', () => { C.mode = 'saved'; rebuild(); }); }
+      else b('Start again', 'primary', () => { jump('start'); rebuild(); });
+    }
+    function plot(svg, W, H, pad) { return { svg, W, H, pad, x0: pad[3], x1: W - pad[1], y0: pad[0], y1: H - pad[2] }; }
+    function buildPanel(id) {
+      panel.innerHTML = '';
+      P = { id };
+      if (id === 'start') {
+        h('div', 'sp-title', 'Set up fans', panel);
+        h('p', null, 'Penna measures every fan, then proposes curves for Quiet, Balanced and Render. Nothing is saved until you save it.', panel);
+        const st = h('div', 'steps', null, panel);
+        const rowsS = [['Idle sample', '30 s', 'Watch every sensor before any fan is taken.'], ['Write test', '5 s', 'Take each fan, write 60 % and 80 %, read both back.'], ['Pairing', '1:42', 'Find which fan each control turns, one at a time.'], ['Roles', '', 'Suggest what each fan does.'], ['Calibration', mmss(CAL_DUR), "Measure each fan's speed at every duty."], ['Load check', '3:00', 'Run the CPU flat out on the proposed curve.'], ['Review', '', 'Confirm the roles, check the curves, save.']];
+        rowsS.forEach(([n, t, w], i) => { const r = h('div', 'stp', null, st); h('span', 'k', String(i + 1), r); h('b', null, n, r); h('span', 'num', t, r); h('span', 'dim', w, r); });
+        const lab = h('label', 'chk', null, panel);
+        const cb = h('input', null, null, lab);
+        cb.type = 'checkbox'; cb.id = 'suLoadCheck'; cb.checked = C.load;
+        h('span', null, 'Check the CPU under full load for 3 minutes', lab);
+        cb.addEventListener('change', () => { C.load = cb.checked; railBuild(); P.when.textContent = whenText(); });
+        P.when = h('p', 'caption', whenText(), panel);
+      } else if (id === 'idle') {
+        const g = h('div', null, null, panel);
+        g.style.display = 'grid'; g.style.gap = '10px';
+        P.sparks = [];
+        P.vals = [];
+        [['cpu', 'CPU · Tctl'], ['gpu', 'GPU · RTX 3090'], ['nvme', 'NVMe · Composite'], ['pch', 'PCH · chipset']].forEach(([k, label]) => {
+          const r = h('div', null, null, g);
+          r.style.display = 'grid'; r.style.gap = '3px';
+          const hd = h('div', 'kv', null, r);
+          h('span', null, label, hd);
+          const v = h('span', 'num', null, hd);
+          const svg = el('svg', { class: 'spark', 'data-n': '60', viewBox: '0 0 560 40', preserveAspectRatio: 'none' }, r);
+          svg.style.width = '100%'; svg.style.height = '40px'; svg.style.display = 'block';
+          P.sparks.push(new Spark(svg, sens[k]));
+          P.vals.push({ k, v, s: new Shown(0.1, 140) });
+        });
+        h('p', 'caption', 'Every curve is anchored on what idle looks like on this machine: the CPU, GPU and chipset temperatures here, measured before any fan is taken.', panel);
+      } else if (id === 'write') {
+        const t = h('div', 'wt', null, panel);
+        ['Fan', 'Wrote 60 %', 'Wrote 80 %', ''].forEach((x) => h('span', 'hd', x, t));
+        P.wt = FANS.map((f) => { h('span', null, f.nvml ? f.header : f.chip + ' ' + f.pwm, t); return { a: h('span', 'dim', '', t), b: h('span', 'dim', '', t), c: h('span', null, '', t) }; });
+        h('p', 'caption', 'Each fan is taken with its way back on disk first (§6.1). A fan that reads back something else, or that its firmware puts back, is not offered for curves.', panel);
+      } else if (id === 'pair') {
+        const pk = h('div', 'pk', null, panel);
+        P.ctl = h('b', null, '', pk);
+        P.what = h('span', 'dim', '', pk);
+        P.n = h('span', 'num dim', '', pk);
+        const pr = h('div', 'prog', null, panel);
+        P.prog = h('i', null, null, pr);
+        h('div', 'sec', 'Tachs · named from the board database', panel);
+        P.bars = HW.filter((f) => !f.nvml).map((f) => {
+          const r = h('div', 'tb', null, panel);
+          h('span', 'nm', f.header, r);
+          const tr = h('span', 'track', null, r);
+          const i = h('i', null, null, tr);
+          const v = h('span', 'v', '', r);
+          return { f, r, i, v, g: new Glide(0), s: new Shown(10, 140) };
+        });
+        const sc = h('div', 'tbscale', null, panel);
+        h('span', null, '', sc);
+        const mid = h('span', null, null, sc);
+        ['0', '2,000', '4,000', '6,000 RPM'].forEach((x) => h('span', null, x, mid));
+        h('span', null, '', sc);
+        h('div', 'sec', 'Found', panel);
+        P.found = h('div', 'found', null, panel);
+        P.foundKey = '';
+      } else if (id === 'cal') {
+        const g = h('div', 'calg', null, panel);
+        P.cells = REAL.map((f) => {
+          const c = h('div', 'calc', null, g);
+          const hd = h('div', 'h', null, c);
+          h('b', null, f.header, hd);
+          const v = h('span', 'num', '', hd);
+          const st = h('div', 'st', '', c);
+          const svg = el('svg', { class: 'plot', viewBox: '0 0 180 92' }, c);
+          const pl = plot(svg, 180, 92, [4, 4, 12, 4]);
+          const ymax = f.max * 1.06;
+          pl.sx = (d) => pl.x0 + (d / 100) * (pl.x1 - pl.x0);
+          pl.sy = (r) => pl.y1 - (r / ymax) * (pl.y1 - pl.y0);
+          [0, 50, 100].forEach((d) => { el('line', { class: 'gridl', x1: pl.sx(d), x2: pl.sx(d), y1: pl.y0, y2: pl.y1 }, svg); const tx = el('text', { class: 'axis', x: pl.sx(d), y: 90, 'text-anchor': d === 0 ? 'start' : d === 100 ? 'end' : 'middle' }, svg); tx.textContent = d + ' %'; });
+          if (f.low) el('rect', { class: 'fence', x: pl.sx(0), y: pl.y0, width: pl.sx(f.low) - pl.sx(0), height: pl.y1 - pl.y0 }, svg);
+          const line = el('path', { class: 'ln' }, svg);
+          const dots = el('g', {}, svg);
+          const curDot = el('circle', { class: 'cur', r: '3.2' }, svg);
+          return { f, v, st, pl, line, dots, curDot, n: -1, g: new Glide(0), gx: new Glide(100), s: new Shown(10, 140) };
+        });
+      } else if (id === 'load') {
+        const pk = h('div', 'pk', null, panel);
+        h('b', null, 'Every CPU thread busy, at nice 19', pk);
+        P.lt = h('span', 'num dim', '', pk);
+        const svg = el('svg', { class: 'plot', viewBox: '0 0 600 300' }, panel);
+        svg.style.width = '100%'; svg.style.height = 'auto'; svg.style.display = 'block';
+        const pl = plot(svg, 600, 300, [10, 40, 22, 34]);
+        pl.sx = (t) => pl.x0 + (t / 180) * (pl.x1 - pl.x0);
+        pl.sy = (T) => pl.y1 - ((T - 30) / 60) * (pl.y1 - pl.y0);
+        pl.sd = (d) => pl.y1 - (d / 100) * (pl.y1 - pl.y0);
+        for (let T = 30; T <= 90; T += 10) { el('line', { class: 'gridl', x1: pl.x0, x2: pl.x1, y1: pl.sy(T), y2: pl.sy(T) }, svg); const tx = el('text', { class: 'axis', x: pl.x0 - 6, y: pl.sy(T) + 3, 'text-anchor': 'end' }, svg); tx.textContent = T + '°'; }
+        for (let d = 0; d <= 100; d += 25) { const tx = el('text', { class: 'axis', x: pl.x1 + 6, y: pl.sd(d) + 3 }, svg); tx.textContent = d + ' %'; }
+        for (let t = 0; t <= 180; t += 60) { const tx = el('text', { class: 'axis', x: pl.sx(t), y: 296, 'text-anchor': 'middle' }, svg); tx.textContent = mmss(t); }
+        el('line', { class: 'lim', x1: pl.x0, x2: pl.x1, y1: pl.sy(85), y2: pl.sy(85) }, svg);
+        const lt = el('text', { class: 'limt', x: pl.x0 + 6, y: pl.sy(85) - 5 }, svg); lt.textContent = 'guard and limit − 5: 85 °C';
+        P.pl = pl;
+        P.tl = el('path', { class: 'ln' }, svg);
+        P.dl = el('path', { class: 'ln acc' }, svg);
+        P.trace = [];
+        const lg = h('div', 'kv', null, panel);
+        h('span', null, 'CPU · Tctl', lg);
+        h('span', 'dim', 'line', lg);
+        h('span', null, 'CPU_FAN duty on the Balanced draft', lg);
+        h('span', 'dim', 'accent', lg);
+        h('p', 'caption', 'If the CPU passes 85 °C, the 100 % point moves 5 °C earlier and the check runs once more. On a laptop on battery this step is off.', panel);
+      } else if (id === 'review') {
+        const top = h('div', 'pk', null, panel);
+        h('b', null, 'Roles', top);
+        h('span', 'dim', 'Confirm or change each in the review', top);
+        const rl = h('div', 'rl', null, panel);
+        ROLE_ORDER.forEach((f) => { h('span', null, f.header, rl); h('span', null, (f.pumpHeader ? 'Case?' : ROLE_NAME[f.role]), rl); h('span', 'why', WHY[f.id], rl); });
+        const t2 = h('div', 'pk', null, panel);
+        t2.style.marginTop = '6px';
+        h('b', null, 'Proposed curves · Balanced', t2);
+        h('span', 'dim', 'Quiet and Render are in the draft too', t2);
+        const cl = h('div', 'cl', null, panel);
+        curveLines('Balanced').forEach(([a, b]) => { h('span', null, a, cl); h('span', 'dim', b, cl); });
+        P.lr = h('p', null, '', panel);
+      } else {
+        const m = h('div', 'msg', null, panel);
+        if (id === 'stopped') {
+          h('div', 'big', 'Stopped', m);
+          h('p', null, C.reason, m);
+          h('p', null, 'Every fan is back on its BIOS or driver, as it was found. Nothing was saved.', m);
+          if (C.stoppedIn === 'cal' || C.stoppedIn === 'load') h('p', 'caption', 'Pairing is kept in measured.toml: the next run starts at calibration.', m);
+        } else if (id === 'saved') {
+          h('div', 'big', 'Saved. Balanced is active.', m);
+          h('p', null, 'Quiet, Balanced and Render now run every fan. Defaults is one press away in the popup.', m);
+        } else {
+          h('div', 'big', 'Discarded. Defaults stays on.', m);
+          h('p', null, 'The BIOS and drivers run every fan. What setup measured is kept, so running it again is quicker.', m);
+        }
+      }
+      built = id;
+    }
+    function whenText() {
+      const base = phases().reduce((a, p) => a + (p.id === 'load' ? 0 : p.dur), 0);
+      return 'About ' + mmss(base) + (C.load ? ', or ' + mmss(base + 180) + ' with the load check' : '') + ". You'll hear the fans. The machine is idle enough: the 1-minute load is 0.4, under a quarter of 32 threads.";
+    }
+    function rebuild() { railBuild(); actsBuild(); buildPanel(cur().id); updateTick(performance.now()); kick(); $$('#jumpSeg button').forEach((b) => b.setAttribute('aria-pressed', 'false')); }
+
+    function statusOf(s, p, u) {
+      const f = s.f;
+      if (C.mode === 'start') return f.nvml ? 'Driver' : 'BIOS';
+      if (C.mode === 'stopped' || C.mode === 'discarded') return f.nvml ? 'handed back to the driver' : 'handed back to the BIOS';
+      if (C.mode === 'review' || C.mode === 'saved') return f.empty ? 'empty, BIOS' : s.handback ? 'Balanced draft · driver' : 'Balanced draft';
+      switch (p.id) {
+        case 'idle': return f.nvml ? 'Driver' : 'BIOS';
+        case 'write': return u < 1 ? 'writing 60 %' : u < 2.5 ? '60 % → 60 %' : u < 3.5 ? 'writing 80 %' : '80 % → 80 % · ok';
+        case 'pair': {
+          if (f.nvml) return 'held at 60 % · NVML pairs itself';
+          if (u < 6) return 'settling at 60 %';
+          const i = Math.floor((u - 6) / 12), k = (u - 6) % 12;
+          const pr = pairs.find((x) => x.f === f);
+          if (pr.done) return pr.found ? 'paired' : 'no fan turns · BIOS';
+          if (PAIR_ORDER[i] === f) return k < 6 ? '100 % for 6 s' : '40 % for 6 s';
+          return 'held at 60 %';
+        }
+        case 'cal': {
+          if (f.empty) return 'empty, BIOS';
+          const seg = f.cal.segs.find((x) => u >= x.t0 && u < x.t1);
+          if (!seg) return f.nvml ? '30–100 % measured' : f.low ? 'measured down to 50 %' : 'stops below ' + f.mStop + ' %, starts at ' + f.mStart + ' %';
+          if (seg.ph === 'down') return s.rpm < 1 ? 'stopped at ' + seg.d + ' %' : 'stepping down · ' + seg.d + ' %';
+          if (seg.ph === 'up') return 'starting · ' + seg.d + ' %';
+          return 'spinning up at ' + seg.d + ' %';
+        }
+        case 'load': return f.empty ? 'empty, BIOS' : s.handback ? 'Balanced draft · driver' : 'Balanced draft';
+        default: return '';
+      }
+    }
+    function sayText(p, u) {
+      if (C.mode === 'start') return 'Nothing changes until you start. Every fan stays with its BIOS or driver.';
+      if (C.mode === 'stopped') return 'Stopped. Every fan is back as it was found.';
+      if (C.mode === 'review') return 'Done in ' + mmss(total()) + '. Confirm the roles and check the curves, then save.';
+      if (C.mode === 'saved') return 'Saved. Balanced runs every fan.';
+      if (C.mode === 'discarded') return 'Discarded. Defaults stays on.';
+      switch (p.id) {
+        case 'idle': return u < 20 ? 'Watching every sensor before any fan is taken · ' + (30 - u) + ' s left' : 'PCH_FAN reads 0 RPM: the BIOS stops it when the chipset is cool · ' + (30 - u) + ' s left';
+        case 'write': return 'Writing 60 % to every fan, then 80 %, and reading each back.';
+        case 'pair': {
+          if (u < 6) return 'Holding every fan at 60 % so each rise is measured from a steady speed.';
+          const i = Math.floor((u - 6) / 12), k = (u - 6) % 12;
+          const pr = pairs[i];
+          if (!pr) return '';
+          const f = pr.f;
+          const s = fans.find((x) => x.f === f);
+          const ctl = f.chip + ' ' + f.pwm;
+          if (f.empty) return k < 6 ? ctl + ' at 100 %: no fan has moved.' : 'Nothing turns on ' + f.header + '. It stays with the BIOS.';
+          if (k < 6) return ctl + ' at 100 %: ' + f.header + ' ' + r10(pr.base) + ' → ' + r10(s.rpm) + ' RPM';
+          return ctl + ' at 40 %: ' + f.header + ' fell to ' + r10(s.rpm) + ' RPM. ' + f.pwm + ' drives ' + f.header + '.';
+        }
+        case 'cal': {
+          const up = REAL.find((f) => { const seg = f.cal.segs.find((x) => u >= x.t0 && u < x.t1); return seg && (seg.ph === 'up' || seg.ph === 'spin'); });
+          if (up) return up.header + ' stopped below ' + up.mStop + ' %. Starting it again in 2 % steps' + (up.role === 'cpu' ? '; a CPU fan is never stopped for more than 10 s.' : '.');
+          const done = REAL.filter((f) => u >= f.cal.dur).length;
+          return 'Stepping every fan down from 100 % in 5 % steps, waiting for each to settle · ' + done + ' of ' + REAL.length + ' done';
+        }
+        case 'load': return 'CPU ' + sens.cpu.raw.toFixed(1) + ' °C · CPU_FAN ' + Math.round(fans[0].d || 0) + ' % · ' + mmss(u) + ' of 3:00';
+        default: return '';
+      }
+    }
+
+    function updateTick(now) {
+      const p = cur();
+      const u = C.t - p.t0;
+      const want = C.mode === 'run' ? p.id : C.mode;
+      if (built !== want) { buildPanel(want); railBuild(); actsBuild(); }
+      else if (C.mode === 'run' && rail.dataset.at !== p.id) railBuild();
+      rail.dataset.at = p.id;
+      const D = dur();
+      rows.forEach((x, i) => {
+        const s = fans[i];
+        x.g.set(s.rpm, now, D);
+        setText(x.name, nameOf(x.f));
+        const afterRoles = (C.mode === 'run' && ['cal', 'load'].includes(p.id)) || ['review', 'saved'].includes(C.mode);
+        setText(x.rc, afterRoles && !x.f.empty ? (x.f.pumpHeader ? 'case?' : x.f.role) : '');
+        x.rc.hidden = !x.rc.textContent;
+        setText(x.st, statusOf(s, p, u));
+        setText(x.dt, s.d === null ? '' : s.handback ? 'driver' : Math.round(s.d) + ' %');
+        const pr = pairs.find((q) => q.f === x.f);
+        x.r.classList.toggle('hot', C.mode === 'run' && p.id === 'pair' && u >= 6 && PAIR_ORDER[Math.floor((u - 6) / 12)] === x.f);
+        x.r.classList.toggle('empty', !!(pr && pr.done && !pr.found));
+      });
+      guards.forEach((g) => { g.gl.set(sens[g.id].raw, now, D); g.g.classList.toggle('trip', C.mode === 'stopped' && g.id === 'cpu' && /85/.test(C.reason)); });
+      setText(loadV, p.id === 'load' && C.mode === 'run' ? '31.6, the load check' : '0.4, under 8');
+      // clock
+      if (C.mode === 'start') setText(clock, 'about ' + mmss(total()));
+      else if (C.mode === 'run') setText(clock, mmss(C.t) + ' · about ' + mmss(Math.max(0, total() - C.t)) + ' left');
+      else if (C.mode === 'review') setText(clock, 'done in ' + mmss(total()));
+      else setText(clock, '');
+      setText(say, sayText(p, u));
+      // panels
+      if (built === 'idle') { P.sparks.forEach((s) => s.onTick(now, D)); }
+      if (built === 'write') {
+        P.wt.forEach((w) => {
+          setText(w.a, u >= 1 ? 'read 60 %' : u >= 0 ? '…' : '');
+          setText(w.b, u >= 3.5 ? 'read 80 %' : u >= 2.5 ? '…' : '');
+          setText(w.c, u >= 4 ? 'ok' : '');
+        });
+      }
+      if (built === 'pair') {
+        const i = u >= 6 ? Math.floor((u - 6) / 12) : -1, k = u >= 6 ? (u - 6) % 12 : u;
+        const pr = pairs[i];
+        setText(P.ctl, pr ? pr.f.chip + ' ' + pr.f.pwm : 'Every fan to 60 %');
+        setText(P.what, pr ? (k < 6 ? '100 % for 6 s, then 40 % for 6 s' : '40 % for 6 s') : 'settling, 6 s');
+        setText(P.n, pr ? (i + 1) + ' of 8' : '');
+        P.prog.style.width = (pr ? ((k + 1) / 12) * 100 : ((u + 1) / 6) * 100).toFixed(1) + '%';
+        P.bars.forEach((b) => {
+          const s = fans.find((x) => x.f === b.f);
+          b.g.set(s.rpm, now, D);
+          b.r.classList.toggle('hot', !!(pr && pr.f === b.f));
+        });
+        const key = pairs.filter((x) => x.done).map((x) => x.f.id).join(',');
+        if (key !== P.foundKey) {
+          P.foundKey = key;
+          P.found.innerHTML = '';
+          pairs.filter((x) => x.done).forEach((x) => h('span', 'chip', x.found ? x.f.pwm + (x.f.chip === 'IT8792E' ? ' (IT8792E)' : '') + ' → ' + x.f.header : x.f.pwm + ' (IT8792E) → nothing', P.found));
+        }
+      }
+      if (built === 'cal') {
+        P.cells.forEach((c) => {
+          const f = c.f;
+          const s = fans.find((x) => x.f === f);
+          const done = f.cal.segs.filter((x) => x.ph === 'down' && x.t1 <= u && steady(f, x.d, true) > 0);
+          if (done.length !== c.n) {
+            c.n = done.length;
+            let d = '';
+            c.dots.innerHTML = '';
+            done.forEach((x, j) => {
+              const X = c.pl.sx(x.d), Y = c.pl.sy(steady(f, x.d, true));
+              d += (j ? 'L' : 'M') + X.toFixed(1) + ' ' + Y.toFixed(1);
+              el('circle', { class: 'pd', cx: X.toFixed(1), cy: Y.toFixed(1), r: '1.6' }, c.dots);
+            });
+            c.line.setAttribute('d', d);
+          }
+          c.g.set(s.rpm, now, D);
+          c.gx.set(s.d === null ? 0 : s.d, now, D);
+          setText(c.st, statusOf(s, p, u));
+        });
+      }
+      if (built === 'load') {
+        if (C.mode === 'run') P.trace.push([u, sens.cpu.raw, fans[0].d || 0]);
+        P.trace = P.trace.filter((x) => x[0] <= u);
+        let a = '', b = '';
+        P.trace.forEach(([t, T, d], j) => { a += (j ? 'L' : 'M') + P.pl.sx(t).toFixed(1) + ' ' + P.pl.sy(clamp(T, 30, 90)).toFixed(1); b += (j ? 'L' : 'M') + P.pl.sx(t).toFixed(1) + ' ' + P.pl.sd(d).toFixed(1); });
+        P.tl.setAttribute('d', a);
+        P.dl.setAttribute('d', b);
+        setText(P.lt, mmss(Math.max(0, u)) + ' of 3:00');
+      }
+      if (built === 'review') setText(P.lr, 'Load check: under 3 minutes of full load the CPU levelled at ' + LOADRES.T + ' °C, with CPU_FAN at ' + LOADRES.d + ' %.');
+    }
+    function fillLoadTrace() {
+      // A jump into the load check draws what came before it.
+      if (built !== 'load') return;
+      const p = cur();
+      const u = C.t - p.t0;
+      if (P.trace.length < u - 1) {
+        const r = mkRand(99);
+        let T = 46, s = 46, d = 0;
+        P.trace = [];
+        for (let t = 0; t < u; t++) {
+          d = Math.max(byId.c1.floor, evalPts(GEN.Balanced.cpu.pts, s));
+          T += (84 - 0.14 * d - T) * (1 - Math.exp(-1 / 22));
+          s += (T - s) * (1 - Math.exp(-1 / 5));
+          P.trace.push([t, T + (r() - 0.5) * 0.6, d]);
+        }
+      }
+    }
+    function frameView(now) {
+      rows.forEach((x) => { x.sr.feed(x.g.at(now), now); setText(x.rpm, fmt(x.sr.val(now)) + ' RPM'); });
+      guards.forEach((g) => {
+        const v = g.gl.at(now);
+        g.s.feed(v, now);
+        setText(g.v, g.s.val(now).toFixed(1) + ' of ' + g.limit + ' °C');
+        g.bar.style.width = (clamp01((v - 30) / (g.limit - 30)) * 100).toFixed(2) + '%';
+      });
+      if (built === 'idle') {
+        P.sparks.forEach((s) => s.frame(now));
+        P.vals.forEach((v) => { v.s.feed(sens[v.k].raw, now); setText(v.v, v.s.val(now).toFixed(1) + ' °C'); });
+      }
+      if (built === 'pair') P.bars.forEach((b) => { const r = b.g.at(now); b.s.feed(r, now); setText(b.v, fmt(b.s.val(now)) + ' RPM'); b.i.style.width = (clamp01(r / 6000) * 100).toFixed(2) + '%'; });
+      if (built === 'cal') P.cells.forEach((c) => {
+        const r = c.g.at(now);
+        c.s.feed(r, now);
+        setText(c.v, fmt(c.s.val(now)));
+        c.curDot.setAttribute('cx', c.pl.sx(c.gx.at(now)).toFixed(1));
+        c.curDot.setAttribute('cy', c.pl.sy(r).toFixed(1));
+      });
+    }
+
+    // page controls
+    $$('#jumpSeg button').forEach((b) => b.addEventListener('click', () => {
+      jump(b.dataset.jump);
+      rebuild();
+      fillLoadTrace();
+      $$('#jumpSeg button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    }));
+    $$('#speedSeg button').forEach((b) => b.addEventListener('click', () => {
+      C.speed = +b.dataset.speed;
+      $$('#speedSeg button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      schedule();
+    }));
+    $('#tripBtn').addEventListener('click', () => {
+      if (C.mode !== 'run') { jump('cal'); rebuild(); }
+      C.trip = true;
+      loop(true);
+    });
+
+    // the setup's own clock: one simulated second per tick, at the chosen speed
+    let timer = 0;
+    function loop(force) {
+      if (force || (!document.hidden && view.visible)) {
+        step();
+        updateTick(performance.now());
+        kick();
+      }
+      schedule();
+    }
+    function schedule() { clearTimeout(timer); timer = setTimeout(loop, C.mode === 'run' ? 1000 / C.speed : 1000); }
+    const view = { root, frame: frameView, onTick() {} };
+    reset();
+    jump('pair');
+    buildPanel('pair');
+    railBuild();
+    actsBuild();
+    rows.forEach((x, i) => x.g.jump(fans[i].rpm));
+    updateTick(performance.now());
+    return { view, schedule };
+  })();
+  addView(setup.view);
+
+  // Curve descriptions, shared by the setup's review panel and the CLI.
+  function curveLines(prof) {
+    const g = GEN[prof];
+    const c = g.cpu.pts, gp = g.gpu.pts;
+    return [
+      ['CPU', 'floor to ' + c[0][0] + ' °C, 50 % airflow at ' + c[1][0] + ' °C (' + c[1][1] + ' %), 100 % at ' + c[2][0] + ' °C'],
+      ['Case', 'the larger of CPU and GPU once either is 15 °C over idle, capped at ' + Math.round(g.case.cap * 100) + ' % airflow (' + g.case.capDuty + ' %)'],
+      ['Chipset', 'stops below ' + PCH_REST + ' °C, as the BIOS had it; 100 % at 80 °C'],
+      ['GPU', 'the driver below ' + gp[1][0] + ' °C, 50 % airflow at ' + gp[2][0] + ' °C, 100 % at ' + gp[3][0] + ' °C'],
+    ];
+  }
+
+  // ------------------------------------------------------------- D · review
+  const review = (() => {
+    const root = $('#reviewView');
+    const rand = mkRand(5);
+    const DRAFT = {};
+    PROFS.forEach((p) => { DRAFT[p] = generate(p); });
+    const snap = () => JSON.stringify(PROFS.map((p) => ['cpu', 'gpu', 'chip'].map((k) => DRAFT[p][k].pts)));
+    let SAVED = snap();
+    let prof = 'Balanced';
+    let cid = 'cpu';
+    let state = 'draft';
+    const dirty = () => snap() !== SAVED;
+    const curve = () => DRAFT[prof][cid];
+
+    // roles
+    const roleBox = $('#rvRoles');
+    const RROLES = ['cpu', 'case', 'pump', 'chipset'];
+    const rrows = ROLE_ORDER.map((f) => {
+      const r = h('div', 'rrow', null, roleBox);
+      const a = h('div', 'a', null, r);
+      const inp = h('input', 'nmi', null, a);
+      inp.type = 'text'; inp.id = 'rvName-' + f.id; inp.value = f.header; inp.setAttribute('aria-label', 'Name for ' + f.header);
+      const chip = h('button', 'rolec', null, a);
+      chip.type = 'button';
+      const idb = h('button', 'btn sm', 'Identify', a);
+      idb.type = 'button';
+      const b = h('div', 'b', null, r);
+      const why = h('span', 'why', WHY[f.id], b);
+      const rpm = h('span', 'rpm', '', b);
+      const x = { f, role: f.role, confirmed: !f.pumpHeader, chip, why, rpm, idb, s: physics(f), dd: null, spin: 0, g: new Glide(0), sr: new Shown(10, 140), sub: null };
+      const paint = () => {
+        chip.textContent = ROLE_NAME[x.role] + (x.confirmed ? '' : '?');
+        chip.classList.toggle('q', !x.confirmed);
+        if (f.nvml) chip.disabled = true;
+      };
+      chip.addEventListener('click', () => {
+        if (f.nvml) return;
+        if (!x.confirmed) {
+          x.confirmed = true;
+          setText(why, 'Confirmed as a case fan. Measuring below 50 %…');
+          setTimeout(() => setText(why, 'Confirmed. Stops below ' + PUMP_FULL.stop + ' %, starts at ' + PUMP_FULL.start + ' %: its floor is now ' + PUMP_FULL.floor + ' %.'), 3000);
+        } else {
+          x.role = RROLES[(RROLES.indexOf(x.role) + 1) % RROLES.length];
+          setText(why, x.role === f.role ? WHY[f.id] : 'Set by you. Setup suggested ' + ROLE_NAME[f.role] + '.');
+        }
+        paint();
+        const k = x.role === 'cpu' ? 'cpu' : x.role === 'chipset' ? 'chip' : x.role === 'gpu' ? 'gpu' : 'case';
+        if (x.role !== 'pump') { cid = k; showCurve(); }
+      });
+      idb.addEventListener('click', () => {
+        x.spin = 3;
+        idb.textContent = 'Spinning';
+        idb.disabled = true;
+      });
+      paint();
+      return x;
+    });
+
+    // measured
+    const mt = $('#rvMeasured');
+    ['Fan', 'Stops', 'Starts', 'Max'].forEach((t, i) => h('span', 'hd' + (i ? ' r' : ''), t, mt));
+    ROLE_ORDER.forEach((f) => {
+      h('span', null, f.header, mt);
+      h('span', 'r', f.nvml ? '30 %*' : f.low ? '≥ 50' : f.mStop + ' %', mt);
+      h('span', 'r', f.mStart ? f.mStart + ' %' : '—', mt);
+      h('span', 'r', fmt(f.mMax), mt);
+    });
+    const foot = h('span', 'dim', '* NVML floor. ≥ 50: pump header, not measured lower yet.', mt);
+    foot.style.gridColumn = '1 / -1'; foot.style.whiteSpace = 'normal'; foot.style.borderBottom = '0';
+    setText($('#rvLoad'), 'Under 3 minutes of full load the CPU levelled at ' + LOADRES.T + ' °C, with CPU_FAN at ' + LOADRES.d + ' %.');
+
+    // tabs
+    const tabs = $('#rvTabs');
+    const TABS = [['cpu', 'CPU'], ['case', 'Case'], ['chip', 'Chipset'], ['gpu', 'GPU']];
+    const tabBtns = TABS.map(([id, label]) => {
+      const b = h('button', 'pill', label, tabs);
+      b.type = 'button';
+      b.style.flex = 'none';
+      b.addEventListener('click', () => { cid = id; showCurve(); });
+      return { id, b };
+    });
+    tabs.classList.add('group');
+    $$('#rvProf .pill').forEach((b) => b.addEventListener('click', () => {
+      prof = b.dataset.prof;
+      $$('#rvProf .pill').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+      showCurve();
+    }));
+
+    // editor
+    const svg = $('#rvEditor');
+    const X0 = 46, X1 = 540, Y0 = 26, Y1 = 404;
+    const sx = (t) => X0 + ((t - 20) / 80) * (X1 - X0);
+    const sy = (d) => Y1 - (d / 100) * (Y1 - Y0);
+    const ix = (x) => 20 + ((x - X0) / (X1 - X0)) * 80;
+    const iy = (y) => ((Y1 - y) / (Y1 - Y0)) * 100;
+    const gStatic = el('g', {}, svg);
+    const gBand = el('path', { class: 'band' }, gStatic);
+    const gCurve = el('path', { class: 'curve' }, svg);
+    const crossV = el('line', { class: 'cross' }, svg);
+    const crossH = el('line', { class: 'cross' }, svg);
+    const mk = el('circle', { class: 'mk', r: '5' }, svg);
+    const gPts = el('g', {}, svg);
+    const ro = el('g', { class: 'ro', visibility: 'hidden' }, svg);
+    const roRect = el('rect', { height: '22' }, ro);
+    const roText = el('text', { y: '15' }, ro);
+    let sel = 1, drag = -1, hover = -1;
+    const mT = new Glide(45);
+    const nowS = new Shown(0.1, 140);
+    const nowO = new Shown(1, 140);
+    const mixWrap = $('#rvMix'), graphWrap = $('#rvGraphWrap');
+
+    function chips() {
+      const c = curve();
+      const box = $('#rvChips');
+      box.innerHTML = '';
+      const edited = c.kind !== 'mix' && JSON.stringify(c.pts) !== JSON.stringify(generate(prof)[cid].pts);
+      h('span', 'chip gen', edited ? 'Generated, edited' : 'Generated', box);
+      const list = c.kind === 'mix' ? ['Mix', 'max'] : ['Graph', c.srcName, 'Response ' + c.tau + ' s', 'Hysteresis ' + c.hyst + ' °C'].concat(c.mayStop ? ['May stop'] : []);
+      list.forEach((t) => h('span', 'chip', t, box));
+    }
+    function drawStatic() {
+      const c = curve();
+      if (c.kind === 'mix') return;
+      while (gStatic.childNodes.length > 1) gStatic.removeChild(gStatic.lastChild);
+      for (let t = 20; t <= 100; t += 10) {
+        el('line', { class: 'gridl', x1: sx(t), x2: sx(t), y1: Y0, y2: Y1 }, gStatic);
+        const tx = el('text', { class: 'axis', x: sx(t), y: Y1 + 16, 'text-anchor': 'middle' }, gStatic); tx.textContent = t + (t === 100 ? ' °C' : '');
+      }
+      for (let d = 0; d <= 100; d += 10) {
+        el('line', { class: 'gridl', x1: X0, x2: X1, y1: sy(d), y2: sy(d) }, gStatic);
+        if (d % 20 === 0) { const ty = el('text', { class: 'axis', x: X0 - 8, y: sy(d) + 3.5, 'text-anchor': 'end' }, gStatic); ty.textContent = d; }
+      }
+      const pt = el('text', { class: 'axis', x: X0 - 8, y: 14, 'text-anchor': 'end' }, gStatic); pt.textContent = '%';
+      const f = c.fan;
+      for (let d = 20; d <= 100; d += 20) {
+        const r = f.nvml && d < 30 ? 0 : steady(f, d, true);
+        const tr = el('text', { class: 'axis', x: X1 + 8, y: sy(d) + 3.5 }, gStatic); tr.textContent = r ? r10(r) : '0';
+      }
+      const rt = el('text', { class: 'axis', x: X1 + 8, y: 14 }, gStatic); rt.textContent = 'RPM';
+      c.anchors.forEach(([t, label]) => {
+        el('line', { class: 'anc', x1: sx(t), x2: sx(t), y1: Y0, y2: Y1 }, gStatic);
+        const at = el('text', { class: 'anct', x: sx(t) + 4, y: Y0 - 8 }, gStatic); at.textContent = label;
+      });
+      if (c.nvml) {
+        el('rect', { class: 'floor', x: X0, y: sy(30), width: X1 - X0, height: Y1 - sy(30) }, gStatic);
+        el('line', { class: 'lim', x1: X0, x2: X1, y1: sy(30), y2: sy(30) }, gStatic);
+        const t1 = el('text', { class: 'limt', x: X0 + 6, y: sy(30) + 13 }, gStatic); t1.textContent = 'below 30 %: the driver runs these fans and may stop them';
+      } else {
+        el('line', { class: 'lim', x1: X0, x2: X1, y1: sy(f.floor), y2: sy(f.floor) }, gStatic);
+        const t1 = el('text', { class: 'limt', x: X1 - 6, y: sy(f.floor) - 4, 'text-anchor': 'end' }, gStatic); t1.textContent = 'floor ' + f.floor + ' %';
+        el('line', { class: 'lim', x1: X0, x2: X1, y1: sy(f.mStop), y2: sy(f.mStop) }, gStatic);
+        const t2 = el('text', { class: 'limt', x: X1 - 6, y: sy(f.mStop) + 12, 'text-anchor': 'end' }, gStatic); t2.textContent = (c.mayStop ? 'stops below ' : 'turns down to ') + f.mStop + ' %';
+      }
+      let top = '', bot = '';
+      for (let t = 20; t <= 100; t += 0.5) top += (t === 20 ? 'M' : 'L') + sx(t).toFixed(1) + ' ' + sy(evalPts(c.pts, Math.min(100, t + c.hyst))).toFixed(1);
+      for (let t = 100; t >= 20; t -= 0.5) bot += 'L' + sx(t).toFixed(1) + ' ' + sy(evalPts(c.pts, t)).toFixed(1);
+      gBand.setAttribute('d', top + bot + 'Z');
+      let d = 'M' + sx(20) + ' ' + sy(c.pts[0][1]);
+      c.pts.forEach((p) => { d += 'L' + sx(p[0]).toFixed(1) + ' ' + sy(p[1]).toFixed(1); });
+      d += 'L' + sx(100) + ' ' + sy(c.pts[c.pts.length - 1][1]);
+      gCurve.setAttribute('d', d);
+      gPts.innerHTML = '';
+      c.pts.forEach((p, i) => {
+        el('circle', { class: 'pt' + (i === sel ? ' sel' : ''), cx: sx(p[0]), cy: sy(p[1]), r: i === sel ? '6' : '5' }, gPts);
+        const hh = el('circle', { class: 'hit', cx: sx(p[0]), cy: sy(p[1]), r: '13' }, gPts);
+        hh.dataset.i = i;
+      });
+      readout();
+    }
+    function readout() {
+      const c = curve();
+      const i = drag >= 0 ? drag : hover;
+      if (i < 0 || c.kind === 'mix') { ro.setAttribute('visibility', 'hidden'); return; }
+      const [t, d] = c.pts[i];
+      const f = c.fan;
+      const r = steady(f, d, true);
+      const tail = c.nvml && d < 30 ? 'driver curve' : r && !(c.mayStop && d < f.mStop) ? '≈ ' + r10(r) + ' RPM' : 'stopped';
+      roText.textContent = t + ' °C → ' + d + ' % ' + tail;
+      const w = roText.getComputedTextLength ? roText.getComputedTextLength() + 16 : 200;
+      let x = sx(t) + 14;
+      let y = sy(d) - 34;
+      if (x + w > 596) x = sx(t) - 14 - w;
+      if (y < 2) y = sy(d) + 12;
+      ro.setAttribute('transform', 'translate(' + x.toFixed(1) + ' ' + y.toFixed(1) + ')');
+      roRect.setAttribute('width', w.toFixed(1));
+      roText.setAttribute('x', '8');
+      ro.setAttribute('visibility', 'visible');
+    }
+    function movePoint(i, t, d) {
+      const pts = curve().pts;
+      const lo = i === 0 ? 20 : pts[i - 1][0] + 1;
+      const hi = i === pts.length - 1 ? 100 : pts[i + 1][0] - 1;
+      t = clamp(Math.round(t), lo, hi);
+      d = clamp(Math.round(d), 0, 100);
+      pts[i] = [t, d];
+      for (let j = i + 1; j < pts.length; j++) pts[j][1] = Math.max(pts[j][1], d);
+      for (let j = i - 1; j >= 0; j--) pts[j][1] = Math.min(pts[j][1], d);
+      if (state !== 'draft') state = 'draft';
+      drawStatic();
+      chips();
+      updateState();
+    }
+    const toSvg = (ev) => { const p = svg.createSVGPoint(); p.x = ev.clientX; p.y = ev.clientY; return p.matrixTransform(svg.getScreenCTM().inverse()); };
+    svg.addEventListener('pointerdown', (ev) => {
+      const t = ev.target;
+      if (!t.classList || !t.classList.contains('hit')) return;
+      drag = +t.dataset.i; sel = drag;
+      svg.setPointerCapture(ev.pointerId);
+      svg.focus({ preventScroll: true });
+      drawStatic();
+      ev.preventDefault();
+    });
+    svg.addEventListener('pointermove', (ev) => {
+      if (drag >= 0) { const p = toSvg(ev); movePoint(drag, ix(p.x), iy(p.y)); return; }
+      const t = ev.target;
+      const hv = t.classList && t.classList.contains('hit') ? +t.dataset.i : -1;
+      if (hv !== hover) { hover = hv; readout(); }
+    });
+    const endDrag = () => { if (drag >= 0) { drag = -1; readout(); } };
+    svg.addEventListener('pointerup', endDrag);
+    svg.addEventListener('pointercancel', endDrag);
+    svg.addEventListener('pointerleave', () => { if (drag < 0 && hover >= 0) { hover = -1; readout(); } });
+    svg.addEventListener('keydown', (ev) => {
+      const c = curve();
+      if (c.kind === 'mix') return;
+      const stp = ev.shiftKey ? 5 : 1;
+      const p = c.pts[sel];
+      const k = ev.key;
+      let used = true;
+      if (k === '[') sel = Math.max(0, sel - 1);
+      else if (k === ']') sel = Math.min(c.pts.length - 1, sel + 1);
+      else if (k === 'h' || k === 'H' || k === 'ArrowLeft') movePoint(sel, p[0] - stp, p[1]);
+      else if (k === 'l' || k === 'L' || k === 'ArrowRight') movePoint(sel, p[0] + stp, p[1]);
+      else if (k === 'k' || k === 'K' || k === 'ArrowUp') movePoint(sel, p[0], p[1] + stp);
+      else if (k === 'j' || k === 'J' || k === 'ArrowDown') movePoint(sel, p[0], p[1] - stp);
+      else used = false;
+      if (used) { ev.preventDefault(); hover = sel; drawStatic(); }
+    });
+    svg.addEventListener('blur', () => { if (drag < 0) { hover = -1; readout(); } });
+
+    function buildMix() {
+      const c = curve();
+      mixWrap.innerHTML = '';
+      h('div', 'sec', 'The larger of', mixWrap);
+      const mk2 = (label, id) => { const r = h('div', 'mixrow', null, mixWrap); h('span', null, label, r); const tr = h('span', 'track', null, r); const i = h('i', null, null, tr); const cap = h('b', null, null, tr); cap.hidden = id !== 'out'; const v = h('span', 'v', '', r); return { id, r, i, cap, v, g: new Glide(0) }; };
+      mixWrap._rows = [mk2(DRAFT[prof].cpu.name, 'cpu'), mk2(DRAFT[prof].gpu.name, 'gpu')];
+      h('div', 'sepl', null, mixWrap);
+      const out = mk2('Output', 'out');
+      out.r.querySelector('span').style.fontWeight = '700';
+      out.cap.style.left = c.capDuty + '%';
+      mixWrap._rows.push(out);
+      h('div', 'caption', 'At its floor until the CPU passes ' + c.from.cpu + ' °C or the GPU ' + c.from.gpu + ' °C (15 °C over idle). Capped at ' + Math.round(c.cap * 100) + ' % airflow: ' + c.capDuty + ' % on SYS_FAN1, the dashed line. Used by SYS_FAN1, SYS_FAN2, SYS_FAN4 and SYS_FAN5_PUMP, each above its own floor.', mixWrap);
+    }
+    function showCurve() {
+      const c = curve();
+      tabBtns.forEach((t) => t.b.setAttribute('aria-pressed', String(t.id === cid)));
+      setText($('#rvName'), c.name);
+      graphWrap.hidden = c.kind === 'mix';
+      mixWrap.hidden = c.kind !== 'mix';
+      sel = c.kind === 'mix' ? 0 : Math.min(1, c.pts.length - 1);
+      hover = -1; drag = -1;
+      nowS.to = null; nowO.to = null;
+      chips();
+      if (c.kind === 'mix') buildMix(); else { mT.jump(c.src === 'cpu' ? desk.cpu.s : desk[c.src].raw); drawStatic(); }
+      inspect(performance.now());
+    }
+    function updateState() {
+      const d = dirty();
+      setText($('#rvState'), state === 'saved' ? 'Saved · Balanced is active' : state === 'discarded' ? 'Discarded · Defaults stays on' : d ? 'Draft from setup · edited, not saved' : 'Draft from setup · not saved');
+      $('#rvSave').disabled = state !== 'draft' && !d;
+      $('#rvDiscard').disabled = state === 'discarded' && !d;
+      if (d) state = 'draft';
+    }
+    $('#rvSave').addEventListener('click', () => { SAVED = snap(); state = 'saved'; updateState(); });
+    $('#rvDiscard').addEventListener('click', () => {
+      PROFS.forEach((p) => { const g = generate(p); ['cpu', 'gpu', 'chip'].forEach((k) => { DRAFT[p][k].pts = g[k].pts; }); });
+      SAVED = snap();
+      state = 'discarded';
+      showCurve();
+      updateState();
+    });
+    function inspect(now) {
+      const c = curve();
+      const eNow = $('#rvNow'), eWhat = $('#rvWhat');
+      if (c.kind === 'mix') {
+        const T = desk.T();
+        const o = draftDuty(byId.c2, DRAFT[prof], T);
+        setText(eNow, 'Output ' + Math.round(o) + ' % on SYS_FAN1');
+        setText(eWhat, T.cpu < c.from.cpu && T.gpu < c.from.gpu ? 'At the floor: neither source is 15 °C over idle' : 'Following the larger input');
+        return;
+      }
+      const T = mT.at(now);
+      const D = evalPts(c.pts, T);
+      nowS.feed(T, now);
+      nowO.feed(D, now);
+      setText(eNow, nowS.val(now).toFixed(1) + ' °C → ' + (c.nvml && D < 30 ? 'driver' : c.mayStop && D < c.fan.mStop ? '0 %' : Math.max(nowO.val(now), c.fan.floor && !c.nvml && !c.mayStop ? c.fan.floor : 0) + ' %'));
+      let what = 'Following the curve';
+      if (c.nvml && D < 30) what = 'Below 30 %: the driver runs these fans, and keeps them stopped while the GPU is cool';
+      else if (c.mayStop && D < c.fan.mStop) what = 'Stopped: under ' + PCH_REST + ' °C the chipset fan rests, as the BIOS had it';
+      else if (!c.nvml && D <= c.fan.floor) what = 'At the floor, ' + c.fan.floor + ' %';
+      setText(eWhat, what);
+    }
+    const desk = makeSensors(31337);
+    rrows.forEach((x) => { for (let i = 0; i < 20; i++) { x.dd = stepLimited(x.dd, draftDuty(x.f, DRAFT[prof], desk.T())); stepFan(x.s, x.dd, rand); } x.g.jump(x.s.rpm); });
+    showCurve();
+    updateState();
+    return {
+      root,
+      onTick(now) {
+        desk.step(0, 30);
+        const T = desk.T();
+        rrows.forEach((x) => {
+          if (x.spin > 0) { x.spin -= 1; stepFan(x.s, 100, rand); if (x.spin === 0) { x.idb.textContent = 'Identify'; x.idb.disabled = false; } }
+          else { x.dd = stepLimited(x.dd, draftDuty(x.f, DRAFT[prof], T)); stepFan(x.s, x.dd, rand); }
+          x.g.set(x.s.rpm, now);
+        });
+        const c = curve();
+        if (c.kind !== 'mix') mT.set(c.src === 'cpu' ? desk.cpu.s : desk[c.src].raw, now);
+        else mixWrap._rows.forEach((r) => r.g.set(r.id === 'out' ? draftDuty(byId.c2, DRAFT[prof], T) : evalPts(DRAFT[prof][r.id].pts, r.id === 'cpu' ? T.cpu : T.gpu), now));
+        this.frame(now);
+      },
+      frame(now) {
+        rrows.forEach((x) => { x.sr.feed(x.g.at(now), now); setText(x.rpm, fmt(x.sr.val(now)) + ' RPM'); });
+        const c = curve();
+        if (c.kind === 'mix') {
+          mixWrap._rows.forEach((r) => { const v = clamp(r.g.at(now), 0, 100); r.i.style.width = v.toFixed(2) + '%'; setText(r.v, Math.round(v) + ' %'); });
+          const [a, b] = mixWrap._rows;
+          a.r.classList.toggle('win', a.g.to >= b.g.to);
+          b.r.classList.toggle('win', b.g.to > a.g.to);
+        } else {
+          const T = clamp(mT.at(now), 20, 100);
+          const D = clamp(evalPts(c.pts, T), 0, 100);
+          const x = sx(T), y = sy(D);
+          mk.setAttribute('cx', x.toFixed(2)); mk.setAttribute('cy', y.toFixed(2));
+          crossV.setAttribute('x1', x.toFixed(2)); crossV.setAttribute('x2', x.toFixed(2)); crossV.setAttribute('y1', y.toFixed(2)); crossV.setAttribute('y2', Y1);
+          crossH.setAttribute('x1', X0); crossH.setAttribute('x2', x.toFixed(2)); crossH.setAttribute('y1', y.toFixed(2)); crossH.setAttribute('y2', y.toFixed(2));
+        }
+        inspect(now);
+      },
+    };
+  })();
+  addView(review);
+
+  // ------------------------------------------------------------- E · CLI
+  (() => {
+    const out = $('#cliOut');
+    const pair = HW.filter((f) => !f.empty).map((f) => (f.chip === 'IT8792E' ? 'IT8792E ' : '') + f.pwm + ' → ' + f.header);
+    const lines = [
+      ['p', '$ '], ['', 'penna setup\n'],
+      ['', 'Setting up fans on Gigabyte X570 AORUS PRO: 10 controls, 2 of them NVIDIA.\n'],
+      ['', 'About ' + mmss(30 + 5 + 102 + CAL_DUR) + ', and 3 minutes more for the load check. You will hear the fans.\n'],
+      ['d', 'Setup stops and hands every fan back if the CPU passes 85 °C, the GPU passes 80 °C, or a\nsensor fails to read. Ctrl-C does the same.\n\n'],
+      ['', '1/7  Idle sample   0:30   CPU 45 °C · GPU 40 °C · NVMe 37 °C · PCH 45 °C\n'],
+      ['d', '                          PCH_FAN reads 0 RPM: the BIOS stops it when the chipset is cool.\n'],
+      ['', '2/7  Write test    0:05   10 of 10 ok\n'],
+      ['', '3/7  Pairing       1:42   ' + pair.slice(0, 3).join(', ') + ',\n                          ' + pair.slice(3, 5).join(', ') + ',\n                          ' + pair.slice(5).join(', ') + '\n'],
+      ['d', '                          IT8792E pwm2: no fan turns (SYS_FAN6_PUMP). It stays with the BIOS.\n'],
+      ['', '4/7  Roles                CPU cooler: CPU_FAN, CPU_OPT · Chipset: PCH_FAN · GPU: GPU fan 1, 2\n                          Case: SYS_FAN1, SYS_FAN2, SYS_FAN4, SYS_FAN5_PUMP\n'],
+      ['d', '                          SYS_FAN5_PUMP is on a pump header but tops out at 1,730 RPM.\n'],
+      ['', '5/7  Calibration   ' + mmss(CAL_DUR) + '   ' + ['c1', 'c5'].map((id) => byId[id].header + ' stops below ' + byId[id].mStop + ' %, ' + fmt(byId[id].mMax) + ' RPM').join(' · ') + '\n'],
+      ['d', '                          and 7 more: penna studio shows every table.\n'],
+      ['', '6/7  Load check    3:00   The CPU levelled at ' + LOADRES.T + ' °C, with CPU_FAN at ' + LOADRES.d + ' %.\n'],
+      ['', '7/7  Review\n\n'],
+    ];
+    curveLines('Balanced').forEach(([a, b], i) => lines.push(['', (i ? '     ' : '     Balanced  ').padEnd(i ? 15 : 15) + a.padEnd(9) + b + '\n']));
+    lines.push(['d', '     Quiet and Render are in the draft too. penna studio shows them.\n\n']);
+    lines.push(['', 'SYS_FAN5_PUMP: case fan (c) or pump (p)? [c] '], ['p', 'c\n']);
+    lines.push(['d', 'Measuring SYS_FAN5_PUMP below 50 %… stops below ' + PUMP_FULL.stop + ' %, starts at ' + PUMP_FULL.start + ' %.\n']);
+    lines.push(['', 'Save the generated curves and switch to Balanced? [y/N] '], ['p', 'y\n']);
+    lines.push(['', 'Saved. Balanced runs 9 fans. penna profile defaults hands them all back.\n']);
+    lines.forEach(([cls, text]) => { if (cls) h('span', cls, text, out); else out.appendChild(document.createTextNode(text)); });
+  })();
+
+  // ------------------------------------------------------------- start: complete at rest, then live
+  const t0 = performance.now();
+  [popupA, review].forEach((v) => { v.onTick(t0); v.frame(t0); });
+  setup.view.frame(t0);
+  let timer = 0;
+  function start() {
+    if (timer) return;
+    timer = setInterval(() => {
+      if (document.hidden) return;
+      const now = performance.now();
+      [popupA, review].forEach((v) => { if (v.visible) v.onTick(now); });
+      kick();
+    }, TICK);
+    setup.schedule();
+  }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) kick(); });
+  start();
+  kick();
+})();
+</script>
