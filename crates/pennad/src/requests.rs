@@ -254,7 +254,7 @@ pub fn handle(live: &mut Live, inventory: &Inventory, out: &mut Trace, op: Op, u
                     .ok_or_else(|| format!("{role:?} isn't a role. Roles: cpu, gpu, pump, chipset, laptop, case."))?;
                 confirmed.insert(key, role);
             }
-            let text = crate::setup::roles(live, &confirmed)?;
+            let text = crate::setup::roles(live, inventory, out, conn, &confirmed)?;
             note(out, None, text);
         }
         Op::Identify { control } => {

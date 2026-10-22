@@ -539,21 +539,27 @@ fn run(args: Args) -> Result<()> {
         }
         let due = start + pace * ticks as u32;
         while Instant::now() < due && !stop.load(Ordering::SeqCst) {
-            let mut changed = false;
+            // `state` right after a change shows it, without waiting for the next tick: a change is published before its reply
+            // goes out, so a client that subscribes on the reply never starts from the tick before it.
+            let publish_now = |live: &Live, out: &mut trace::Trace| {
+                let body = live.tick_body(&machine.inventory);
+                send_events(&events, out, live.state.seq, body.t);
+                publish.send_replace(Arc::new(ipc::Published::new(&body, ring.snapshot(body.seq, args.tick), &live.plan.config)));
+            };
             while let Ok(job) = jobs.try_recv() {
                 let writes = job.op.writes();
                 let result = requests::handle(&mut live, &machine.inventory, &mut out, job.op, job.uid, job.conn);
-                changed |= writes && result.is_ok();
+                if writes && result.is_ok() {
+                    publish_now(&live, &mut out);
+                }
                 let _ = job.reply.send(result);
             }
+            let mut changed = false;
             while let Ok(conn) = closed.try_recv() {
                 changed |= requests::closed(&mut live, &machine.inventory, &mut out, conn);
             }
             if changed {
-                // `state` right after a change shows it, without waiting for the next tick.
-                let body = live.tick_body(&machine.inventory);
-                send_events(&events, &mut out, live.state.seq, body.t);
-                publish.send_replace(Arc::new(ipc::Published::new(&body, ring.snapshot(body.seq, args.tick), &live.plan.config)));
+                publish_now(&live, &mut out);
             }
             if ping_every.is_some_and(|p| last_ping.elapsed() >= p) {
                 let _ = sd_notify::notify(&[sd_notify::NotifyState::Watchdog]);

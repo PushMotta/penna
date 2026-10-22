@@ -155,8 +155,9 @@ pub fn step(live: &mut Live, readings: &Readings, out: &mut Trace, now: f64, uni
     measured
 }
 
-/// `setup.roles`: what the user confirmed each fan is (§5.3), kept with the measurements.
-pub fn roles(live: &mut Live, roles: &BTreeMap<Key, Role>) -> Result<String, String> {
+/// `setup.roles`: what the user confirmed each fan is (§5.3), kept with the measurements. A fan held at 50 % because it sits on
+/// a pump header, now confirmed as anything but a pump, is measured below that at once (§11.3 call 7), on this connection.
+pub fn roles(live: &mut Live, inventory: &Inventory, out: &mut Trace, conn: u64, roles: &BTreeMap<Key, Role>) -> Result<String, String> {
     for (key, role) in roles {
         let m = match live.measured.controls.iter_mut().find(|m| &m.key == key) {
             Some(m) => m,
@@ -169,7 +170,26 @@ pub fn roles(live: &mut Live, roles: &BTreeMap<Key, Role>) -> Result<String, Str
     }
     save(live).map_err(|e| format!("Couldn't save the roles: {e}."))?;
     let n = roles.len();
-    Ok(format!("{n} role{} confirmed", plural(n)))
+    let mut text = format!("{n} role{} confirmed", plural(n));
+    let below: Vec<(Key, Vec<Key>, Role)> = live
+        .measured
+        .controls
+        .iter()
+        .filter(|m| m.lowest == Some(penna_core::setup::PUMP_LOWEST) && m.role.is_some_and(|r| r != Role::Pump) && !m.tachs.is_empty())
+        .filter(|m| roles.contains_key(&m.key))
+        .map(|m| (m.key.clone(), m.tachs.clone(), m.role.expect("filtered")))
+        .collect();
+    if !below.is_empty() && live.setup.as_ref().is_none_or(|s| s.run.finished()) {
+        let keys: Vec<Key> = below.iter().map(|(k, ..)| k.clone()).collect();
+        let input = input(inventory, live.board.as_ref(), Some(&keys));
+        let names: Vec<String> = input.targets.iter().map(|t| t.label.clone()).collect();
+        live.plan.carry(&keys, inventory, &live.measured);
+        live.setup =
+            Some(SetupRun { owner: conn, run: Setup::calibrate(input, &below, live.now), saved: false, last_step: Step::Calibration });
+        text = format!("{text}; measuring {} below 50 %, about 30 s", names.join(" and "));
+        out.note(live.now, Level::Info, None, format!("Setup: measuring {} below 50 %", names.join(" and ")));
+    }
+    Ok(text)
 }
 
 /// `identify`: 100 % for 3 s, then back.

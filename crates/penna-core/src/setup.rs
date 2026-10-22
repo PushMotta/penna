@@ -355,6 +355,33 @@ impl Setup {
         }
     }
 
+    /// Calibration alone, for fans whose pairing is known and whose role the user has just confirmed (§11.3 call 7): a case
+    /// fan on a pump header, measured below the 50 % it was held to. `known` is each control with its tachs and role.
+    pub fn calibrate(input: Input, known: &[(Key, Vec<Key>, Role)], now: f64) -> Setup {
+        let mut s = Setup::new(input, now);
+        s.ctls.retain(|c| known.iter().any(|(k, ..)| k == &c.target.key));
+        for c in &mut s.ctls {
+            let (_, tachs, role) = known.iter().find(|(k, ..)| k == &c.target.key).expect("kept above");
+            c.write = Some(WriteResult::Ok);
+            c.paired = Some(true);
+            c.tachs = tachs.clone();
+            c.lowest = match role {
+                Role::Pump => Some(PUMP_LOWEST),
+                Role::Chipset => Some(CHIPSET_LOWEST),
+                _ => None,
+            };
+            c.suggestion = Some(Suggestion { role: *role, reason: "Confirmed by you.".into(), confirm: false, may_stop: false });
+        }
+        s.enter(Step::Calibration);
+        for c in &mut s.ctls {
+            c.cal = Cal::Down { duty: 100.0, since: now };
+            c.demand = Some(100.0);
+            c.status = "stepping down · 100 %".to_owned();
+        }
+        s.say = format!("Stepping down from 100 % in {CAL_DOWN:.0} % steps, waiting for each to settle.");
+        s
+    }
+
     pub fn step_now(&self) -> Step {
         self.step
     }

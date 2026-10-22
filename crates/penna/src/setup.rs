@@ -235,8 +235,38 @@ fn confirm_roles(p: &Progress) -> Result<()> {
     }
     let mut c = Client::find().ok_or_else(client::not_running)?;
     let r = c.call(Op::SetupRoles { roles })?;
-    if let Some(text) = r.as_ref().and_then(|r| r.get("text")).and_then(|t| t.as_str()) {
-        println!("{text}.");
+    let text = r.as_ref().and_then(|r| r.get("text")).and_then(|t| t.as_str()).unwrap_or_default().to_owned();
+    println!("{text}.");
+    if text.contains("measuring") {
+        // A case fan on a pump header is measured below 50 % now, on this connection: stay until it is done.
+        let mut done = None;
+        let mut running = false;
+        c.subscribe(|_, ev| {
+            let Some(Event::Tick(t)) = ev else { return Ok(true) };
+            match t.setup {
+                Some(p) if p.stopped.is_some() || p.step == Step::Review => {
+                    if running {
+                        done = Some(*p);
+                    }
+                    Ok(!running)
+                }
+                Some(_) => {
+                    running = true;
+                    Ok(true)
+                }
+                None => Ok(true),
+            }
+        })?;
+        match done {
+            Some(p) if p.stopped.is_none() => {
+                for c in p.controls.iter().filter(|c| c.stop.is_some()) {
+                    let start = c.start.map_or(String::new(), |s| format!(", starts at {s:.0} %"));
+                    println!("{}: stops below {:.0} %{start}.", c.header.clone().unwrap_or_else(|| c.label.clone()), c.stop.unwrap_or(0.0));
+                }
+            }
+            Some(p) => println!("Stopped: {}", p.stopped.unwrap_or_default()),
+            None => {}
+        }
     }
     println!("Generated curves arrive with M8; until then, adopt fans in the studio (penna open).");
     Ok(())

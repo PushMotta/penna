@@ -693,11 +693,21 @@ fn setup_measures_the_x570_desk_from_a_fresh_install() {
     }
     assert!(!fs::read_to_string(dir.join("run/held.json")).unwrap_or_default().contains("pwm"), "held.json holds no motherboard fan");
 
-    // Roles confirmed in the review are kept with the measurements.
+    // Roles confirmed in the review are kept with the measurements. The case fan on a pump header, held at 50 % until now, is
+    // measured below it at once, on this connection (§11.3 call 7).
     let r = c.call(json!({"op": "setup.roles", "roles": {format!("{it8792}/pwm1"): "case", "PCH_FAN": "chipset"}}));
-    assert_eq!(r["result"]["text"], "2 roles confirmed", "{r}");
+    assert_eq!(r["result"]["text"], "2 roles confirmed; measuring SYS_FAN5_PUMP below 50 %, about 30 s", "{r}");
     let measured = fs::read_to_string(dir.join("tree/var/lib/penna/measured.toml")).unwrap();
     assert!(measured.contains("role = \"case\""), "{measured}");
+    c.tick_where(200, "calibrating SYS_FAN5_PUMP", |t| t["setup"]["step"] == "calibration");
+    let t = c.tick_where(2000, "measured below 50 %", |t| t["setup"]["step"] == "review");
+    let p = &t["setup"]["controls"][0];
+    assert_eq!((p["header"].as_str(), p["lowest"].is_null()), (Some("SYS_FAN5_PUMP"), true), "{p}");
+    assert!(p["stop"].as_f64().is_some_and(|s| s <= 25.0), "it turns well below 50 %: {p}");
+    let m: toml::Value = toml::from_str(&fs::read_to_string(dir.join("tree/var/lib/penna/measured.toml")).unwrap()).unwrap();
+    let sys5 = m["control"].as_array().unwrap().iter().find(|c| c["key"].as_str() == Some(&format!("{it8792}/pwm1"))).unwrap().clone();
+    assert!(sys5.get("lowest").is_none() && sys5["role"].as_str() == Some("case"), "{sys5}");
+    assert!(sys5["calibration"].as_array().unwrap()[0][0].as_float() < Some(50.0), "{sys5}");
     let r = c.call(json!({"op": "setup.roles", "roles": {"CPU_FAN": "blower"}}));
     assert_eq!(r["error"], "\"blower\" isn't a role. Roles: cpu, gpu, pump, chipset, laptop, case.");
     d.stop();
