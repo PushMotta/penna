@@ -204,4 +204,5 @@ driver_percent = 53.0
 stops = [38.0, 33.0]
 gpu_max = 93
 slowdown = 95
+acoustic = 83
 shutdown = 98

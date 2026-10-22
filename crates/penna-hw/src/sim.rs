@@ -242,6 +242,9 @@ pub struct GpuSpec {
     pub gpu_max: f64,
     pub slowdown: f64,
     pub shutdown: f64,
+    /// NVML's acoustic threshold, when the card has one (§5.5).
+    #[serde(default)]
+    pub acoustic: Option<f64>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -454,6 +457,9 @@ impl Sim {
                 ("shutdown", g.shutdown),
             ] {
                 put(&dir.join(f), &v.to_string())?;
+            }
+            if let Some(a) = g.acoustic {
+                put(&dir.join("acoustic"), &a.to_string())?;
             }
             for i in 0..g.fans {
                 put(&dir.join(format!("fan{i}_policy")), DRIVER)?;

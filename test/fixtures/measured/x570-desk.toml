@@ -1,0 +1,139 @@
+# This desk's measurements from setup's fourth run (DESIGN.md §10, M7, 22 Oct 2026), with the mock desk's GPU id: what the
+# generated curves are tested against (§5.5).
+at = 1792684126.6811333
+
+[idle]
+"hwmon/acpitz/thermal_zone0/temp1" = 16.8
+"hwmon/acpitz/thermal_zone0/temp2" = 16.8
+"hwmon/it8688_4008090b/it87.2624/temp1" = 25.7
+"hwmon/it8688_4008090b/it87.2624/temp3" = 42.0
+"hwmon/it8688_4008090b/it87.2624/temp4" = 39.0
+"hwmon/it8688_4008090b/it87.2624/temp5" = 32.0
+"hwmon/it8688_4008090b/it87.2624/temp6" = 45.0
+"hwmon/it8792_4008090b/it87.2656/temp1" = 31.0
+"hwmon/it8792_4008090b/it87.2656/temp3" = 29.0
+"hwmon/k10temp/0000:00:18.3/temp1" = 42.3
+"hwmon/k10temp/0000:00:18.3/temp3" = 35.9
+"hwmon/k10temp/0000:00:18.3/temp4" = 33.5
+"hwmon/nvme/0000:01:00.0/temp1" = 37.9
+"hwmon/nvme/0000:04:00.0/temp1" = 39.9
+"hwmon/nvme/0000:04:00.0/temp2" = 39.9
+"hwmon/nvme/0000:04:00.0/temp3" = 43.9
+"nvml/GPU-5a1d3090-0000-4000-8000-00000000mock/temp" = 42.6
+
+[[control]]
+key = "hwmon/it8688_4008090b/it87.2624/pwm1"
+write = "ok"
+paired = true
+stop = 10.0
+start = 10.0
+spin_up = 14.0
+tachs = ["hwmon/it8688_4008090b/it87.2624/fan1"]
+calibration = [[10.0, 346.0], [15.0, 347.0], [20.0, 354.0], [25.0, 436.0], [30.0, 524.0], [35.0, 619.0], [40.0, 698.0], [45.0, 787.0], [50.0, 872.0], [55.0, 962.0], [60.0, 1043.0], [65.0, 1138.0], [70.0, 1225.0], [75.0, 1318.0], [80.0, 1397.0], [85.0, 1493.0], [90.0, 1577.0], [95.0, 1662.0], [100.0, 1730.0]]
+suggested = "cpu"
+reason = "The board calls this header CPU_FAN."
+role = "cpu"
+
+[[control]]
+key = "hwmon/it8688_4008090b/it87.2624/pwm2"
+write = "ok"
+paired = true
+lowest = 5.0
+tachs = ["hwmon/it8688_4008090b/it87.2624/fan2"]
+calibration = [[5.0, 836.0], [10.0, 835.0], [15.0, 838.0], [20.0, 838.0], [25.0, 857.0], [30.0, 998.0], [35.0, 1094.0], [40.0, 1188.0], [45.0, 1275.0], [50.0, 1380.0], [55.0, 1464.0], [60.0, 1548.0], [65.0, 1626.0], [70.0, 1717.0], [75.0, 1800.0], [80.0, 1880.0], [85.0, 1945.0], [90.0, 2039.0], [95.0, 2089.0], [100.0, 2170.0]]
+suggested = "case"
+reason = "A system fan header."
+role = "case"
+
+[[control]]
+key = "hwmon/it8688_4008090b/it87.2624/pwm3"
+write = "ok"
+paired = true
+stop = 10.0
+start = 10.0
+spin_up = 14.0
+tachs = ["hwmon/it8688_4008090b/it87.2624/fan3"]
+calibration = [[10.0, 347.0], [15.0, 345.0], [20.0, 351.0], [25.0, 442.0], [30.0, 530.0], [35.0, 615.0], [40.0, 699.0], [45.0, 788.0], [50.0, 877.0], [55.0, 967.0], [60.0, 1048.0], [65.0, 1142.0], [70.0, 1227.0], [75.0, 1315.0], [80.0, 1400.0], [85.0, 1490.0], [90.0, 1573.0], [95.0, 1662.0], [100.0, 1726.0]]
+suggested = "case"
+reason = "A system fan header."
+role = "case"
+
+[[control]]
+key = "hwmon/it8688_4008090b/it87.2624/pwm4"
+write = "ok"
+paired = true
+stop = 10.0
+start = 20.0
+spin_up = 9.0
+tachs = ["hwmon/it8688_4008090b/it87.2624/fan4"]
+calibration = [[10.0, 1163.0], [15.0, 1730.0], [20.0, 2102.0], [25.0, 2454.0], [30.0, 2766.0], [35.0, 3068.0], [40.0, 3308.0], [45.0, 3571.0], [50.0, 3792.0], [55.0, 4017.0], [60.0, 4192.0], [65.0, 4440.0], [70.0, 4623.0], [75.0, 4787.0], [80.0, 4963.0], [85.0, 5152.0], [90.0, 5273.0], [95.0, 5443.0], [100.0, 5532.0]]
+firmware_stops = true
+suggested = "chipset"
+reason = "The board calls this header PCH_FAN. Its firmware stops it when cool, so it may stop."
+role = "chipset"
+
+[[control]]
+key = "hwmon/it8688_4008090b/it87.2624/pwm5"
+write = "ok"
+paired = true
+lowest = 50.0
+tachs = ["hwmon/it8688_4008090b/it87.2624/fan5"]
+calibration = [[50.0, 1147.0], [55.0, 1259.0], [60.0, 1363.0], [65.0, 1461.0], [70.0, 1562.0], [75.0, 1658.0], [80.0, 1771.0], [85.0, 1885.0], [90.0, 1956.0], [95.0, 2076.0], [100.0, 2156.0]]
+suggested = "pump"
+reason = "The board calls this header CPU_OPT, and it turns 2,160 RPM at 100 %: a pump, as liquid coolers often have there. Held at 50 % or more until you confirm."
+role = "pump"
+
+[[control]]
+key = "hwmon/it8792_4008090b/it87.2656/pwm1"
+write = "ok"
+paired = true
+stop = 10.0
+start = 10.0
+spin_up = 16.0
+tachs = ["hwmon/it8792_4008090b/it87.2656/fan1"]
+calibration = [[10.0, 364.0], [15.0, 363.0], [20.0, 372.0], [25.0, 462.0], [30.0, 558.0], [35.0, 656.0], [40.0, 739.0], [45.0, 830.0], [50.0, 929.0], [55.0, 1024.0], [60.0, 1106.0], [65.0, 1209.0], [70.0, 1298.0], [75.0, 1391.0], [80.0, 1473.0], [85.0, 1580.0], [90.0, 1674.0], [95.0, 1800.0], [100.0, 1819.0]]
+suggested = "case"
+reason = "On a pump header, but 1,460 RPM at 100 %: a case fan. Held at 50 % or more until you confirm."
+role = "case"
+
+[[control]]
+key = "hwmon/it8792_4008090b/it87.2656/pwm2"
+write = "ok"
+empty = true
+
+[[control]]
+key = "hwmon/it8792_4008090b/it87.2656/pwm3"
+write = "ok"
+paired = true
+stop = 25.0
+start = 25.0
+spin_up = 10.0
+tachs = ["hwmon/it8792_4008090b/it87.2656/fan3"]
+calibration = [[25.0, 718.0], [30.0, 846.0], [35.0, 981.0], [40.0, 1097.0], [45.0, 1214.0], [50.0, 1328.0], [55.0, 1439.0], [60.0, 1541.0], [65.0, 1642.0], [70.0, 1717.0], [75.0, 1670.0], [80.0, 1713.0], [85.0, 1658.0], [90.0, 1687.0], [95.0, 1717.0], [100.0, 1726.0]]
+suggested = "case"
+reason = "A system fan header."
+role = "case"
+
+[[control]]
+key = "nvml/GPU-5a1d3090-0000-4000-8000-00000000mock/fan0"
+write = "ok"
+stop = 45.0
+start = 45.0
+spin_up = 13.0
+lowest = 30.0
+calibration = [[45.0, 627.0], [50.0, 850.0], [55.0, 1066.0], [60.0, 1282.0], [65.0, 1502.0], [70.0, 1717.0], [75.0, 1934.0], [80.0, 2153.0], [85.0, 2373.0], [90.0, 2586.0], [95.0, 2803.0], [100.0, 2962.0]]
+suggested = "gpu"
+reason = "An NVIDIA GPU fan."
+role = "gpu"
+
+[[control]]
+key = "nvml/GPU-5a1d3090-0000-4000-8000-00000000mock/fan1"
+write = "ok"
+stop = 45.0
+start = 45.0
+spin_up = 11.0
+lowest = 30.0
+calibration = [[45.0, 710.0], [50.0, 845.0], [55.0, 1065.0], [60.0, 1287.0], [65.0, 1506.0], [70.0, 1724.0], [75.0, 1941.0], [80.0, 2158.0], [85.0, 2374.0], [90.0, 2588.0], [95.0, 2791.0], [100.0, 2974.0]]
+suggested = "gpu"
+reason = "An NVIDIA GPU fan."
+role = "gpu"

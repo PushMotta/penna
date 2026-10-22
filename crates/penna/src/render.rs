@@ -302,6 +302,7 @@ fn limit_name(kind: LimitKind) -> &'static str {
         LimitKind::Crit => "crit",
         LimitKind::Slowdown => "slowdown",
         LimitKind::Shutdown => "shutdown",
+        LimitKind::Acoustic => "acoustic",
     }
 }
 

@@ -80,6 +80,9 @@ pub enum LimitKind {
     Slowdown,
     /// NVML: where the GPU switches itself off
     Shutdown,
+    /// NVML: the temperature the card's own fan curve holds it under, its acoustic threshold: 83 °C on the 3090. Generated GPU
+    /// curves aim there (§5.5).
+    Acoustic,
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -14,6 +14,7 @@ pub mod config;
 pub mod control;
 pub mod drift;
 pub mod drivers;
+pub mod generate;
 pub mod held;
 pub mod key;
 pub mod model;

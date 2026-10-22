@@ -94,7 +94,12 @@ impl Backend for MockNvml {
                 ignored_limits: vec![],
                 below_ambient: false,
             };
-            for (kind, file) in [(LimitKind::GpuMax, "gpu_max"), (LimitKind::Slowdown, "slowdown"), (LimitKind::Shutdown, "shutdown")] {
+            for (kind, file) in [
+                (LimitKind::GpuMax, "gpu_max"),
+                (LimitKind::Slowdown, "slowdown"),
+                (LimitKind::Shutdown, "shutdown"),
+                (LimitKind::Acoustic, "acoustic"),
+            ] {
                 if let Ok(c) = read_f(&dir, file)
                     && let Some(c) = sanity::limit(c)
                 {

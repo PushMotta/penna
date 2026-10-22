@@ -293,6 +293,7 @@ impl Backend for NvmlBackend {
                 (LimitKind::GpuMax, TemperatureThreshold::GpuMax),
                 (LimitKind::Slowdown, TemperatureThreshold::Slowdown),
                 (LimitKind::Shutdown, TemperatureThreshold::Shutdown),
+                (LimitKind::Acoustic, TemperatureThreshold::AcousticCurr),
             ] {
                 if let Ok(c) = gpu.temperature_threshold(threshold) {
                     match sanity::limit(c as f64) {
