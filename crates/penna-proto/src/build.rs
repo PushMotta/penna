@@ -45,10 +45,19 @@ pub fn tick(cx: &Context) -> Tick {
     let sensors = sensors(cx);
     let label_of = |k: &Key| sensors.iter().find(|s| &s.key == k).map(display).unwrap_or_else(|| k.to_string());
 
-    let mut profiles: Vec<ProfileTick> =
-        plan.config.profiles.keys().map(|id| ProfileTick { id: id.clone(), label: words(id), builtin: false }).collect();
+    let mut profiles: Vec<ProfileTick> = plan
+        .config
+        .profiles
+        .iter()
+        .map(|(id, assign)| ProfileTick {
+            id: id.clone(),
+            label: words(id),
+            builtin: false,
+            fans: assign.values().filter(|c| c.as_str() != penna_core::config::FIRMWARE).count() as u32,
+        })
+        .collect();
     profiles.sort_by_key(|p| profile_rank(&p.id));
-    profiles.insert(0, ProfileTick { id: DEFAULTS.to_owned(), label: words(DEFAULTS), builtin: true });
+    profiles.insert(0, ProfileTick { id: DEFAULTS.to_owned(), label: words(DEFAULTS), builtin: true, fans: 0 });
 
     let emergency = st
         .emergency
@@ -101,7 +110,11 @@ pub fn tick(cx: &Context) -> Tick {
         .iter()
         .flat_map(|d| &d.controls)
         .filter(|c| !plan.controls.contains_key(&c.key))
-        .map(|c| FirmwareTick { key: c.key.clone(), label: plan.config.labels.get(&c.key).cloned().unwrap_or_else(|| c.label.clone()) })
+        .map(|c| FirmwareTick {
+            key: c.key.clone(),
+            label: plan.config.labels.get(&c.key).cloned().unwrap_or_else(|| c.label.clone()),
+            rpm: cx.readings.rpms.get(&c.key).and_then(Sample::value),
+        })
         .collect();
 
     let curves = plan

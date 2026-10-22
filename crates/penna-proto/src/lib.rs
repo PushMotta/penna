@@ -311,6 +311,9 @@ pub struct ProfileTick {
     /// Defaults (§4.7): built in, first, and not editable.
     #[serde(default, skip_serializing_if = "is_false")]
     pub builtin: bool,
+    /// How many controls it gives a curve: a profile shows as a pill once it runs a fan (§11.3 call 2).
+    #[serde(default)]
+    pub fans: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -412,6 +415,9 @@ pub struct OverrideTick {
 pub struct FirmwareTick {
     pub key: Key,
     pub label: String,
+    /// What its own tach reads, when it has one (an NVIDIA fan): Defaults lists every fan with its RPM (§11.3 call 3).
+    #[serde(default)]
+    pub rpm: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -5,10 +5,10 @@
   "t": 1792595449.2,
   "profile": "balanced",
   "profiles": [
-    { "id": "defaults", "label": "Defaults", "builtin": true },
-    { "id": "quiet", "label": "Quiet" },
-    { "id": "balanced", "label": "Balanced" },
-    { "id": "render", "label": "Render" }
+    { "id": "defaults", "label": "Defaults", "builtin": true, "fans": 0 },
+    { "id": "quiet", "label": "Quiet", "fans": 4 },
+    { "id": "balanced", "label": "Balanced", "fans": 5 },
+    { "id": "render", "label": "Render", "fans": 5 }
   ],
   "full_speed": false,
   "draft": { "curves": ["cpu-quiet"], "controls": ["hwmon/it87/it87.2608/pwm2"] },
@@ -139,7 +139,7 @@
       "override": null
     }
   ],
-  "firmware": [{ "key": "hwmon/it87/it87.2608/pwm4", "label": "pwm4" }],
+  "firmware": [{ "key": "hwmon/it87/it87.2608/pwm4", "label": "pwm4", "rpm": null }],
   "tachs": [
     { "key": "hwmon/it87/it87.2608/fan1", "label": "CPU_FAN", "device": "IT8688E", "rpm": 1140, "control": "hwmon/it87/it87.2608/pwm1" },
     { "key": "hwmon/it87/it87.2608/fan4", "label": "SYS_FAN6_PUMP", "device": "IT8688E", "rpm": 0, "control": null }
