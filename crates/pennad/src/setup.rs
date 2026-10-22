@@ -136,6 +136,9 @@ pub fn step(live: &mut Live, readings: &Readings, out: &mut Trace, now: f64, uni
     }
     let measured = results.is_some();
     if let Some(results) = results {
+        for c in &results.controls {
+            live.drift.forget(&c.key);
+        }
         let n = results.controls.iter().filter(|c| !c.calibration.is_empty()).count();
         live.measured.merge(results);
         match save(live) {
