@@ -65,6 +65,8 @@ function barState(tick, connected) {
   if (!connected) return { glyph: GLYPH.off, tone: "dim" }
   if (!tick) return { glyph: GLYPH.fan, tone: "dim" }
   if (hasEmergency(tick) || alerts(tick).length) return { glyph: GLYPH.alert, tone: "urgent" }
+  // Setup holds every fan for a while and then lets go: the timed glyph (§11.3 call 4).
+  if (setupRunning(tick)) return { glyph: GLYPH.timed, tone: "accent" }
   if (tick.full_speed) return { glyph: GLYPH.full, tone: "accent" }
   var held = controls(tick).filter(function(c) { return !!c.override })
   if (held.length) {
@@ -82,9 +84,17 @@ function profileLabel(tick) {
   return tick.profile ? capitalise(String(tick.profile)) : "Penna"
 }
 
+// The pills (§11.3 calls 1 and 2): Defaults first, then each profile that runs a fan, and the active one whatever it runs. A
+// daemon that doesn't say how many fans a profile runs shows every profile, as before.
 function profileOptions(tick) {
   var list = tick && Array.isArray(tick.profiles) ? tick.profiles : []
-  return list.map(function(p) { return { value: String(p.id), label: String(p.label || capitalise(String(p.id))) } })
+  return list.filter(function(p) { return p.builtin || p.fans === undefined || Number(p.fans) > 0 || p.id === tick.profile })
+             .map(function(p) { return { value: String(p.id), label: String(p.label || capitalise(String(p.id))), builtin: !!p.builtin } })
+}
+
+// A new install: only Defaults to choose from, so no pills, and Set up fans… is the one thing to press (§11.3 call 2).
+function needsSetup(tick) {
+  return !!tick && profileOptions(tick).filter(function(p) { return !p.builtin }).length === 0
 }
 
 function capitalise(s) { return s.length ? s.charAt(0).toUpperCase() + s.slice(1) : s }
@@ -121,11 +131,190 @@ function hero(tick, connected, nowSec, lastTickSec) {
   var a = alerts(tick)
   if (a.length === 1) return { title: a[0].label + " is " + a[0].state, tone: "urgent", glyph: GLYPH.alert, meta: STATE_META[a[0].state] || "" }
   if (a.length > 1) return { title: a.length + " fans need attention", tone: "urgent", glyph: GLYPH.alert, meta: "EACH ONE SAYS WHY BELOW" }
+  var s = tick.setup
+  if (s && !s.stopped && s.step !== "review") return { title: "Setting up fans", tone: "accent", glyph: GLYPH.timed, meta: setupMeta(s) }
+  if (s && s.stopped) return { title: "Setup stopped", tone: "normal", glyph: GLYPH.auto, meta: "EVERY FAN IS BACK AS IT WAS FOUND" }
+  if (s && s.step === "review") return { title: "Setup is done", tone: "normal", glyph: GLYPH.auto, meta: "CONFIRM THE ROLES IN THE STUDIO" }
   if (tick.full_speed) return { title: "Full speed", tone: "accent", glyph: GLYPH.full, meta: "EVERY FAN AT 100 % · UNTIL YOU TURN IT OFF" }
   if (tick.draft) return { title: profileLabel(tick), tone: "accent", glyph: GLYPH.fan, meta: "PREVIEWING UNSAVED CHANGES FROM THE STUDIO" }
   if (tick.profile === "defaults") return { title: "Defaults", tone: "normal", glyph: GLYPH.auto, meta: "THE BIOS AND DRIVERS RUN EVERY FAN" }
   if (!adopted(tick).length) return { title: "Firmware runs every fan", tone: "normal", glyph: GLYPH.auto, meta: "NOTHING ADOPTED YET" }
   return { title: profileLabel(tick), tone: "normal", glyph: GLYPH.fan, meta: null }
+}
+
+// ---------------------------------------------------------------- setup and Defaults (design review 03, §11.3)
+
+var STEP_NAME = { "idle": "Idle sample", "write-test": "Write test", "pairing": "Pairing", "roles": "Roles", "calibration": "Calibration", "review": "Review" }
+
+function isNvmlKey(key) { return String(key).indexOf("nvml/") === 0 }
+
+function setupRunning(tick) {
+  var s = tick ? tick.setup : null
+  return !!s && !s.stopped && s.step !== "review"
+}
+
+// The hero's line while setup runs: the step, how far, and roughly how long is left.
+function setupMeta(s) {
+  if (!s) return ""
+  if (s.waiting) return "WAITING FOR THE MACHINE TO IDLE"
+  var head = String(STEP_NAME[s.step] || s.step).toUpperCase()
+  if (s.step === "pairing") {
+    var hw = (s.controls || []).filter(function(c) { return !isNvmlKey(c.key) && c.write === "ok" })
+    var done = hw.filter(function(c) { return c.paired !== null && c.paired !== undefined }).length
+    head += " · " + Math.min(done + 1, hw.length) + " OF " + hw.length
+  }
+  return head + " · ABOUT " + clock(Number(s.left) || 0) + " LEFT"
+}
+
+// Pairing has run on this machine when any tach names the control that turns it.
+function paired(tick) { return !!(tick && Array.isArray(tick.tachs) && tick.tachs.some(function(t) { return !!t.control })) }
+
+// In Defaults every fan stays listed (§11.3 call 3): each motherboard fan by its header with its RPM, then each GPU fan, with
+// who runs it in place of a curve. Never a duty: while the BIOS runs a fan, the IT8688E's PWM register reads the BIOS
+// curve's start value. Before pairing the rows are tachs; after it, a tach no control turns is an empty header.
+function defaultsRows(tick) {
+  if (!tick) return []
+  var after = paired(tick)
+  var rows = (Array.isArray(tick.tachs) ? tick.tachs : []).filter(function(t) { return !after || !!t.control }).map(function(t) {
+    return { key: String(t.key), label: String(t.label), fans: 1, rpm: t.rpm, state: "firmware", duty: null, curve_label: "BIOS" }
+  })
+  var gpus = controls(tick).filter(function(c) { return isNvmlKey(c.key) })
+             .concat((Array.isArray(tick.firmware) ? tick.firmware : []).filter(function(f) { return isNvmlKey(f.key) }))
+  gpus.forEach(function(c) {
+    rows.push({ key: String(c.key), label: String(c.label), fans: 1, rpm: c.rpm === undefined ? null : c.rpm, state: "firmware",
+                duty: null, curve_label: "Driver" })
+  })
+  return rows
+}
+
+function emptyHeaders(tick) {
+  if (!paired(tick)) return []
+  return tick.tachs.filter(function(t) { return !t.control }).map(function(t) { return String(t.label) + " · no fan turns on it" })
+}
+
+// The device a control belongs to, for the studio's card headings (§11.3 call 10): its chip or GPU, what kind of device it is,
+// and how far its driver has been checked. The tier is said once here instead of on every card.
+function deviceOf(control, tick) {
+  var key = String(control.key)
+  var parts = key.split("/")
+  var id = parts.slice(0, 3).join("/")
+  var name = ""
+  var kind = ""
+  if (parts[0] === "nvml") {
+    id = parts.slice(0, 2).join("/")
+    var s = sensors(tick).filter(function(x) { return String(x.key).indexOf(id + "/") === 0 })[0]
+    name = s ? String(s.device).replace(/^NVIDIA (GeForce )?/, "") : "GPU"
+    kind = "NVML"
+  } else {
+    var t = (tick && Array.isArray(tick.tachs) ? tick.tachs : []).filter(function(x) { return String(x.key).indexOf(id + "/") === 0 })[0]
+    name = t ? String(t.device) : parts[1]
+    kind = "motherboard"
+  }
+  return { id: id, name: name, kind: kind, tier: control.tier ? String(control.tier) : "" }
+}
+
+function tierWord(tier) { return tier ? capitalise(String(tier)) : "" }
+
+// One sentence under a heading whose tier is below Verified.
+function tierNote(tier) {
+  if (tier === "documented") return "Nobody has verified this driver with Penna yet."
+  if (tier === "captured") return "Runs in Penna's tests from a real machine; nobody has verified it here."
+  return ""
+}
+
+// The cards in device order, each group with its heading: [{ id, heading, tier, note, keys }].
+function deviceGroups(list, tick) {
+  var groups = []
+  ;(list || []).forEach(function(c) {
+    var d = deviceOf(c, tick)
+    var g = groups.filter(function(x) { return x.id === d.id })[0]
+    if (!g) {
+      g = { id: d.id, heading: (d.name + " · " + d.kind).toUpperCase(), tier: tierWord(d.tier), note: tierNote(d.tier), keys: [] }
+      groups.push(g)
+    }
+    g.keys.push(String(c.key))
+  })
+  return groups
+}
+
+// A card's kind line, only when the kind isn't plain duty or NVML (§11.3 call 10).
+function kindLine(control) {
+  if (!control || !control.kind || control.kind === "duty" || control.kind === "nvml") return ""
+  var k = String(control.kind)
+  if (k === "levels") return "Fixed levels. The curve is rounded to a level."
+  if (k === "speed") return "A target speed in RPM."
+  if (k === "firmware-curve") return "Its firmware runs the curve itself, so it keeps running if Penna stops."
+  if (k === "modes") return "Automatic or full speed only; there is no curve."
+  if (k === "read-only") return "Penna only reads this fan."
+  return ""
+}
+
+// ---- the studio's setup view (§8.3 as approved in §11.3 call 4)
+
+// The rail: every step, with its time on this machine, done, on, or to come.
+function setupRail(s) {
+  if (!s) return []
+  var order = (s.steps || []).map(function(x) { return x.step })
+  var at = order.indexOf(s.step)
+  return (s.steps || []).map(function(x, i) {
+    var secs = Number(x.seconds) || 0
+    var time = secs <= 0 ? "" : secs < 60 ? " · " + Math.round(secs) + " s" : " · " + clock(secs)
+    return { label: (i + 1) + " " + (STEP_NAME[x.step] || x.step) + time, state: s.step === "review" ? (x.step === "review" ? "on" : "done") : i < at ? "done" : i === at ? "on" : "todo" }
+  })
+}
+
+// One row per fan in the setup view's left column: its header once paired, its live RPM and what is happening to it.
+function setupRows(s, tick) {
+  if (!s) return []
+  return (s.controls || []).map(function(c) {
+    var live = byKey(controls(tick), c.key)
+    var tach = c.tachs && c.tachs.length ? byKey(tick && tick.tachs, c.tachs[0]) : null
+    var rpm = tach ? tach.rpm : live ? live.rpm : null
+    var role = c.suggestion ? (c.suggestion.confirm ? "case?" : String(c.suggestion.role)) : ""
+    return { key: String(c.key), name: String(c.header || c.label), status: String(c.status || ""), rpm: rpm === undefined ? null : rpm,
+             duty: c.duty === null || c.duty === undefined ? null : Number(c.duty), role: role, empty: c.paired === false,
+             hot: s.current === c.key }
+  })
+}
+
+// Pairing's bars: every motherboard tach on one RPM scale, the one moving now in the accent (call 6).
+function pairBars(s, tick) {
+  var tachs = tick && Array.isArray(tick.tachs) ? tick.tachs : []
+  return tachs.map(function(t) {
+    return { key: String(t.key), label: String(t.label), rpm: t.rpm === null || t.rpm === undefined ? 0 : Number(t.rpm), hot: !!s && s.mover === t.key }
+  })
+}
+
+function pairFound(s) {
+  return (s && s.controls ? s.controls : []).filter(function(c) { return !isNvmlKey(c.key) && c.paired !== null && c.paired !== undefined })
+    .map(function(c) { return c.paired ? String(c.label) + " → " + String(c.header || "") : String(c.label) + " → nothing" })
+}
+
+// Calibration's small multiples: each fan's table on its own scale (call 6), with where it is now.
+function calCells(s, tick) {
+  return (s && s.controls ? s.controls : []).filter(function(c) { return c.paired === true }).map(function(c) {
+    var rows = setupRows({ controls: [c], current: null }, tick)[0]
+    var table = (c.table || []).map(function(p) { return [Number(p[0]), Number(p[1])] })
+    var top = table.reduce(function(m, p) { return Math.max(m, p[1]) }, 0)
+    return { key: String(c.key), name: String(c.header || c.label), status: String(c.status || ""), table: table,
+             max: Math.max(top, Number(rows.rpm) || 0, 1) * 1.06, duty: rows.duty, rpm: rows.rpm, lowest: c.lowest }
+  })
+}
+
+// The review's roles (call 7): the suggestion, its reason, whether it still needs the user's yes.
+var ROLES = ["cpu", "case", "pump", "chipset"]
+var ROLE_NAME = { cpu: "CPU cooler", gpu: "GPU", pump: "Pump", chipset: "Chipset", laptop: "Laptop", case: "Case" }
+
+function reviewRows(s) {
+  return (s && s.controls ? s.controls : []).filter(function(c) { return !!c.suggestion }).map(function(c) {
+    return { key: String(c.key), name: String(c.header || c.label), role: String(c.suggestion.role), reason: String(c.suggestion.reason),
+             confirm: !!c.suggestion.confirm, nvml: isNvmlKey(c.key) }
+  })
+}
+
+function nextRole(role) {
+  var i = ROLES.indexOf(role)
+  return ROLES[(i + 1) % ROLES.length]
 }
 
 function normalMeta(fans, temps) {
@@ -423,7 +612,11 @@ if (typeof module !== "undefined") {
   module.exports = {
     GLYPH: GLYPH, ALERT_STATES: ALERT_STATES, socketCandidates: socketCandidates, controls: controls, sensors: sensors,
     isAlert: isAlert, alerts: alerts, adopted: adopted, firmwareLines: firmwareLines, unreachableLines: unreachableLines, hasEmergency: hasEmergency, fanCount: fanCount, barState: barState,
-    profileLabel: profileLabel, profileOptions: profileOptions, hero: hero, normalMeta: normalMeta, shortName: shortName,
+    profileLabel: profileLabel, profileOptions: profileOptions, needsSetup: needsSetup, hero: hero, setupRunning: setupRunning,
+    setupMeta: setupMeta, paired: paired, defaultsRows: defaultsRows, emptyHeaders: emptyHeaders, deviceOf: deviceOf,
+    deviceGroups: deviceGroups, tierNote: tierNote, kindLine: kindLine, setupRail: setupRail, setupRows: setupRows, pairBars: pairBars,
+    pairFound: pairFound, calCells: calCells, reviewRows: reviewRows, nextRole: nextRole, ROLES: ROLES, ROLE_NAME: ROLE_NAME,
+    isNvmlKey: isNvmlKey, normalMeta: normalMeta, shortName: shortName,
     tempRows: tempRows, scale: scale, badge: badge, dutyText: dutyText, deadband: deadband, formatNumber: formatNumber,
     ago: ago, clock: clock, writeBlockedReason: writeBlockedReason, keysOf: keysOf, sameKeys: sameKeys, byKey: byKey,
     T_MIN: T_MIN, T_MAX: T_MAX, clamp: clamp, copyPoints: copyPoints, pointsEqual: pointsEqual, evalPoints: evalPoints,

@@ -3,8 +3,9 @@ import qs.Commons
 import qs.Ui
 import "../Model.js" as Model
 
-// One adopted control in the popup: RPM first, because it is what you hear, then duty (review call 3). The 2 px line
-// under the row is its duty, gliding. A control that needs attention says why in words, under its name.
+// One fan in the popup: RPM first, because it is what you hear, then duty (review call 3). The 2 px line under the row is
+// its duty, gliding. A control that needs attention says why in words, under its name. A fan its BIOS or driver runs has no
+// duty Penna can read, so it shows none (design review 03, call 3).
 Item {
   id: root
 
@@ -28,7 +29,8 @@ Item {
   readonly property var badge: Model.badge(control, tick, nowSec)
   readonly property bool alerting: control ? Model.isAlert(control.state) : false
   readonly property bool handback: control ? control.state === "handback" : false
-  readonly property real duty: control && control.duty !== null && control.duty !== undefined ? Number(control.duty) : 0
+  readonly property bool hasDuty: !!control && control.duty !== null && control.duty !== undefined
+  readonly property real duty: hasDuty ? Number(control.duty) : 0
   readonly property bool canRetry: canWrite && control && (control.state === "contested" || control.state === "fault")
 
   implicitHeight: column.implicitHeight
@@ -110,7 +112,7 @@ Item {
           anchors.verticalCenter: parent.verticalCenter
           width: Style.space(40)
           horizontalAlignment: Text.AlignRight
-          value: root.handback || !root.control ? NaN : root.duty
+          value: root.handback || !root.hasDuty ? NaN : root.duty
           step: 1
           suffix: " %"
           tickMs: root.tickMs

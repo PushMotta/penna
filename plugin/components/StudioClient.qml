@@ -62,6 +62,18 @@ Item {
     })
   }
 
+  // Setup (§5) runs on this connection too: closing the studio stops it and every fan goes back.
+  function setupStart(callback) { request("setup.start", {}, callback) }
+  function setupStop(callback) { request("setup.stop", {}, callback) }
+  function setupRoles(roles, callback) { request("setup.roles", { roles: roles }, callback) }
+  function identify(control, callback) { request("identify", { control: control }, callback) }
+  function label(key, label, callback) {
+    request("label", { key: key, label: label }, function(reply) {
+      if (reply.ok) root.refresh()
+      if (callback) callback(reply)
+    })
+  }
+
   function handleLine(line) {
     if (!line) return
     var msg

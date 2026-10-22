@@ -135,12 +135,25 @@ Rectangle {
       }
       Text {
         anchors.right: parent.right
-        text: !root.control ? "" : root.control.trend === "rising" ? "↑ rising" : root.control.trend === "falling" ? "↓ falling" : ""
+        text: !root.control ? "" : root.control.state === "measuring" ? "setup is measuring it"
+            : root.control.trend === "rising" ? "↑ rising" : root.control.trend === "falling" ? "↓ falling" : ""
         textFormat: Text.PlainText
         color: root.dim
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
       }
+    }
+
+    // What the fan can do, only when it isn't plain duty (design review 03, call 10).
+    Text {
+      width: parent.width
+      visible: text !== ""
+      wrapMode: Text.Wrap
+      text: Model.kindLine(root.control)
+      textFormat: Text.PlainText
+      color: root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
     }
   }
 

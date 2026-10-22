@@ -128,3 +128,81 @@ test("configured fans on firmware fold away, and nothing adopted reads as firmwa
   assert.deepEqual(M.unreachableLines(firstStart), ["GPU fan 2 · configured, but not on this machine now", "RTX 2060 SUPER · passed through to a VM (vfio-pci)"])
   assert.equal(M.fanCount(firstStart), 0)
 })
+
+// ---------------------------------------------------------------- design review 03 (§11.3)
+
+const it8688 = "hwmon/it8688_4008090b/it87.2624"
+const tachs = [
+  { key: it8688 + "/fan1", label: "CPU_FAN", device: "IT8688E", rpm: 1196, control: null },
+  { key: it8688 + "/fan4", label: "PCH_FAN", device: "IT8688E", rpm: 0, control: null },
+  { key: "hwmon/it8792_4008090b/it87.2656/fan2", label: "SYS_FAN6_PUMP", device: "IT8792E", rpm: 0, control: null }
+]
+const gpuFan = control({ key: "nvml/GPU-1/fan0", label: "GPU fan 1", state: "firmware", rpm: 0, duty: 0, curve: null, curve_label: null, tier: "verified" })
+
+test("pills: Defaults first, then only profiles that run a fan; a new install has none to choose (calls 1, 2)", () => {
+  const profiles = [{ id: "defaults", label: "Defaults", builtin: true, fans: 0 }, { id: "quiet", label: "Quiet", fans: 0 },
+                    { id: "balanced", label: "Balanced", fans: 9 }, { id: "render", label: "Render", fans: 0 }]
+  assert.deepEqual(M.profileOptions(tick({ profiles })).map(p => p.value), ["defaults", "balanced"])
+  assert.equal(M.profileOptions(tick({ profiles }))[0].builtin, true)
+  assert.deepEqual(M.profileOptions(tick({ profiles, profile: "render" })).map(p => p.value), ["defaults", "balanced", "render"], "the active one shows")
+  const fresh = profiles.map(p => Object.assign({}, p, { fans: 0 }))
+  assert.equal(M.needsSetup(tick({ profiles: fresh, profile: "defaults" })), true)
+  assert.equal(M.needsSetup(tick({ profiles })), false)
+  assert.equal(M.profileOptions(tick()).length, 3, "a daemon that doesn't count fans shows every profile")
+})
+
+test("Defaults lists every fan by its header, with its RPM and who runs it, and no duty (call 3)", () => {
+  const t = tick({ profile: "defaults", tachs, controls: [gpuFan], firmware: [{ key: "nvml/GPU-1/fan1", label: "GPU fan 2", rpm: 0 }] })
+  const rows = M.defaultsRows(t)
+  assert.deepEqual(rows.map(r => [r.label, r.curve_label, r.rpm, r.duty]),
+    [["CPU_FAN", "BIOS", 1196, null], ["PCH_FAN", "BIOS", 0, null], ["SYS_FAN6_PUMP", "BIOS", 0, null], ["GPU fan 1", "Driver", 0, null], ["GPU fan 2", "Driver", 0, null]])
+  assert.deepEqual(M.emptyHeaders(t), [], "before pairing nothing is known to be empty")
+  const after = tick({ profile: "defaults", tachs: tachs.map(x => Object.assign({}, x, { control: x.label === "SYS_FAN6_PUMP" ? null : x.key.replace("fan", "pwm") })) })
+  assert.deepEqual(M.defaultsRows(after).map(r => r.label), ["CPU_FAN", "PCH_FAN"])
+  assert.deepEqual(M.emptyHeaders(after), ["SYS_FAN6_PUMP · no fan turns on it"])
+})
+
+test("while setup runs, the bar shows the timed glyph and the hero says how far (call 4)", () => {
+  const setup = { step: "pairing", left: 102, stopped: null, waiting: null, controls: [
+    { key: it8688 + "/pwm1", write: "ok", paired: true }, { key: it8688 + "/pwm2", write: "ok", paired: null },
+    { key: it8688 + "/pwm3", write: "reverts", paired: null }, { key: "nvml/GPU-1/fan0", write: "ok", paired: true }] }
+  assert.deepEqual(M.barState(tick({ setup }), true), { glyph: M.GLYPH.timed, tone: "accent" })
+  const h = M.hero(tick({ setup }), true, 0, 0)
+  assert.deepEqual([h.title, h.meta], ["Setting up fans", "PAIRING · 2 OF 2 · ABOUT 1:42 LEFT"])
+  assert.equal(M.hero(tick({ setup: Object.assign({}, setup, { stopped: "You stopped setup." }) }), true, 0, 0).title, "Setup stopped")
+  assert.equal(M.hero(tick({ setup: Object.assign({}, setup, { step: "review" }) }), true, 0, 0).meta, "CONFIRM THE ROLES IN THE STUDIO")
+  const alert = M.barState(tick({ setup, emergency: [{ label: "CPU · Tctl", celsius: 94.5, release: 85 }] }), true)
+  assert.equal(alert.tone, "urgent", "an emergency still outranks setup")
+})
+
+test("cards are grouped under their device, which names the tier once (call 10)", () => {
+  const t = tick({ tachs, sensors: [cpu, gpu], controls: [
+    control({ key: it8688 + "/pwm1", label: "CPU_FAN", tier: "verified" }), gpuFan,
+    control({ key: "hwmon/thinkpad/thinkpad_hwmon/pwm1", label: "Fan", kind: "levels", tier: "documented" })] })
+  const g = M.deviceGroups(M.controls(t), t)
+  assert.deepEqual(g.map(x => [x.heading, x.tier, x.keys.length]),
+    [["IT8688E · MOTHERBOARD", "Verified", 1], ["RTX 3090 · NVML", "Verified", 1], ["THINKPAD · MOTHERBOARD", "Documented", 1]])
+  assert.equal(g[2].note, "Nobody has verified this driver with Penna yet.")
+  assert.equal(M.kindLine(M.controls(t)[0]), "", "plain duty adds no line")
+  assert.equal(M.kindLine(M.controls(t)[2]), "Fixed levels. The curve is rounded to a level.")
+})
+
+test("the setup view's rail, rows, bars and review come from the run's progress (calls 4–7)", () => {
+  const s = { step: "pairing", left: 90, current: it8688 + "/pwm1", mover: it8688 + "/fan1",
+    steps: [{ step: "idle", seconds: 30 }, { step: "write-test", seconds: 5 }, { step: "pairing", seconds: 102 }, { step: "roles", seconds: 0 },
+            { step: "calibration", seconds: 90 }, { step: "review", seconds: 0 }],
+    controls: [{ key: it8688 + "/pwm1", label: "IT8688E pwm1", header: "CPU_FAN", status: "100 % for 6 s", duty: 100, paired: null, tachs: [it8688 + "/fan1"],
+                 table: [], suggestion: null }] }
+  assert.deepEqual(M.setupRail(s).map(r => [r.label, r.state]),
+    [["1 Idle sample · 30 s", "done"], ["2 Write test · 5 s", "done"], ["3 Pairing · 1:42", "on"], ["4 Roles", "todo"], ["5 Calibration · 1:30", "todo"], ["6 Review", "todo"]])
+  const row = M.setupRows(s, tick({ tachs }))[0]
+  assert.deepEqual([row.name, row.rpm, row.duty, row.hot], ["CPU_FAN", 1196, 100, true])
+  assert.deepEqual(M.pairBars(s, tick({ tachs })).map(b => [b.label, b.hot]), [["CPU_FAN", true], ["PCH_FAN", false], ["SYS_FAN6_PUMP", false]])
+  const review = { step: "review", controls: [
+    { key: it8688 + "/pwm4", label: "IT8688E pwm4", header: "PCH_FAN", suggestion: { role: "chipset", reason: "The board calls this header PCH_FAN.", confirm: false } },
+    { key: "hwmon/it8792_4008090b/it87.2656/pwm1", label: "IT8792E pwm1", header: "SYS_FAN5_PUMP", suggestion: { role: "case", reason: "On a pump header…", confirm: true } },
+    { key: "hwmon/it8792_4008090b/it87.2656/pwm2", label: "IT8792E pwm2", header: null, paired: false, suggestion: null }] }
+  assert.deepEqual(M.reviewRows(review).map(r => [r.name, r.role, r.confirm]), [["PCH_FAN", "chipset", false], ["SYS_FAN5_PUMP", "case", true]])
+  assert.equal(M.nextRole("case"), "pump")
+  assert.equal(M.nextRole("chipset"), "cpu")
+})

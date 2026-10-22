@@ -71,15 +71,52 @@ Item {
   onBodyChanged: syncLists()
   onSelectedCurveChanged: syncLists()
 
-  // Repeater keys: replaced only when the set of rows changes, so cards and sparklines survive ticks (§8.6).
+  // Repeater keys: replaced only when the set of rows changes, so cards and sparklines survive ticks (§8.6). Cards sit under
+  // a heading per device, which names its tier once (design review 03, call 10).
   property var controlKeys: []
   property var sensorKeys: []
+  property var deviceGroupList: []
   function syncKeys() {
     var c = Model.keysOf(liveControls)
     if (!Model.sameKeys(c, controlKeys)) controlKeys = c
     var s = Model.keysOf(plausibleSensors)
     if (!Model.sameKeys(s, sensorKeys)) sensorKeys = s
+    var g = Model.deviceGroups(liveControls, tick)
+    if (JSON.stringify(g) !== JSON.stringify(deviceGroupList)) deviceGroupList = g
   }
+
+  // ---------------------------------------------------------- setup (§5, design review 03 call 4)
+  readonly property var setupLive: tick && tick.setup ? tick.setup : null
+  property bool setupScreen: false      // the start screen, before a run
+  property bool setupDismissed: false   // Done: back to the curves while the run's results stay on the connection
+  readonly property bool setupShown: setupScreen || (setupLive !== null && !setupDismissed)
+  readonly property bool setupRunning: setupLive !== null && !setupLive.stopped && setupLive.step !== "review"
+
+  function startSetup() {
+    client.setupStart(function(reply) {
+      if (reply.ok) {
+        root.setupScreen = false
+        root.setupDismissed = false
+      } else {
+        root.say(reply.error)
+      }
+    })
+  }
+
+  function confirmRoles() {
+    client.setupRoles(setupView.chosenRoles(), function(reply) {
+      root.say(reply.ok ? (reply.result && reply.result.text ? reply.result.text + "." : "Confirmed.") : reply.error)
+    })
+  }
+
+  function leaveSetup() {
+    setupScreen = false
+    setupDismissed = true
+    client.refresh()
+  }
+
+  // The action bar's cursor lands on the main button whenever setup's view changes.
+  onActionsChanged: actionIndex = Math.max(0, actions.length - 1)
 
   function find(list, field, value) {
     if (!Array.isArray(list)) return null
@@ -101,14 +138,29 @@ Item {
   property bool closeArmed: false
   property string notice: ""
 
-  readonly property var actions: [
-    { id: "pair", label: "Pair…", enabled: false, tip: "Pairing arrives with setup (M7)" },
-    { id: "calibrate", label: "Calibrate…", enabled: false, tip: "Calibration arrives with setup (M7)" },
+  // While setup shows, the action bar is setup's: Stop and hand back sits where Save does (§11.3 call 4).
+  readonly property var actions: !setupShown ? [
+    { id: "setup", label: "Set up fans…", enabled: canWrite && !client.dirty, tip: client.dirty ? "Save or discard your changes first" : "" },
     { id: "discard", label: "Discard", enabled: client.dirty, tip: "" },
     { id: "save", label: "Save", enabled: client.dirty, tip: "" }
+  ] : setupLive === null ? [
+    { id: "cancel", label: "Cancel", enabled: true, tip: "" },
+    { id: "start", label: "Start setup", enabled: canWrite, tip: "", primary: true }
+  ] : setupRunning ? [
+    { id: "stop", label: "Stop and hand back", enabled: canWrite, tip: "" }
+  ] : setupLive.stopped ? [
+    { id: "again", label: "Start again", enabled: canWrite, tip: "", primary: true },
+    { id: "done", label: "Done", enabled: true, tip: "" }
+  ] : [
+    { id: "confirm", label: "Confirm roles", enabled: canWrite, tip: "", primary: true },
+    { id: "done", label: "Done", enabled: true, tip: "" }
   ]
 
   function open(payloadJson) {
+    var payload = ({})
+    try { payload = JSON.parse(payloadJson || "{}") || ({}) } catch (e) { payload = ({}) }
+    setupScreen = payload.setup === true
+    setupDismissed = false
     var wanted = Hyprland.focusedMonitor ? String(Hyprland.focusedMonitor.name) : ""
     var chosen = null
     for (var i = 0; i < Quickshell.screens.length; i++) if (Quickshell.screens[i].name === wanted) chosen = Quickshell.screens[i]
@@ -134,9 +186,9 @@ Item {
     client.active = false
   }
 
-  // Unsaved changes ask once: the first Esc arms, the second discards and closes.
+  // Unsaved changes, or a setup run, ask once: the first Esc arms, the second discards (or stops setup) and closes.
   function requestClose() {
-    if (client.dirty && !closeArmed) {
+    if ((client.dirty || setupRunning) && !closeArmed) {
       closeArmed = true
       return
     }
@@ -186,6 +238,12 @@ Item {
     if (!a || !a.enabled) return
     if (a.id === "save") save()
     else if (a.id === "discard") discard()
+    else if (a.id === "setup") { setupScreen = true; setupDismissed = false }
+    else if (a.id === "cancel") setupScreen = false
+    else if (a.id === "start" || a.id === "again") startSetup()
+    else if (a.id === "stop") client.setupStop(function(reply) { if (!reply.ok) root.say(reply.error) })
+    else if (a.id === "confirm") confirmRoles()
+    else if (a.id === "done") leaveSetup()
   }
 
   function handleKey(event) {
@@ -202,6 +260,13 @@ Item {
       return true
     }
     closeArmed = false
+    if (setupShown) {
+      // Setup's view has one area: the action bar.
+      if (k === Qt.Key_H || k === Qt.Key_Left) { actionIndex = Math.max(0, actionIndex - 1); return true }
+      if (k === Qt.Key_L || k === Qt.Key_Right) { actionIndex = Math.min(actions.length - 1, actionIndex + 1); return true }
+      if (k === Qt.Key_Return || k === Qt.Key_Enter || k === Qt.Key_Space) { activateAction(actionIndex); return true }
+      return false
+    }
     if (focusArea === "controls") {
       if (k === Qt.Key_J || k === Qt.Key_Down) { moveControl(1); return true }
       if (k === Qt.Key_K || k === Qt.Key_Up) { moveControl(-1); return true }
@@ -298,7 +363,8 @@ Item {
 
   StudioClient { id: client }
 
-  readonly property string hints: focusArea === "controls" ? "j/k control · ↵ edit its curve · ⇥ editor · esc close"
+  readonly property string hints: setupShown ? (setupRunning ? "Setup belongs to this window: closing it stops setup and hands every fan back." : "h/l action · ↵ choose · esc close")
+                                : focusArea === "controls" ? "j/k control · ↵ edit its curve · ⇥ editor · esc close"
                                 : focusArea === "editor" ? "[ ] point · h/l °C · j/k % · ⇧ ×5 · a add · x delete · ⇥ actions · ctrl+s save"
                                 : "h/l action · ↵ choose · ⇥ controls · esc close"
 
@@ -381,7 +447,7 @@ Item {
               }
               Text {
                 anchors.verticalCenter: parent.verticalCenter
-                text: root.activeProfile ? "· " + root.activeProfile.label + " profile" : ""
+                text: root.setupShown ? "· Setting up fans" : root.activeProfile ? "· " + root.activeProfile.label + " profile" : ""
                 color: root.dim
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
@@ -413,10 +479,31 @@ Item {
             }
           }
 
+          // ---------- setup ----------
+          SetupView {
+            id: setupView
+            visible: root.setupShown
+            width: parent.width
+            setup: root.setupLive
+            tick: root.tick
+            starting: root.setupScreen && root.setupLive === null
+            canWrite: root.canWrite
+            foreground: root.foreground
+            accent: root.accent
+            urgent: root.urgent
+            fontFamily: root.fontFamily
+            tickMs: root.tickMs
+            live: root.live
+            reducedMotion: root.reducedMotion
+            onIdentifyRequested: function(key) { client.identify(key, function(r) { if (!r.ok) root.say(r.error) }) }
+            onRenameRequested: function(key, label) { client.label(key, label, function(r) { root.say(r.ok ? r.result.text + "." : r.error) }) }
+          }
+
           // ---------- body ----------
           Item {
+            visible: !root.setupShown
             width: parent.width
-            implicitHeight: Math.max(leftCol.implicitHeight, centre.implicitHeight, rightCol.implicitHeight)
+            implicitHeight: visible ? Math.max(leftCol.implicitHeight, centre.implicitHeight, rightCol.implicitHeight) : 0
 
             // Controls
             Column {
@@ -425,25 +512,67 @@ Item {
               spacing: Style.spacing.md
               PanelSectionHeader { text: "CONTROLS"; foreground: root.foreground; fontFamily: root.fontFamily }
               Repeater {
-                model: root.controlKeys
-                ControlCard {
+                model: root.deviceGroupList
+                Column {
+                  id: group
                   required property var modelData
                   width: leftCol.width
-                  control: Model.byKey(root.liveControls, modelData)
-                  tick: root.tick
-                  nowSec: root.service ? root.service.lastTickAt : 0
-                  selected: modelData === root.selectedKey
-                  hasCursor: root.focusArea === "controls" && modelData === root.selectedKey
-                  foreground: root.foreground
-                  accent: root.accent
-                  urgent: root.urgent
-                  fontFamily: root.fontFamily
-                  tickMs: root.tickMs
-                  live: root.live
-                  reducedMotion: root.reducedMotion
-                  onClicked: {
-                    root.focusArea = "controls"
-                    root.selectControl(String(modelData))
+                  spacing: Style.spacing.md
+                  Item {
+                    width: parent.width
+                    implicitHeight: headText.implicitHeight
+                    Text {
+                      id: headText
+                      anchors.left: parent.left
+                      anchors.right: tierText.left
+                      elide: Text.ElideRight
+                      text: group.modelData.heading
+                      color: root.dim
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                      font.bold: true
+                    }
+                    Text {
+                      id: tierText
+                      anchors.right: parent.right
+                      text: group.modelData.tier.toUpperCase()
+                      color: group.modelData.note !== "" ? root.foreground : root.dim
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                      font.bold: true
+                    }
+                  }
+                  Text {
+                    visible: group.modelData.note !== ""
+                    width: parent.width
+                    wrapMode: Text.Wrap
+                    text: group.modelData.note
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+                  Repeater {
+                    model: group.modelData.keys
+                    ControlCard {
+                      required property var modelData
+                      width: leftCol.width
+                      control: Model.byKey(root.liveControls, modelData)
+                      tick: root.tick
+                      nowSec: root.service ? root.service.lastTickAt : 0
+                      selected: modelData === root.selectedKey
+                      hasCursor: root.focusArea === "controls" && modelData === root.selectedKey
+                      foreground: root.foreground
+                      accent: root.accent
+                      urgent: root.urgent
+                      fontFamily: root.fontFamily
+                      tickMs: root.tickMs
+                      live: root.live
+                      reducedMotion: root.reducedMotion
+                      onClicked: {
+                        root.focusArea = "controls"
+                        root.selectControl(String(modelData))
+                      }
+                    }
                   }
                 }
               }
@@ -699,7 +828,7 @@ Item {
                   required property int index
                   text: modelData.label
                   bordered: true
-                  active: modelData.id === "save" && modelData.enabled
+                  active: (modelData.id === "save" || modelData.primary === true) && modelData.enabled
                   opacity: modelData.enabled ? 1 : 0.45
                   tooltipText: modelData.tip
                   foreground: root.foreground
