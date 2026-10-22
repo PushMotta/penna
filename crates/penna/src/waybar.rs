@@ -78,7 +78,7 @@ mod tests {
 
     fn golden() -> Tick {
         match serde_json::from_str(include_str!("../../penna-proto/tests/fixtures/tick.json")).unwrap() {
-            penna_proto::Event::Tick(t) => t,
+            penna_proto::Event::Tick(t) => *t,
             _ => unreachable!(),
         }
     }

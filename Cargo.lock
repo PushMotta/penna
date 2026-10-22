@@ -476,6 +476,7 @@ dependencies = [
  "serde_json",
  "signal-hook",
  "tokio",
+ "toml",
 ]
 
 [[package]]

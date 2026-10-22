@@ -23,11 +23,15 @@ pub fn builtin(name: &str) -> Option<(&'static str, &'static str)> {
     match name {
         "render-burst" => Some((include_str!("../../../test/fixtures/scenarios/render-burst.toml"), DESK)),
         "faults" => Some((include_str!("../../../test/fixtures/scenarios/faults.toml"), DESK)),
+        "x570-desk" => Some((
+            include_str!("../../../test/fixtures/scenarios/x570-desk.toml"),
+            include_str!("../../../test/fixtures/scenarios/x570-desk.config.toml"),
+        )),
         _ => None,
     }
 }
 
-pub const BUILTIN: &[&str] = &["render-burst", "faults"];
+pub const BUILTIN: &[&str] = &["render-burst", "faults", "x570-desk"];
 
 /// A built-in scenario by name, or a scenario file and the configuration it names beside it.
 pub fn load(name_or_path: &str) -> Result<(Scenario, String)> {
@@ -65,6 +69,20 @@ pub struct Scenario {
     pub gpus: Vec<GpuSpec>,
     #[serde(default, rename = "fault")]
     pub faults: Vec<Fault>,
+    /// The board's DMI fields, so the board database knows it (§3.6).
+    #[serde(default)]
+    pub board: Option<BoardSpec>,
+    /// A fresh install: nothing measured yet, so setup (§5) has everything to do. Otherwise the desk starts with what pairing
+    /// and calibration would have found.
+    #[serde(default)]
+    pub fresh: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BoardSpec {
+    pub vendor: String,
+    pub name: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -365,6 +383,12 @@ impl Sim {
     fn build(&mut self) -> Result<()> {
         let class = self.root.join("class/hwmon");
         fs::create_dir_all(&class)?;
+        if let Some(b) = &self.sc.board {
+            let dmi = self.root.join("class/dmi/id");
+            fs::create_dir_all(&dmi)?;
+            put(&dmi.join("board_vendor"), &b.vendor)?;
+            put(&dmi.join("board_name"), &b.name)?;
+        }
         for chip in self.sc.chips.clone() {
             let dir = self.chip_dir(&chip);
             fs::create_dir_all(&dir)?;

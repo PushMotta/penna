@@ -102,9 +102,11 @@ mod tests {
                 .collect(),
             controls: vec![],
             firmware: vec![],
+            tachs: vec![],
             curves: vec![],
             unreachable: vec![],
             notes: vec![],
+            setup: None,
         }
     }
 

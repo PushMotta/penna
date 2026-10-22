@@ -29,9 +29,13 @@ impl Daemon {
     }
 
     fn start_in(dir: &Path, tree: &str, extra: &[&str]) -> Daemon {
+        Daemon::start_scenario(dir, "render-burst", tree, extra)
+    }
+
+    fn start_scenario(dir: &Path, scenario: &str, tree: &str, extra: &[&str]) -> Daemon {
         let log = fs::File::create(dir.join("pennad.log")).unwrap();
         let child = Command::new(env!("CARGO_BIN_EXE_pennad"))
-            .args(["--mock", "render-burst", "--forever", "--quiet", "--tree"])
+            .args(["--mock", scenario, "--forever", "--quiet", "--tree"])
             .arg(dir.join(tree))
             .arg("--runtime-dir")
             .arg(dir.join("run"))
@@ -609,5 +613,118 @@ fn a_fan_whose_device_was_gone_at_stop_is_put_back_when_it_returns_to_a_later_pe
     assert_eq!(fs::read_to_string(back.join("pwm1_enable")).unwrap().trim(), "2");
     let held = fs::read_to_string(dir.join("run/held.json")).unwrap_or_default();
     assert!(!held.contains(key), "nothing is left waiting: {held}");
+    d.stop();
+}
+
+/// Setup (§5, §11.3) from a fresh install of the desk M5 measured: one client starts it and follows it tick by tick; pairing finds
+/// every header, roles come with their reasons, `measured.toml` is written, and every fan ends as it was found.
+#[test]
+fn setup_measures_the_x570_desk_from_a_fresh_install() {
+    let dir = fresh("setup-x570");
+    let boards = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/boards");
+    let d = Daemon::start_scenario(&dir, "x570-desk", "tree", &["--speed", "50", "--boards", boards.to_str().unwrap()]);
+    let it8688 = "hwmon/it8688_4008090b/it87.2624";
+    let it8792 = "hwmon/it8792_4008090b/it87.2656";
+    let sys = dir.join("tree/sys/devices/platform");
+    let enable = |chip: &str, hwmon: u32, n: u32| {
+        fs::read_to_string(sys.join(format!("{chip}/hwmon/hwmon{hwmon}/pwm{n}_enable"))).unwrap().trim().to_owned()
+    };
+    let mut c = d.connect();
+    c.line();
+    assert_eq!(c.call(json!({"op": "subscribe"}))["ok"], true);
+
+    // Before setup, Defaults lists every tach by its header, from the board database (§11.3 call 3).
+    let t = c.tick_where(10, "the tachs", |t| t["tachs"].as_array().is_some_and(|a| !a.is_empty()));
+    let tach = |t: &Value, key: &str| t["tachs"].as_array().unwrap().iter().find(|x| x["key"] == key).cloned().unwrap_or(Value::Null);
+    assert_eq!(tach(&t, &format!("{it8688}/fan1"))["label"], "CPU_FAN");
+    assert_eq!(tach(&t, &format!("{it8792}/fan2"))["label"], "SYS_FAN6_PUMP");
+    assert!(tach(&t, &format!("{it8688}/fan1"))["control"].is_null(), "nothing is paired yet");
+    assert!(t["setup"].is_null());
+
+    let r = c.call(json!({"op": "setup.start"}));
+    assert_eq!(r["ok"], true, "{r}");
+    assert!(r["result"]["text"].as_str().unwrap().starts_with("Setup started: 10 fan controls."), "{r}");
+    let mut second = d.connect();
+    second.line();
+    assert_eq!(second.call(json!({"op": "setup.start"}))["error"], "Setup is running in another window.");
+    drop(second);
+
+    // Pairing: the bar of a measured fan says measuring, every other fan still on its BIOS.
+    let t = c.tick_where(400, "pairing", |t| t["setup"]["step"] == "pairing");
+    assert!(t["setup"]["controls"].as_array().unwrap().iter().all(|c| c["write"] == "ok"), "{}", t["setup"]);
+    let t = c.tick_where(3000, "review", |t| t["setup"]["step"] == "review");
+    let s = &t["setup"];
+    assert!(s["stopped"].is_null(), "{s}");
+    let ctl = |key: &str| s["controls"].as_array().unwrap().iter().find(|c| c["key"] == key).cloned().unwrap();
+    for (n, header) in [(1, "CPU_FAN"), (2, "SYS_FAN1"), (3, "SYS_FAN2"), (4, "PCH_FAN"), (5, "CPU_OPT")] {
+        let p = ctl(&format!("{it8688}/pwm{n}"));
+        assert_eq!((p["header"].as_str(), p["tachs"].clone()), (Some(header), json!([format!("{it8688}/fan{n}")])), "{p}");
+    }
+    assert_eq!(ctl(&format!("{it8792}/pwm1"))["header"], "SYS_FAN5_PUMP");
+    assert_eq!(ctl(&format!("{it8792}/pwm2"))["paired"], false, "nothing on SYS_FAN6_PUMP");
+    assert_eq!(ctl(&format!("{it8792}/pwm3"))["header"], "SYS_FAN4");
+    let role = |key: String| ctl(&key)["suggestion"].clone();
+    assert_eq!(role(format!("{it8688}/pwm1"))["role"], "cpu");
+    assert_eq!(role(format!("{it8688}/pwm5"))["reason"], "The board calls this header CPU_OPT.");
+    let pch = role(format!("{it8688}/pwm4"));
+    assert_eq!((pch["role"].as_str(), pch["may_stop"].as_bool()), (Some("chipset"), Some(true)), "{pch}");
+    let pump = role(format!("{it8792}/pwm1"));
+    assert_eq!((pump["role"].as_str(), pump["confirm"].as_bool()), (Some("case"), Some(true)), "{pump}");
+    assert_eq!(ctl(&format!("{it8792}/pwm1"))["lowest"], 50.0);
+
+    // Measured, and saved: the tachs in the tick now name the control that turns them.
+    let measured = fs::read_to_string(dir.join("tree/var/lib/penna/measured.toml")).expect("measured.toml written");
+    let m: toml::Value = toml::from_str(&measured).unwrap();
+    let cpu = m["control"].as_array().unwrap().iter().find(|c| c["key"].as_str() == Some(&format!("{it8688}/pwm1"))).unwrap();
+    assert_eq!(cpu["tachs"].as_array().unwrap()[0].as_str(), Some(format!("{it8688}/fan1").as_str()));
+    assert!(cpu["stop"].as_float().is_some_and(|s| (15.0..=25.0).contains(&s)), "{cpu}");
+    assert_eq!(cpu["suggested"].as_str(), Some("cpu"));
+    let t = c.tick_where(10, "paired tachs", |t| tach(t, &format!("{it8688}/fan1"))["control"] == format!("{it8688}/pwm1"));
+    assert!(tach(&t, &format!("{it8792}/fan2"))["control"].is_null());
+
+    // Every fan back as it was found, and the plan holds nothing the configuration doesn't name.
+    let t = c.tick_where(20, "every fan given back", |t| t["controls"].as_array().unwrap().iter().all(|c| c["state"] != "measuring"));
+    assert!(t["controls"].as_array().unwrap().iter().all(|x| x["key"].as_str().unwrap().starts_with("nvml/")), "{}", t["controls"]);
+    for n in 1..=5 {
+        assert_eq!(enable("it87.2624", 4, n), "2", "IT8688E pwm{n} back on its BIOS");
+    }
+    for n in 1..=3 {
+        assert_eq!(enable("it87.2656", 5, n), "2", "IT8792E pwm{n} back on its BIOS");
+    }
+    assert!(!fs::read_to_string(dir.join("run/held.json")).unwrap_or_default().contains("pwm"), "held.json holds no motherboard fan");
+
+    // Roles confirmed in the review are kept with the measurements.
+    let r = c.call(json!({"op": "setup.roles", "roles": {format!("{it8792}/pwm1"): "case", "PCH_FAN": "chipset"}}));
+    assert_eq!(r["result"]["text"], "2 roles confirmed", "{r}");
+    let measured = fs::read_to_string(dir.join("tree/var/lib/penna/measured.toml")).unwrap();
+    assert!(measured.contains("role = \"case\""), "{measured}");
+    let r = c.call(json!({"op": "setup.roles", "roles": {"CPU_FAN": "blower"}}));
+    assert_eq!(r["error"], "\"blower\" isn't a role. Roles: cpu, gpu, pump, chipset, laptop, case.");
+    d.stop();
+}
+
+/// Closing the window that runs setup stops it, and every fan goes back at once (§5).
+#[test]
+fn setup_stops_with_its_connection() {
+    let dir = fresh("setup-closed");
+    let d = Daemon::start_scenario(&dir, "x570-desk", "tree", &["--speed", "20"]);
+    let enable = || fs::read_to_string(dir.join("tree/sys/devices/platform/it87.2624/hwmon/hwmon4/pwm1_enable")).unwrap();
+    let mut a = d.connect();
+    a.line();
+    assert_eq!(a.call(json!({"op": "subscribe"}))["ok"], true);
+    assert_eq!(a.call(json!({"op": "setup.start"}))["ok"], true);
+    a.tick_where(800, "pairing", |t| t["setup"]["step"] == "pairing");
+    assert_eq!(enable().trim(), "1", "setup holds the fans");
+    let mut b = d.connect();
+    b.line();
+    assert_eq!(b.call(json!({"op": "subscribe"}))["ok"], true);
+    drop(a);
+    b.tick_where(40, "setup gone", |t| t["setup"].is_null());
+    let end = Instant::now() + Duration::from_secs(10);
+    while enable().trim() != "2" {
+        assert!(Instant::now() < end, "CPU_FAN never went back to its BIOS");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(!dir.join("tree/var/lib/penna/measured.toml").exists(), "a stopped run saves nothing");
     d.stop();
 }

@@ -66,7 +66,7 @@ pub fn starter(inventory: &Inventory) -> Config {
 }
 
 /// AMD's `Tctl` (k10temp), or Intel's package temperature (coretemp).
-fn cpu_control_temperature(inventory: &Inventory) -> Option<Key> {
+pub fn cpu_control_temperature(inventory: &Inventory) -> Option<Key> {
     let find = |driver: &str, label: &dyn Fn(&str) -> bool| {
         inventory
             .devices

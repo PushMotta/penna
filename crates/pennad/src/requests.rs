@@ -42,6 +42,9 @@ pub fn handle(live: &mut Live, inventory: &Inventory, out: &mut Trace, op: Op, u
             }
         }
         Op::FullSpeed { on } => {
+            if on {
+                crate::setup::stop(live, out, "Full speed was turned on.");
+            }
             live.state.apply(&live.plan, Request::FullSpeed(on), now)?;
             note(out, None, if on { "Full speed: every fan at 100 % until turned off".into() } else { "Full speed off".into() });
         }
@@ -226,6 +229,41 @@ pub fn handle(live: &mut Live, inventory: &Inventory, out: &mut Trace, op: Op, u
             }
             return Ok(Some(studio(live, inventory, conn)));
         }
+        Op::SetupStart { controls, load_check: _ } => {
+            let only = match controls {
+                Some(names) => {
+                    let all = every_control(live, inventory);
+                    Some(names.iter().map(|n| control_key(&all, n)).collect::<Result<Vec<Key>, String>>()?)
+                }
+                None => None,
+            };
+            said = crate::setup::start(live, inventory, out, conn, only)?;
+        }
+        Op::SetupStop => {
+            if !crate::setup::stop(live, out, "You stopped setup.") {
+                return Err("Setup isn't running.".into());
+            }
+            said = "Setup stopped: every fan is back as it was found".into();
+        }
+        Op::SetupRoles { roles } => {
+            let all = every_control(live, inventory);
+            let mut confirmed = std::collections::BTreeMap::new();
+            for (name, role) in roles {
+                let key = control_key(&all, &name)?;
+                let role = penna_core::setup::Role::parse(&role)
+                    .ok_or_else(|| format!("{role:?} isn't a role. Roles: cpu, gpu, pump, chipset, laptop, case."))?;
+                confirmed.insert(key, role);
+            }
+            let text = crate::setup::roles(live, &confirmed)?;
+            note(out, None, text);
+        }
+        Op::Identify { control } => {
+            let key = control_key(&every_control(live, inventory), &control)?;
+            drivable(inventory, &key)?;
+            crate::setup::identify(live, inventory, key.clone())?;
+            let label = control_label(live, inventory, &key);
+            note(out, Some(key), format!("{label}: 100 % for {:.0} s, then back", crate::setup::IDENTIFY_SECONDS));
+        }
         Op::State | Op::Subscribe | Op::Unsubscribe | Op::Config => {
             return Err(format!("{} is answered by the socket, not the loop.", op.name()));
         }
@@ -236,7 +274,8 @@ pub fn handle(live: &mut Live, inventory: &Inventory, out: &mut Trace, op: Op, u
 /// Connection `conn` closed. If it held a draft, the fans go back to the saved configuration, and everyone is told. Returns whether
 /// anything changed.
 pub fn closed(live: &mut Live, inventory: &Inventory, out: &mut Trace, conn: u64) -> bool {
-    let Some(d) = live.draft.as_ref().filter(|d| d.owner == conn) else { return false };
+    let setup = crate::setup::closed(live, out, conn);
+    let Some(d) = live.draft.as_ref().filter(|d| d.owner == conn) else { return setup };
     let what = changed_names(live, inventory, &live.saved, &d.config);
     if let Err(e) = revert(live, inventory) {
         out.note(live.now, Level::Alert, None, format!("A studio closed with unsaved changes, and going back failed: {e}"));

@@ -2,7 +2,8 @@
 //! again after a request changes something, so `state` never shows the past.
 use crate::{
     ControlKindName, ControlTick, CurveKindName, CurveTick, DraftInfo, DraftTick, EmergencyTick, FirmwareTick, MixSpec, NvmlRange,
-    OverrideTick, ProfileTick, SensorTick, Studio, StudioControl, StudioCurve, StudioProfile, StudioSensor, Tick, TriggerSpec, VERSION,
+    OverrideTick, ProfileTick, SensorTick, Studio, StudioControl, StudioCurve, StudioProfile, StudioSensor, TachTick, Tick, TriggerSpec,
+    VERSION,
 };
 use penna_core::config::{ControlConfig, CurveKind, DEFAULTS, Measured, words};
 use penna_core::control::{LoopState, State};
@@ -27,6 +28,8 @@ pub struct Context<'a> {
     pub rate: f64,
     /// What a studio is previewing, if anything.
     pub draft: Option<DraftTick>,
+    /// A setup run's progress, if one runs or waits in review.
+    pub setup: Option<penna_core::setup::Progress>,
 }
 
 /// A sparkline starts here (§11.1, call 5).
@@ -129,6 +132,21 @@ pub fn tick(cx: &Context) -> Tick {
         })
         .collect();
 
+    let tachs = cx
+        .inventory
+        .devices
+        .iter()
+        .filter(|d| d.source == Source::Hwmon)
+        .flat_map(|d| d.tachs.iter().map(move |t| (d, t)))
+        .map(|(d, t)| TachTick {
+            key: t.key.clone(),
+            label: plan.config.labels.get(&t.key).cloned().unwrap_or_else(|| t.label.clone()),
+            device: d.model.clone().unwrap_or_else(|| d.label.clone()),
+            rpm: cx.readings.rpms.get(&t.key).and_then(Sample::value),
+            control: cx.measured.controls.iter().find(|m| m.tachs.contains(&t.key)).map(|m| m.key.clone()),
+        })
+        .collect();
+
     Tick {
         v: VERSION,
         seq: cx.seq,
@@ -141,9 +159,11 @@ pub fn tick(cx: &Context) -> Tick {
         sensors,
         controls,
         firmware,
+        tachs,
         curves,
         unreachable: cx.inventory.unreachable.clone(),
         notes: cx.inventory.notes.clone(),
+        setup: cx.setup.clone().map(Box::new),
     }
 }
 

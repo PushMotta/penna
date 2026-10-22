@@ -439,7 +439,7 @@ mod tests {
     #[test]
     fn a_tick_reads_like_a_person_would_say_it() {
         let t: Tick = match serde_json::from_str(include_str!("../../penna-proto/tests/fixtures/tick.json")).unwrap() {
-            penna_proto::Event::Tick(t) => t,
+            penna_proto::Event::Tick(t) => *t,
             _ => unreachable!(),
         };
         let f = tick_frame(&t, Style { color: false }, "/run/penna/penna.sock", false);

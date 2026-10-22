@@ -140,6 +140,10 @@
     }
   ],
   "firmware": [{ "key": "hwmon/it87/it87.2608/pwm4", "label": "pwm4" }],
+  "tachs": [
+    { "key": "hwmon/it87/it87.2608/fan1", "label": "CPU_FAN", "device": "IT8688E", "rpm": 1140, "control": "hwmon/it87/it87.2608/pwm1" },
+    { "key": "hwmon/it87/it87.2608/fan4", "label": "SYS_FAN6_PUMP", "device": "IT8688E", "rpm": 0, "control": null }
+  ],
   "curves": [
     {
       "id": "cpu-quiet",
@@ -168,5 +172,6 @@
   "unreachable": [
     { "id": "pci/0000:0a:00.0", "label": "NVIDIA TU106 [GeForce RTX 2060 SUPER]", "reason": "passed through to a VM (vfio-pci)" }
   ],
-  "notes": ["Motherboard fans: none visible. No Super I/O driver (it87, nct6775, …) is bound."]
+  "notes": ["Motherboard fans: none visible. No Super I/O driver (it87, nct6775, …) is bound."],
+  "setup": null
 }

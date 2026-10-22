@@ -24,7 +24,7 @@ pub const HISTORY: usize = 300;
 #[serde(tag = "ev", rename_all = "lowercase")]
 pub enum Event {
     Hello(Hello),
-    Tick(Tick),
+    Tick(Box<Tick>),
     History(History),
     Event(Transition),
     /// `penna watch --json` without the daemon: the hardware alone.
@@ -127,6 +127,23 @@ pub enum Op {
     DraftSave,
     #[serde(rename = "draft.discard")]
     DraftDiscard,
+    /// Setup (§5): measures every fan Penna can drive, or the ones named. Bound to this connection: when it closes, setup stops.
+    #[serde(rename = "setup.start")]
+    SetupStart {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        controls: Option<Vec<String>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        load_check: Option<bool>,
+    },
+    /// Stops setup: every fan back to its original mode at once.
+    #[serde(rename = "setup.stop")]
+    SetupStop,
+    /// Confirms what each fan is (§5.3): control → `cpu`, `gpu`, `pump`, `chipset`, `laptop` or `case`.
+    #[serde(rename = "setup.roles")]
+    SetupRoles { roles: BTreeMap<String, String> },
+    /// Spins a fan to 100 % for 3 s, then back, so it can be found by ear or by eye (§5.3).
+    #[serde(rename = "identify")]
+    Identify { control: String },
 }
 
 impl Op {
@@ -150,6 +167,10 @@ impl Op {
         "draft.limits",
         "draft.save",
         "draft.discard",
+        "setup.start",
+        "setup.stop",
+        "setup.roles",
+        "identify",
     ];
 
     /// Changes fans or the configuration, so it needs `can_write`.
@@ -182,6 +203,10 @@ impl Op {
             Op::DraftLimits { .. } => "draft.limits",
             Op::DraftSave => "draft.save",
             Op::DraftDiscard => "draft.discard",
+            Op::SetupStart { .. } => "setup.start",
+            Op::SetupStop => "setup.stop",
+            Op::SetupRoles { .. } => "setup.roles",
+            Op::Identify { .. } => "identify",
         }
     }
 }
@@ -258,9 +283,25 @@ pub struct Tick {
     pub controls: Vec<ControlTick>,
     /// Every other control on the machine: its firmware runs it.
     pub firmware: Vec<FirmwareTick>,
+    /// Every motherboard tach, named for its header (§8.2, §11.3 call 3): what Defaults lists before pairing.
+    pub tachs: Vec<TachTick>,
     pub curves: Vec<CurveTick>,
     pub unreachable: Vec<Unreachable>,
     pub notes: Vec<String>,
+    /// A setup run (§5), while one runs or waits in review; otherwise `null`.
+    pub setup: Option<Box<penna_core::setup::Progress>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TachTick {
+    pub key: Key,
+    /// The header's name from the board database, or the user's.
+    pub label: String,
+    /// The device it belongs to: "IT8688E".
+    pub device: String,
+    pub rpm: Option<u32>,
+    /// The control pairing found turns it, if pairing has run.
+    pub control: Option<Key>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

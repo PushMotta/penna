@@ -1,0 +1,51 @@
+# A fresh install on the x570 desk scenario: what pennad writes on its first start, with the mock GPU's id (DESIGN.md §7.5).
+version = 1
+profile = "defaults"
+
+[[curve]]
+id = "gpu"
+label = "GPU"
+response = "2s"
+hysteresis = 2.0
+
+[curve.graph]
+source = "nvml/GPU-5a1d3090-0000-4000-8000-00000000mock/temp"
+points = [[45.0, 0.0], [55.0, 35.0], [68.0, 55.0], [78.0, 80.0], [85.0, 100.0]]
+
+[[curve]]
+id = "cpu-quiet"
+label = "CPU quiet"
+response = "5s"
+hysteresis = 3.0
+
+[curve.graph]
+source = "hwmon/k10temp/0000:00:18.3/temp1"
+points = [[45.0, 30.0], [65.0, 40.0], [78.0, 65.0], [88.0, 100.0]]
+
+[[control]]
+key = "nvml/GPU-5a1d3090-0000-4000-8000-00000000mock/fan0"
+label = "GPU fan 1"
+min = 0.0
+max = 100.0
+offset = 0.0
+step_up = 20.0
+step_down = 5.0
+may_stop = true
+failsafe = 100.0
+
+[[control]]
+key = "nvml/GPU-5a1d3090-0000-4000-8000-00000000mock/fan1"
+label = "GPU fan 2"
+min = 0.0
+max = 100.0
+offset = 0.0
+step_up = 20.0
+step_down = 5.0
+may_stop = true
+failsafe = 100.0
+
+[profiles.balanced]
+
+[profiles.quiet]
+
+[profiles.render]

@@ -261,7 +261,7 @@ fn watch_daemon(c: Client, once: bool, json: bool) -> Result<()> {
         let state = c.call(Op::State)?.ok_or_else(|| anyhow!("pennad sent no state"))?;
         if json {
             let tick: Tick = serde_json::from_value(state)?;
-            println!("{}", Event::Tick(tick).line());
+            println!("{}", Event::Tick(Box::new(tick)).line());
         } else {
             let tick: Tick = serde_json::from_value(state)?;
             print!("{}", render::tick_frame(&tick, style(), &via, mock));

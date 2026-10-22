@@ -132,16 +132,31 @@ pub struct Machine {
     owners: BTreeMap<Key, usize>,
     /// What the board database knows about this machine's board.
     pub board: Option<Board>,
+    /// Control → the tachs pairing found it turns (§5.2), which name it.
+    pairing: BTreeMap<Key, Vec<Key>>,
     pub inventory: Inventory,
 }
 
-/// hwmon controls are named for their chip and channel until pairing names them for a header (§5.2): "IT8688E pwm1". Two chips
-/// both have a `pwm1`, and a name that two controls share can't be used to pick one.
-fn label_controls(inventory: &mut Inventory) {
+/// hwmon controls are named for their chip and channel until pairing names them for a header (§5.2): "IT8688E pwm1", then
+/// "CPU_FAN". Two chips both have a `pwm1`, and a name that two controls share can't be used to pick one.
+fn label_controls(inventory: &mut Inventory, pairing: &BTreeMap<Key, Vec<Key>>) {
+    // A tach named only by its channel (`fan6`) says less than the chip does: only a header's name names a control.
+    let tachs: BTreeMap<Key, String> = inventory
+        .devices
+        .iter()
+        .flat_map(|d| &d.tachs)
+        .filter(|t| t.label != t.key.channel())
+        .map(|t| (t.key.clone(), t.label.clone()))
+        .collect();
     for d in inventory.devices.iter_mut().filter(|d| d.source == penna_core::Source::Hwmon) {
         let chip = d.model.clone().unwrap_or_else(|| d.driver.clone());
         for c in &mut d.controls {
-            c.label = format!("{chip} {}", c.key.channel());
+            let headers: Option<Vec<&str>> =
+                pairing.get(&c.key).map(|ts| ts.iter().filter_map(|t| tachs.get(t).map(String::as_str)).collect());
+            c.label = match headers {
+                Some(h) if !h.is_empty() => h.join(" + "),
+                _ => format!("{chip} {}", c.key.channel()),
+            };
         }
     }
 }
@@ -175,6 +190,7 @@ impl Machine {
             sysfs_root: opts.sysfs_root.clone(),
             owners: BTreeMap::new(),
             board,
+            pairing: BTreeMap::new(),
             inventory: Inventory::default(),
         };
         let mut errors = Vec::new();
@@ -236,7 +252,13 @@ impl Machine {
         if let Some(b) = &self.board {
             b.apply(&mut self.inventory);
         }
-        label_controls(&mut self.inventory);
+        label_controls(&mut self.inventory, &self.pairing);
+    }
+
+    /// What pairing found (§5.2): each paired control takes its header's name.
+    pub fn set_pairing(&mut self, measured: &penna_core::config::Measured) {
+        self.pairing = measured.controls.iter().filter(|m| !m.tachs.is_empty()).map(|m| (m.key.clone(), m.tachs.clone())).collect();
+        label_controls(&mut self.inventory, &self.pairing);
     }
 
     fn owner(&mut self, key: &Key) -> Result<&mut Box<dyn Backend>> {

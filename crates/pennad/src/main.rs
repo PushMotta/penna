@@ -12,6 +12,7 @@ mod auth;
 mod history;
 mod ipc;
 mod requests;
+mod setup;
 mod trace;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -134,6 +135,8 @@ struct Setup {
     /// Where changes from surfaces are saved.
     config_path: Option<PathBuf>,
     measured: Measured,
+    /// Where setup saves what it measures; `None`: in memory only.
+    measured_path: Option<PathBuf>,
     cpu_model: Option<String>,
     runtime_dir: PathBuf,
     socket: PathBuf,
@@ -173,6 +176,7 @@ fn setup(args: &Args) -> Result<Setup> {
                 config,
                 config_path: Some(path),
                 measured,
+                measured_path: Some(args.measured.clone().unwrap_or_else(|| PathBuf::from(DEFAULT_MEASURED))),
                 cpu_model: cpu_model(),
                 runtime_dir: args.runtime_dir.clone().unwrap_or_else(|| PathBuf::from(DEFAULT_RUNTIME_DIR)),
                 socket: args.socket.clone().unwrap_or_else(|| PathBuf::from(penna_proto::PRODUCTION_SOCKET)),
@@ -205,6 +209,7 @@ fn setup(args: &Args) -> Result<Setup> {
                 .with_context(|| format!("copying the configuration to {}", config_path.display()))?;
             let measured = match &args.measured {
                 Some(p) => read_measured(p)?,
+                None if sim.scenario().fresh => Measured::default(),
                 None => sim.measured(),
             };
             Ok(Setup {
@@ -216,6 +221,7 @@ fn setup(args: &Args) -> Result<Setup> {
                 config: Some(config),
                 config_path: Some(config_path),
                 measured,
+                measured_path: Some(args.measured.clone().unwrap_or_else(|| tree.join("var/lib/penna/measured.toml"))),
                 socket,
                 scratch,
                 seconds,
@@ -233,6 +239,7 @@ fn setup(args: &Args) -> Result<Setup> {
                     Some(p) => read_measured(p)?,
                     None => Measured::default(),
                 },
+                measured_path: args.measured.clone(),
                 cpu_model: cpu_model(),
                 runtime_dir: args.runtime_dir.clone().unwrap_or_else(|| PathBuf::from(DEFAULT_RUNTIME_DIR)),
                 socket: args.socket.clone().unwrap_or_else(|| PathBuf::from(penna_proto::PRODUCTION_SOCKET)),
@@ -293,12 +300,21 @@ pub struct Live {
     pub state: LoopState,
     pub config_path: Option<PathBuf>,
     pub measured: Measured,
+    pub measured_path: Option<PathBuf>,
     pub cpu_model: Option<String>,
     pub readings: Readings,
     /// The loop's clock at the last tick.
     pub now: f64,
     /// Loop seconds per wall-clock second.
     pub rate: f64,
+    /// A setup run (§5) and the connection it belongs to.
+    pub setup: Option<setup::SetupRun>,
+    /// Fans being identified (§5.3), until when.
+    pub identify: std::collections::BTreeMap<penna_core::Key, f64>,
+    /// What the board database knows about this machine (§3.6).
+    pub board: Option<penna_core::boards::Board>,
+    /// This machine's own hardware, not a mock desk or a test tree.
+    pub real: bool,
 }
 
 /// A draft belongs to the connection that made it: when that connection closes, the daemon goes back to `saved`.
@@ -333,20 +349,28 @@ impl Live {
             now: self.now,
             rate: self.rate,
             draft: self.draft_tick(),
+            setup: self.setup.as_ref().map(|s| s.run.progress()),
         })
     }
 }
 
 fn run(args: Args) -> Result<()> {
-    let Setup { mut sim, real, sysfs_root, config, config_path, measured, cpu_model, runtime_dir, socket, scratch, seconds } =
+    let Setup { mut sim, real, sysfs_root, config, config_path, measured, measured_path, cpu_model, runtime_dir, socket, scratch, seconds } =
         setup(&args)?;
     let mock = sim.is_some();
     let opts = if real {
         Options { sysfs_root, nvml: true, mock_nvml: None, control: true, boards: Some(args.boards.clone()) }
     } else {
-        Options { sysfs_root, nvml: false, mock_nvml: sim.as_ref().map(Sim::mock_nvml_root), control: true, boards: None }
+        Options {
+            sysfs_root,
+            nvml: false,
+            mock_nvml: sim.as_ref().map(Sim::mock_nvml_root),
+            control: true,
+            boards: Some(args.boards.clone()),
+        }
     };
     let mut machine = Machine::open(&opts)?;
+    machine.set_pairing(&measured);
     let config = match config {
         Some(text) => Config::parse(&text).map_err(|e| anyhow!("configuration: {e}"))?,
         None => first_start(&machine.inventory, config_path.as_deref()),
@@ -392,10 +416,15 @@ fn run(args: Args) -> Result<()> {
         draft: None,
         config_path,
         measured,
+        measured_path,
         cpu_model,
         readings: machine.read(),
         now: 0.0,
         rate,
+        setup: None,
+        identify: std::collections::BTreeMap::new(),
+        board: machine.board.clone(),
+        real,
     };
     let mut ring = history::Ring::default();
 
@@ -468,6 +497,10 @@ fn run(args: Args) -> Result<()> {
             rediscovered(&mut live, &mut machine, &mut held, &mut out, now);
         }
         let readings = machine.read();
+        if setup::step(&mut live, &readings, &mut out, now, unix_now()) {
+            machine.set_pairing(&live.measured);
+            setup::replan(&mut live, &machine.inventory, &mut out, now);
+        }
         let (next, cmds) = tick(&live.plan, &live.state, &readings, now);
         live.state = next;
         let mut queue: std::collections::VecDeque<Command> = cmds.into();

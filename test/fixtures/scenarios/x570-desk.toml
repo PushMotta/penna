@@ -1,0 +1,196 @@
+# The development desk as M5 measured it (DESIGN.md §10, 22 Oct 2026): a Gigabyte X570 AORUS PRO with the it87 fork's IT8688E
+# and IT8792E, every header as pairing found it, and the RTX 3090. Each fan's top speed is the one measured; the stop and start
+# duties are close to what the hardware test suggests. The BIOS keeps PCH_FAN stopped while the chipset is cool, and nothing is
+# plugged into SYS_FAN6_PUMP. For setup (§5), from a fresh install: the configuration is the one pennad writes on a first start.
+name = "x570-desk"
+cpu_model = "AMD Ryzen 9 5950X 16-Core Processor"
+ambient = 24.0
+seed = 22
+config = "x570-desk.config.toml"
+seconds = 600
+board = { vendor = "Gigabyte Technology Co., Ltd.", name = "X570 AORUS PRO" }
+fresh = true
+
+[load]
+points = [{ at = 0, cpu = 0.03, gpu = 0.0 }]
+
+[[body]]
+id = "cpu"
+load = "cpu"
+capacity = 40.0
+idle_watts = 25.0
+load_watts = 150.0
+passive = 0.6
+airflow = 2.6
+fan = [
+  { id = "cpu-fan", weight = 2.0 }, { id = "cpu-opt", weight = 1.0 },
+  { id = "sys1", weight = 0.25 }, { id = "sys2", weight = 0.25 }, { id = "sys4", weight = 0.25 }, { id = "sys5", weight = 0.25 },
+]
+
+[[body]]
+id = "gpu"
+load = "gpu"
+capacity = 60.0
+idle_watts = 22.0
+load_watts = 300.0
+passive = 1.5
+airflow = 6.0
+fan = [{ id = "gpu-fan0", weight = 1.0 }, { id = "gpu-fan1", weight = 1.0 }]
+
+[[body]]
+id = "pch"
+load = "cpu"
+capacity = 20.0
+idle_watts = 6.0
+load_watts = 9.0
+passive = 0.28
+airflow = 0.4
+fan = [{ id = "pch", weight = 1.0 }]
+
+[[chip]]
+driver = "k10temp"
+path = "devices/pci0000:00/0000:00:18.3"
+hwmon = 3
+temp = [
+  { channel = 1, label = "Tctl", body = "cpu", noise = 0.4, spikes = 6.0 },
+  { channel = 3, label = "Tccd1", body = "cpu", offset = 1.5, noise = 0.4, spikes = 6.0 },
+]
+
+[[chip]]
+driver = "it8688_4008090b"
+path = "devices/platform/it87.2624"
+hwmon = 4
+temp = [
+  { channel = 1, body = "cpu", offset = -20.0, noise = 0.2 },
+  { channel = 2, fixed = -55.0 },
+  { channel = 3, body = "cpu", noise = 0.2 },
+  { channel = 6, body = "pch", noise = 0.2 },
+]
+
+[[chip.pwm]]
+channel = 1
+enable = 2
+firmware = { body = "cpu", points = [[40, 27], [70, 60], [85, 100]] }
+
+[[chip.pwm]]
+channel = 2
+enable = 2
+firmware = { body = "cpu", points = [[40, 27], [70, 60], [85, 100]] }
+
+[[chip.pwm]]
+channel = 3
+enable = 2
+firmware = { body = "cpu", points = [[40, 27], [70, 60], [85, 100]] }
+
+[[chip.pwm]]
+channel = 4
+enable = 2
+firmware = { body = "pch", points = [[50, 16], [70, 60]] }
+
+[[chip.pwm]]
+channel = 5
+enable = 2
+firmware = { body = "cpu", points = [[40, 27], [70, 60], [85, 100]] }
+
+[[chip.fan]]
+channel = 1
+id = "cpu-fan"
+pwm = 1
+max_rpm = 1660
+stop = 18
+start = 24
+
+[[chip.fan]]
+channel = 2
+id = "sys1"
+pwm = 2
+max_rpm = 2190
+stop = 20
+start = 26
+
+[[chip.fan]]
+channel = 3
+id = "sys2"
+pwm = 3
+max_rpm = 1660
+stop = 14
+start = 20
+
+[[chip.fan]]
+channel = 4
+id = "pch"
+pwm = 4
+max_rpm = 5620
+stop = 22
+start = 28
+
+[[chip.fan]]
+channel = 5
+id = "cpu-opt"
+pwm = 5
+max_rpm = 2180
+stop = 20
+start = 26
+
+[[chip]]
+driver = "it8792_4008090b"
+path = "devices/platform/it87.2656"
+hwmon = 5
+temp = [{ channel = 1, body = "gpu", offset = -8.0, noise = 0.2 }, { channel = 2, fixed = -55.0 }, { channel = 3, body = "cpu", offset = -16.0, noise = 0.2 }]
+
+[[chip.pwm]]
+channel = 1
+enable = 2
+firmware = { body = "cpu", points = [[40, 60], [70, 100]] }
+
+[[chip.pwm]]
+channel = 2
+enable = 2
+firmware = { body = "cpu", points = [[40, 60], [70, 100]] }
+
+[[chip.pwm]]
+channel = 3
+enable = 2
+firmware = { body = "cpu", points = [[40, 40], [70, 70]] }
+
+[[chip.fan]]
+channel = 1
+id = "sys5"
+pwm = 1
+max_rpm = 1730
+stop = 20
+start = 26
+
+# SYS_FAN6_PUMP: a tach with nothing plugged in. No PWM drives it.
+[[chip.fan]]
+channel = 2
+id = "empty"
+pwm = 0
+max_rpm = 1000
+stop = 20
+start = 30
+
+[[chip.fan]]
+channel = 3
+id = "sys4"
+pwm = 3
+max_rpm = 2140
+stop = 18
+start = 24
+
+[[gpu]]
+id = "gpu"
+uuid = "GPU-5a1d3090-0000-4000-8000-00000000mock"
+name = "NVIDIA GeForce RTX 3090 (mock)"
+body = "gpu"
+fans = 2
+min = 30
+max = 100
+max_rpm = 1820
+noise_rpm = 1700
+driver_on = 42.0
+driver_off = 37.0
+driver_percent = 53.0
+gpu_max = 93
+slowdown = 95
+shutdown = 98
