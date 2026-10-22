@@ -51,7 +51,8 @@ pub struct Chip {
     /// Tach channel → header name, as printed on the board.
     #[serde(default)]
     pub fans: BTreeMap<String, String>,
-    /// Tach channel → what the header is for: `cpu`, `pump-header`, `chipset`. Setup suggests roles from it (§5.3).
+    /// Tach channel → what the header is for: `cpu`, `cpu-opt` (a second CPU fan, or a liquid cooler's pump), `pump-header`,
+    /// `chipset`. Setup suggests roles from it (§5.3).
     #[serde(default)]
     pub roles: BTreeMap<String, String>,
     /// Temperature channel → what it measures.

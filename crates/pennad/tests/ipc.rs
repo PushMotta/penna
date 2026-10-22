@@ -665,7 +665,9 @@ fn setup_measures_the_x570_desk_from_a_fresh_install() {
     assert_eq!(ctl(&format!("{it8792}/pwm3"))["header"], "SYS_FAN4");
     let role = |key: String| ctl(&key)["suggestion"].clone();
     assert_eq!(role(format!("{it8688}/pwm1"))["role"], "cpu");
-    assert_eq!(role(format!("{it8688}/pwm5"))["reason"], "The board calls this header CPU_OPT.");
+    let opt = role(format!("{it8688}/pwm5"));
+    assert_eq!((opt["role"].as_str(), opt["confirm"].as_bool()), (Some("pump"), Some(true)), "a fast fan on CPU_OPT may be a pump: {opt}");
+    assert_eq!(ctl(&format!("{it8688}/pwm5"))["lowest"], 50.0, "so it is held at 50 % until confirmed");
     let pch = role(format!("{it8688}/pwm4"));
     assert_eq!((pch["role"].as_str(), pch["may_stop"].as_bool()), (Some("chipset"), Some(true)), "{pch}");
     let pump = role(format!("{it8792}/pwm1"));

@@ -324,7 +324,7 @@ The control is taken as in §6.1, with its way back on disk first. Penna writes 
 
 ### 5.2 Pairing (hwmon only)
 
-Every taken control is held at 60 % for 6 s, so each rise is measured from a steady speed; from the write test's 80 % the rises would be smaller. One control at a time is then raised to 100 % for 6 s and dropped to 40 % for 6 s. A tach pairs with the control when its highest reading in the 6 s at 100 % is at least 15 % and 150 RPM above what it read just before the raise. The drop to 40 % confirms: a tach that rose and then didn't fall is reported, not paired, and so is one that two controls move. A control can end up with several tachs, or none: a header with no fan, or a dead one. NVML and most laptop drivers pair control *i* with tach *i* and skip this step. *(D2, §11.3, call 5; draft 3 paired a tach that moved more than 25 % both ways from the controls' current duty.)*
+Every taken control is held at 60 % for 6 s, so each rise is measured from a steady speed; from the write test's 80 % the rises would be smaller. One control at a time is then raised to 100 % for 6 s and dropped to 40 % for 6 s. A tach pairs with the control when its highest reading in the 6 s at 100 % is at least 15 % and 150 RPM above what it read just before the raise. The drop to 40 % confirms: a tach that rose and then didn't fall is reported, not paired, and so is one that two controls move. *(22 Oct 2026, before the first run on this desk, whose CPU_OPT carries a liquid cooler's pump: the low step is 50 %, a pump's floor, since pairing runs before any role is known; and a tach that alone rose pairs on its rise, since a pump barely slows between 60 and 50 %. The fall decides only between tachs that both rose.)* A control can end up with several tachs, or none: a header with no fan, or a dead one. NVML and most laptop drivers pair control *i* with tach *i* and skip this step. *(D2, §11.3, call 5; draft 3 paired a tach that moved more than 25 % both ways from the controls' current duty.)*
 
 *(M5, 22 Oct 2026: pairing by hand on this desk.)* From a 60 % hold, 100 % raised each fan by 31–59 %; the smallest rise was the PCH fan's, close to the 25 % above. The fans were still speeding up 4 s in. The first version of the by-hand test read each tach once, 5 s in, against RPMs recorded before the fans had come down from full speed, and it paired one control of eight. The version that worked waits for every fan to settle, measures each control from what the tachs read just before it, and keeps each tach's highest reading over 11 s. Setup's pairing (M7) needs the same three things, and the rule above has them.
 
@@ -336,12 +336,12 @@ Each fan gets a role, which decides its generated curve and how it is calibrated
 |---|---|---|---|
 | CPU cooler | The board database names the header `CPU_FAN` or `CPU_OPT`. | Full; stopped for at most 10 s at a time. | — |
 | GPU | NVML or amdgpu. | % → RPM only. | — |
-| Pump | The header is a pump header, **and** the fan turns above 2,000 RPM at 100 %. Never assumed from the header alone: a case fan on a pump header is common. | No stop test. | Stops; goes below 50 %. |
+| Pump | The header is a pump header, **and** the fan turns above 2,000 RPM at 100 %. Never assumed from the header alone: a case fan on a pump header is common. *(22 Oct 2026: also a fan above 2,000 RPM on a CPU header, as a suggestion to confirm: liquid coolers put their pump on CPU_FAN or CPU_OPT.)* | No stop test. | Stops; goes below 50 %. |
 | Chipset | The board database names it (`PCH_FAN`). | No stop test, unless the idle sample saw its firmware stop it: then full. | Stops, unless the idle sample saw its firmware stop it. |
 | Laptop | The machine is a laptop and the fan is its system fan. | By level. | — |
 | Case | Everything else. | Full. | — |
 
-Until the user confirms the roles, a fan on a pump or chipset header is treated as one that must never stop. *Identify* on any fan card spins that fan to 100 % for 3 s and back, so it can be found by ear or by eye.
+Until the user confirms the roles, a fan on a pump or chipset header is treated as one that must never stop. *(22 Oct 2026: so is any fan on CPU_OPT, the board database's `cpu-opt` hint, and any fan on a CPU header that turns above 2,000 RPM: each may be a pump, and is held at 50 % or more until confirmed.)* *Identify* on any fan card spins that fan to 100 % for 3 s and back, so it can be found by ear or by eye.
 
 *(D2, §11.3.)* Every suggested role carries its reason, in words: "The board calls this header CPU_OPT", "On a pump header, but 1,730 RPM at 100 %: a case fan". A fan on a pump header that is suggested as a case fan is held at 50 % or more, and measured no lower, until the user confirms it; confirming measures it below 50 % (about 30 s). One exception to the rule above: a chipset fan the idle sample saw its firmware stop may stop, because the firmware already does it. On this desk the BIOS stops PCH_FAN with the PCH at 45 °C; a never-stop curve would run it near 2,700 RPM. The review also asks for a name per fan, prefilled with its header.
 
@@ -1044,7 +1044,10 @@ Milestones, each ending in something visible:
   - **The simulator** has `x570-desk`: this desk as M5 measured it, from a fresh install, with its board's DMI fields so the board database applies.
   - **The plugin** (§11.3 calls 1–10): Defaults set apart and pills only for profiles that run a fan, *Set up fans…* on a new install, every fan listed in Defaults, `fan-clock` while setup runs, the setup view with its review, device headings with tiers, kind lines and drift on the cards. `tools/setup-preview` renders the setup view offscreen at each step of a run on the mock desk.
 
-  Still to do: the plugin in the live shell, then setup on this desk's hardware.
+  - **Before the first run on this desk** (22 Oct 2026): this desk's CPU_OPT carries a liquid cooler's pump. Pairing's low step is now 50 %, a lone rising tach pairs on its rise (a pump barely slows), and a fast fan on a CPU header, or any fan on CPU_OPT, is held at 50 % until confirmed (§5.2, §5.3). `tests/setup.rs` adds a pump on CPU_OPT and checks that setup runs no fan below 50 % before calibration.
+  - The plugin is merged; the running shell picks it up at its next start. `tools/setup-preview/live.sh` runs the studio's setup on a second screen against the mock desk.
+
+  Still to do: setup on this desk's hardware, with 0.7.0 installed.
 - **M8** — **Generated curves** (§5.5): per role and profile from setup's measurements, the CPU load check, and the review step.
 - **M9** — **Laptops and other drivers:**
   - `levels`, `firmware-curve`, `modes` and `platform` controls, amdgpu included;

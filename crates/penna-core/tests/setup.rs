@@ -96,6 +96,8 @@ fn headers() -> Vec<Header> {
         },
         Header { n: 5, name: "SYS_FAN6_PUMP", role: Some("pump-header"), fan: None, firmware: 60.0, reverts: false },
         Header { n: 6, name: "SYS_FAN4", role: None, fan: f(2140.0, 18.0, 24.0, 520.0, 0.69), firmware: 40.0, reverts: true },
+        // A liquid cooler's pump on CPU_OPT: fast, and flat across most duties.
+        Header { n: 7, name: "CPU_OPT", role: Some("cpu-opt"), fan: f(2600.0, 20.0, 26.0, 1600.0, 0.8), firmware: 70.0, reverts: false },
     ]
 }
 
@@ -305,6 +307,13 @@ impl Rig {
     }
 
     fn tick(&mut self) {
+        // Until calibration, setup runs no fan below 50 %: a pump may be on any CPU header (§5.2, §5.3). A fan just taken keeps
+        // its firmware's own duty for a tick, which is the firmware's choice.
+        if self.setup.step_now() < Step::Calibration {
+            for c in self.desk.channels.iter().filter(|c| c.mode == ControlMode::Manual) {
+                assert!(c.raw >= raw(50.0) || c.raw == raw(c.h.firmware), "{} at raw {} before calibration", c.h.name, c.raw);
+            }
+        }
         let readings = self.desk.readings();
         self.state.measuring = self.setup.step(&readings, &self.state, self.load, self.now);
         let (next, cmds) = tick(&self.plan, &self.state, &readings, self.now);
@@ -362,7 +371,7 @@ fn setup_measures_this_desk_and_hands_every_fan_back() {
     assert_eq!(rig.progress(&gpu_fan()).tachs, vec![gpu_fan()], "NVML pairs itself");
 
     // Roles, with their reasons (§11.3 calls 7 and 8).
-    let role = |n: u32| rig.progress(&pwm(n)).suggestion.unwrap();
+    let role = |n: u32| rig.progress(&pwm(n)).suggestion.unwrap_or_else(|| panic!("{:?}", rig.progress(&pwm(n))));
     assert_eq!((role(1).role, role(1).reason.as_str()), (Role::Cpu, "The board calls this header CPU_FAN."));
     assert_eq!(role(2).role, Role::Case);
     let pch = role(3);
@@ -372,6 +381,13 @@ fn setup_measures_this_desk_and_hands_every_fan_back() {
     assert!(pump.reason.starts_with("On a pump header, but 1,7"), "{pump:?}");
     assert_eq!(rig.progress(&gpu_fan()).suggestion.unwrap().role, Role::Gpu);
     assert_eq!(rig.progress(&pwm(4)).lowest, Some(50.0), "held at 50 % until confirmed");
+    let opt = role(7);
+    assert!(opt.role == Role::Pump && opt.confirm, "a fast fan on CPU_OPT is suggested as a pump: {opt:?}");
+    assert!(
+        opt.reason.starts_with("The board calls this header CPU_OPT, and it turns 2,5"),
+        "paired on its rise alone, flat as it is: {opt:?}"
+    );
+    assert_eq!(rig.progress(&pwm(7)).lowest, Some(50.0), "a pump is never stopped");
     assert_eq!(rig.progress(&pwm(3)).lowest, None, "measured to a stop, as its BIOS stops it");
 
     rig.until(Step::Review, 400.0);
@@ -382,6 +398,7 @@ fn setup_measures_this_desk_and_hands_every_fan_back() {
     assert_eq!((cal(1).stop, cal(1).start), (Some(20.0), Some(24.0)), "{:?}", cal(1));
     assert_eq!(cal(3).stop, Some(25.0), "PCH_FAN measured down to its stop");
     assert_eq!((cal(4).stop, cal(4).lowest), (None, Some(50.0)), "the pump header stops at 50 %");
+    assert!(cal(7).stop.is_none() && cal(7).calibration.iter().all(|p| p[0] >= 50.0), "the pump is never taken below 50 %: {:?}", cal(7));
     assert_eq!(cal(4).calibration.first().unwrap()[0], 50.0);
     for n in [1, 2, 3, 4] {
         let t = &cal(n).calibration;

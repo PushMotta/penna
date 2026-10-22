@@ -20,7 +20,7 @@ risk = "The driver's README calls ignoring that conflict \"inherently risky\": A
 hwmon = "it8688"
 chip = "IT8688E"
 fans = { 1 = "CPU_FAN", 2 = "SYS_FAN1", 3 = "SYS_FAN2", 4 = "PCH_FAN", 5 = "CPU_OPT" }
-roles = { 1 = "cpu", 4 = "chipset", 5 = "cpu" }
+roles = { 1 = "cpu", 4 = "chipset", 5 = "cpu-opt" }
 temps = { 1 = "System 1", 3 = "CPU", 4 = "PCIEX16", 5 = "VRM MOS", 6 = "PCH" }
 # EC_TEMP1 is a thermistor header: with nothing plugged in it reads −55 °C.
 ignore = ["temp2"]

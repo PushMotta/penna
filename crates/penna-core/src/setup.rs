@@ -22,7 +22,8 @@ pub const WRITE_SECONDS: f64 = 5.0;
 pub const PAIR_HOLD: f64 = 60.0;
 pub const PAIR_SETTLE: f64 = 6.0;
 pub const PAIR_HIGH: f64 = 100.0;
-pub const PAIR_LOW: f64 = 40.0;
+/// No lower than a pump's floor (§5.3): pairing runs before any fan's role is known, and a pump may be on any CPU header.
+pub const PAIR_LOW: f64 = 50.0;
 pub const PAIR_HIGH_SECONDS: f64 = 6.0;
 pub const PAIR_LOW_SECONDS: f64 = 6.0;
 /// A tach pairs when its highest reading at 100 % is this much above its reading just before, both as a share and in RPM.
@@ -702,19 +703,29 @@ impl Setup {
     /// Pairs control `order[w]` with every tach that rose with it and fell again (§5.2).
     fn close_window(&mut self, w: usize, order: &[usize]) {
         let Some(&i) = order.get(w) else { return };
+        // Every tach that rose with this control, and whether it fell again at the low step. A tach an earlier control turns,
+        // still coming back from its low step, rises too: that one is explained, and left out.
+        let risers: Vec<(Key, String, [f64; 3], bool)> = self
+            .input
+            .tachs
+            .iter()
+            .filter(|t| !self.claims.contains_key(&t.key))
+            .filter_map(|t| {
+                let (b, p, l) = (*self.base.get(&t.key)?, *self.peak.get(&t.key)?, *self.low.get(&t.key)?);
+                let rose = p - b >= PAIR_RISE_RPM && p >= b * (1.0 + PAIR_RISE);
+                rose.then(|| (t.key.clone(), t.label.clone(), [b, p, l], l <= b * (1.0 - PAIR_FALL)))
+            })
+            .collect();
+        // One tach that rose is this control's, whether or not it slowed at the low step: a pump barely does. When several
+        // rose, only those that fell again are.
+        let lone = risers.len() == 1;
         let mut found = Vec::new();
         let mut rose_only = Vec::new();
-        for t in &self.input.tachs {
-            let (Some(b), Some(p), Some(l)) = (self.base.get(&t.key), self.peak.get(&t.key), self.low.get(&t.key)) else { continue };
-            let rose = p - b >= PAIR_RISE_RPM && *p >= b * (1.0 + PAIR_RISE);
-            if !rose {
-                continue;
-            }
-            if *l <= b * (1.0 - PAIR_FALL) {
-                found.push((t.key.clone(), [*b, *p, *l]));
-            } else if !self.claims.contains_key(&t.key) {
-                // A tach an earlier control turns, still coming back from its 40 %, rises too: that one is explained.
-                rose_only.push(t.label.clone());
+        for (key, label, r, fell) in risers {
+            if fell || lone {
+                found.push((key, r));
+            } else {
+                rose_only.push(label);
             }
         }
         let c = &mut self.ctls[i];
@@ -782,11 +793,34 @@ impl Setup {
                 Suggestion { role: Role::Gpu, reason: "An NVIDIA GPU fan.".into(), confirm: false, may_stop: false }
             } else {
                 match hint.as_ref().and_then(|h| h.role.as_deref()) {
-                    Some("cpu") => Suggestion {
-                        role: Role::Cpu,
-                        reason: format!("The board calls this header {header}."),
-                        confirm: false,
-                        may_stop: false,
+                    // A liquid cooler's pump often sits on a CPU header, CPU_OPT above all: a fast fan there is suggested as a
+                    // pump, and anything on CPU_OPT is held at 50 % or more until the user says what it is.
+                    Some(h @ ("cpu" | "cpu-opt")) => match top {
+                        Some(t) if t > PUMP_RPM => Suggestion {
+                            role: Role::Pump,
+                            reason: format!(
+                                "The board calls this header {header}, and it turns {} RPM at 100 %: a pump, as liquid coolers often have \
+                                 there. Held at {PUMP_LOWEST:.0} % or more until you confirm.",
+                                rpm(t)
+                            ),
+                            confirm: true,
+                            may_stop: false,
+                        },
+                        _ if h == "cpu-opt" => Suggestion {
+                            role: Role::Cpu,
+                            reason: format!(
+                                "The board calls this header {header}: a second CPU fan, or a liquid cooler's pump. Held at \
+                                 {PUMP_LOWEST:.0} % or more until you confirm."
+                            ),
+                            confirm: true,
+                            may_stop: false,
+                        },
+                        _ => Suggestion {
+                            role: Role::Cpu,
+                            reason: format!("The board calls this header {header}."),
+                            confirm: false,
+                            may_stop: false,
+                        },
                     },
                     Some("chipset") => Suggestion {
                         role: Role::Chipset,

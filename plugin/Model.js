@@ -276,7 +276,7 @@ function setupRows(s, tick) {
     var live = byKey(controls(tick), c.key)
     var tach = c.tachs && c.tachs.length ? byKey(tick && tick.tachs, c.tachs[0]) : null
     var rpm = tach ? tach.rpm : live ? live.rpm : null
-    var role = c.suggestion ? (c.suggestion.confirm ? "case?" : String(c.suggestion.role)) : ""
+    var role = c.suggestion ? String(c.suggestion.role) + (c.suggestion.confirm ? "?" : "") : ""
     return { key: String(c.key), name: String(c.header || c.label), status: String(c.status || ""), rpm: rpm === undefined ? null : rpm,
              duty: c.duty === null || c.duty === undefined ? null : Number(c.duty), role: role, empty: c.paired === false,
              hot: s.current === c.key }

@@ -200,20 +200,23 @@ fn confirm_roles(p: &Progress) -> Result<()> {
         let name = c.header.clone().unwrap_or_else(|| c.label.clone());
         let mut role = s.role;
         if s.confirm && interactive {
-            let other = if role == Role::Pump { Role::Case } else { Role::Pump };
-            print!(
-                "{name}: {} ({}) or {} ({})? [{}] ",
-                role.name().to_lowercase(),
-                key(role),
-                other.name().to_lowercase(),
-                key(other),
-                key(role)
-            );
-            std::io::stdout().flush()?;
-            let mut line = String::new();
-            input.read_line(&mut line)?;
-            if line.trim().eq_ignore_ascii_case(key(other)) {
-                role = other;
+            println!("{name}: {}", s.reason);
+            loop {
+                print!("  {}? Enter to confirm, or type cpu, case, pump or chipset: ", role.name().to_lowercase());
+                std::io::stdout().flush()?;
+                let mut line = String::new();
+                input.read_line(&mut line)?;
+                let answer = line.trim();
+                if answer.is_empty() {
+                    break;
+                }
+                match Role::parse(answer) {
+                    Some(r) if r != Role::Gpu && r != Role::Laptop => {
+                        role = r;
+                        break;
+                    }
+                    _ => println!("  {answer:?} isn't one of those."),
+                }
             }
         }
         roles.insert(c.key.to_string(), role_id(role).to_owned());
@@ -270,13 +273,6 @@ fn confirm_roles(p: &Progress) -> Result<()> {
     }
     println!("Generated curves arrive with M8; until then, adopt fans in the studio (penna open).");
     Ok(())
-}
-
-fn key(r: Role) -> &'static str {
-    match r {
-        Role::Pump => "p",
-        _ => "c",
-    }
 }
 
 fn role_id(r: Role) -> &'static str {
