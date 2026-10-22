@@ -9,7 +9,7 @@ use crate::plan::{DEFAULT_EMERGENCY, control_plan, tjmax};
 use crate::setup::{Role, WriteResult};
 use crate::starter::{PROFILES, cpu_control_temperature};
 use crate::{ControlKind, Inventory, Key, LimitKind, SensorInfo, Source};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// How each profile places a CPU curve: the floor until idle plus the first, 50 % airflow at the limit less the second, 100 % at
@@ -29,7 +29,7 @@ const CHIPSET: [f64; 3] = [60.0, 65.0, 80.0];
 const TOP: f64 = 0.98;
 
 /// A source's anchors (§5.5): what it read idle, what a profile tries to keep it under, and its limit.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Anchors {
     pub idle: f64,
     pub target: Option<f64>,
@@ -47,6 +47,25 @@ pub struct Generated {
     pub anchors: BTreeMap<Key, Anchors>,
     /// Each fan it left alone, and why.
     pub notes: Vec<String>,
+}
+
+/// What setup proposes once it has measured (§5.5, §11.3 call 9), for a surface to show with the draft.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Proposal {
+    /// The curves in the draft that setup made.
+    pub curves: Vec<String>,
+    /// The anchors of every source they follow, to draw on the axis.
+    pub anchors: BTreeMap<Key, Anchors>,
+    /// Each fan left with its firmware, and why.
+    pub notes: Vec<String>,
+    /// Why there is no draft: another window holds unsaved changes.
+    pub refused: Option<String>,
+}
+
+impl From<&Generated> for Proposal {
+    fn from(g: &Generated) -> Proposal {
+        Proposal { curves: g.curves.clone(), anchors: g.anchors.clone(), notes: g.notes.clone(), refused: None }
+    }
 }
 
 /// Curves for every measured fan with a role, in all three profiles, starting from `base` (§5.5). A curve that already exists
@@ -235,7 +254,8 @@ impl Builder {
 
     fn chipset_anchors(&mut self, measured: &Measured, s: &SensorInfo) -> Option<Src> {
         let idle = *measured.idle.get(&s.key)?;
-        let a = Anchors { idle: idle.round(), target: Some(CHIPSET[1]), limit: Some(CHIPSET[2]) };
+        // Its curve's temperatures are fixed, not measured: only its idle is an anchor.
+        let a = Anchors { idle: idle.round(), target: None, limit: None };
         self.anchors.insert(s.key.clone(), a);
         Some(Src { key: s.key.clone(), a, device: String::new() })
     }

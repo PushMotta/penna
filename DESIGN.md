@@ -536,7 +536,7 @@ Goals, to be measured at M4: under 5 MB RSS and under 0.1 % of one core at a 1 s
 ### 7.3 Protocol (version 2, fixed for M2)
 
 **Transport.** Newline-delimited JSON over a Unix socket: one UTF-8 object per line, at most 1 MiB per line. Clients look for the socket in this order:
-1. `$PENNA_SOCKET`
+1. `$PENNA_SOCKET`, and nothing else when it is set *(M8: pointed at a mock that isn't up, a client fell back to this machine's daemon)*
 2. `/run/penna/penna.sock` (production)
 3. `$XDG_RUNTIME_DIR/penna/penna.sock` (where `pennad --mock` listens by default)
 

@@ -26,9 +26,10 @@ var STATE_META = {
   stalled: "ITS FAN ISN'T TURNING"
 }
 
+// $PENNA_SOCKET alone when set: a socket named on purpose is never swapped for this machine's daemon (§7.3).
 function socketCandidates(pennaSocket, runtimeDir) {
+  if (pennaSocket) return [String(pennaSocket)]
   var list = []
-  if (pennaSocket) list.push(String(pennaSocket))
   list.push("/run/penna/penna.sock")
   if (runtimeDir) list.push(String(runtimeDir).replace(/\/+$/, "") + "/penna/penna.sock")
   return list.filter(function(p, i) { return list.indexOf(p) === i })

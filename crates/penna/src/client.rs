@@ -73,8 +73,9 @@ impl Client {
         }
     }
 
-    /// Subscribes, then hands every line after the reply to `each` (raw, and parsed when it is an event) until it says stop.
-    pub fn subscribe(mut self, mut each: impl FnMut(&str, Option<Event>) -> Result<bool>) -> Result<()> {
+    /// Subscribes, then hands every line after the reply to `each` (raw, and parsed when it is an event) until it says stop. The
+    /// connection stays open, unsubscribed: what it holds, such as setup's draft, stays with it.
+    pub fn subscribe(&mut self, mut each: impl FnMut(&str, Option<Event>) -> Result<bool>) -> Result<()> {
         self.call(Op::Subscribe)?;
         self.reader.get_ref().set_read_timeout(None)?;
         loop {
@@ -85,6 +86,8 @@ impl Client {
             let line = buf.trim_end();
             let ev = serde_json::from_str::<Event>(line).ok();
             if !each(line, ev)? {
+                self.reader.get_ref().set_read_timeout(Some(TIMEOUT))?;
+                self.call(Op::Unsubscribe)?;
                 return Ok(());
             }
         }

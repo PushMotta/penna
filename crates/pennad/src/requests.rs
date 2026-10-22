@@ -15,6 +15,8 @@ use std::path::Path;
 
 /// The longest temporary override: a day.
 const MAX_OVERRIDE: f64 = 86_400.0;
+/// The profile a saved draft of generated curves switches to (§11.3 call 9).
+const BALANCED: &str = "balanced";
 /// What a second studio is told while another holds a draft.
 pub const DRAFT_TAKEN: &str = "Another studio has unsaved changes.";
 
@@ -206,16 +208,26 @@ pub fn handle(live: &mut Live, inventory: &Inventory, out: &mut Trace, op: Op, u
             return Ok(Some(studio(live, inventory, conn)));
         }
         Op::DraftSave => {
-            let draft = match &live.draft {
+            let (mut draft, generated) = match &live.draft {
                 None => return Err("There are no unsaved changes.".into()),
                 Some(d) if d.owner != conn => return Err(DRAFT_TAKEN.into()),
-                Some(d) => d.config.clone(),
+                Some(d) => (d.config.clone(), d.generated.is_some()),
             };
+            if generated {
+                // Setup's curves: saving them keeps everything and switches to Balanced (§11.3 call 9).
+                draft.profile = BALANCED.to_owned();
+                let plan = plan_for(live, inventory, draft.clone())?;
+                live.replace_plan(plan, inventory);
+            }
             let what = changed_names(live, inventory, &live.saved, &draft);
             persist(live, &draft)?;
             live.saved = draft;
             live.draft = None;
             note(out, None, format!("Saved: {what}"));
+            if generated {
+                live.state.apply(&live.plan, Request::Profile(BALANCED.to_owned()), now)?;
+                note(out, None, "Profile: Balanced".into());
+            }
         }
         Op::DraftDiscard => {
             match &live.draft {
@@ -291,7 +303,8 @@ fn studio(live: &Live, inventory: &Inventory, conn: u64) -> Value {
     let draft = match &live.draft {
         Some(d) => {
             let (curves, controls) = changes(&live.saved, &d.config);
-            DraftInfo { mine: d.owner == conn, dirty: true, curves, controls }
+            let generated = d.generated.as_ref().map(|base| changes(base, &d.config).0).unwrap_or_default();
+            DraftInfo { mine: d.owner == conn, dirty: true, curves, controls, generated }
         }
         None => DraftInfo::default(),
     };
@@ -311,19 +324,25 @@ fn draft_base(live: &Live, conn: u64) -> Result<Config, String> {
 /// Runs `cfg` as connection `conn`'s draft, at once: a refused one changes nothing and says why. A draft that matches what is
 /// saved is no draft. A changed curve starts over from its new shape, so the preview is not held back by hysteresis.
 fn preview(live: &mut Live, inventory: &Inventory, out: &mut Trace, conn: u64, cfg: Config) -> Result<(), String> {
+    if run_draft(live, inventory, conn, cfg)? {
+        out.note(live.now, Level::Info, None, "A studio is previewing unsaved changes".into());
+    }
+    Ok(())
+}
+
+/// [`preview`] without a word: returns whether a draft started. A draft setup generated stays marked as one while it is edited.
+pub fn run_draft(live: &mut Live, inventory: &Inventory, conn: u64, cfg: Config) -> Result<bool, String> {
     let plan = Plan::new(cfg.clone(), inventory, &live.measured, live.cpu_model.as_deref()).map_err(|p| config::sentence(&p))?;
     restart_changed_curves(live, &cfg);
     let started = live.draft.is_none();
     live.replace_plan(plan, inventory);
     if cfg == live.saved {
         live.draft = None;
-    } else {
-        live.draft = Some(Draft { owner: conn, config: cfg });
-        if started {
-            out.note(live.now, Level::Info, None, "A studio is previewing unsaved changes".into());
-        }
+        return Ok(false);
     }
-    Ok(())
+    let generated = live.draft.as_ref().filter(|d| d.owner == conn).and_then(|d| d.generated.clone());
+    live.draft = Some(Draft { owner: conn, config: cfg, generated });
+    Ok(started)
 }
 
 /// Back to the saved configuration.

@@ -24,8 +24,7 @@ function tick(over) {
 
 test("socket candidates follow §7.3 and drop duplicates", () => {
   assert.deepEqual(M.socketCandidates("", "/run/user/1000/"), ["/run/penna/penna.sock", "/run/user/1000/penna/penna.sock"])
-  assert.deepEqual(M.socketCandidates("/tmp/p.sock", ""), ["/tmp/p.sock", "/run/penna/penna.sock"])
-  assert.deepEqual(M.socketCandidates("/run/penna/penna.sock", ""), ["/run/penna/penna.sock"])
+  assert.deepEqual(M.socketCandidates("/tmp/p.sock", "/run/user/1000"), ["/tmp/p.sock"], "a socket named on purpose is the only one tried")
 })
 
 test("the bar glyph changes shape for every state that matters", () => {

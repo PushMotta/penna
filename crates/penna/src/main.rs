@@ -264,7 +264,7 @@ fn say(op: Op) -> Result<()> {
     Ok(())
 }
 
-fn watch_daemon(c: Client, once: bool, json: bool) -> Result<()> {
+fn watch_daemon(mut c: Client, once: bool, json: bool) -> Result<()> {
     let via = c.via();
     let mock = c.hello.mock;
     if once {
@@ -319,7 +319,7 @@ fn broken_pipe(e: &anyhow::Error) -> bool {
 }
 
 fn events(json: bool) -> Result<()> {
-    let c = Client::find().ok_or_else(client::not_running)?;
+    let mut c = Client::find().ok_or_else(client::not_running)?;
     let mut out = std::io::stdout().lock();
     let st = style();
     c.subscribe(|line, ev| {
@@ -380,7 +380,7 @@ fn bar(follow: bool, sensor: Option<&str>) -> Result<()> {
                 emit(&waybar::line(&serde_json::from_value(state)?, sensor), &mut out)?;
                 return Ok(());
             }
-            Some(c) => {
+            Some(mut c) => {
                 let mut going = true;
                 let _ = c.subscribe(|_, ev| {
                     if let Some(Event::Tick(t)) = ev {

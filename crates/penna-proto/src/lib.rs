@@ -574,6 +574,9 @@ pub struct DraftInfo {
     pub dirty: bool,
     pub curves: Vec<String>,
     pub controls: Vec<Key>,
+    /// The curves in the draft that setup generated (§5.5): each is marked *Generated* until it is saved.
+    #[serde(default)]
+    pub generated: Vec<String>,
 }
 
 /// The last ticks, oldest first, sent once after `subscribe`. `null` is a failed read.
@@ -609,11 +612,14 @@ pub struct Transition {
     pub text: String,
 }
 
-/// Where a client finds the daemon (§7.3): `$PENNA_SOCKET`, then production, then where `pennad --mock` listens.
+/// Where a client finds the daemon (§7.3): `$PENNA_SOCKET` alone when it is set, else production, then where `pennad --mock`
+/// listens. A socket named on purpose is never swapped for another: pointed at a mock that isn't up, a client must not reach this
+/// machine's fans instead.
 pub fn socket_candidates() -> Vec<std::path::PathBuf> {
     let mut out = Vec::new();
     if let Some(p) = std::env::var_os("PENNA_SOCKET").filter(|p| !p.is_empty()) {
         out.push(p.into());
+        return out;
     }
     out.push(PRODUCTION_SOCKET.into());
     if let Some(mock) = mock_socket() {

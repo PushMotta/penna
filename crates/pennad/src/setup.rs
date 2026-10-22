@@ -4,6 +4,7 @@
 use crate::Live;
 use crate::trace::Trace;
 use penna_core::boards::Board;
+use penna_core::generate::{Proposal, generate};
 use penna_core::plan::Plan;
 use penna_core::setup::{GUARD_CPU, GUARD_GPU, Guard, Input, Role, Setup, Step, TachHint, Target};
 use penna_core::{Inventory, Key, Readings, Source};
@@ -21,6 +22,8 @@ pub struct SetupRun {
     /// Its results are in `measured.toml`.
     pub saved: bool,
     last_step: Step,
+    /// The curves proposed once measuring is over (§5.5).
+    pub proposed: Option<Proposal>,
 }
 
 /// What setup needs to know about this machine: every control Penna drives (or the ones named), every motherboard tach with
@@ -80,7 +83,7 @@ pub fn start(live: &mut Live, inventory: &Inventory, out: &mut Trace, conn: u64,
     let keys: Vec<Key> = input.targets.iter().map(|t| t.key.clone()).collect();
     let n = keys.len();
     live.plan.carry(&keys, inventory, &live.measured);
-    live.setup = Some(SetupRun { owner: conn, run: Setup::new(input, live.now), saved: false, last_step: Step::Idle });
+    live.setup = Some(SetupRun { owner: conn, run: Setup::new(input, live.now), saved: false, last_step: Step::Idle, proposed: None });
     let text = format!("Setup started: {n} fan control{}. Every fan stays with its firmware for the 30 s idle sample", plural(n));
     out.note(live.now, Level::Info, None, text.clone());
     Ok(text)
@@ -187,12 +190,49 @@ pub fn roles(live: &mut Live, inventory: &Inventory, out: &mut Trace, conn: u64,
         let input = input(inventory, live.board.as_ref(), Some(&keys));
         let names: Vec<String> = input.targets.iter().map(|t| t.label.clone()).collect();
         live.plan.carry(&keys, inventory, &live.measured);
-        live.setup =
-            Some(SetupRun { owner: conn, run: Setup::calibrate(input, &below, live.now), saved: false, last_step: Step::Calibration });
+        let run = Setup::calibrate(input, &below, live.now);
+        let proposed = live.setup.as_ref().and_then(|s| s.proposed.clone());
+        live.setup = Some(SetupRun { owner: conn, run, saved: false, last_step: Step::Calibration, proposed });
         text = format!("{text}; measuring {} below 50 %, about a minute and a half", names.join(" and "));
         out.note(live.now, Level::Info, None, format!("Setup: measuring {} below 50 %", names.join(" and ")));
+    } else {
+        propose(live, inventory, out);
     }
     Ok(text)
+}
+
+/// Measuring is over: curves for every fan, as a draft on setup's connection (§5.5, §11.3 call 9). The draft runs at once, but in
+/// the profile already active, so nothing changes until it is saved; saving it switches to Balanced.
+pub fn propose(live: &mut Live, inventory: &Inventory, out: &mut Trace) {
+    let Some(owner) = live.setup.as_ref().filter(|s| s.run.finished() && s.run.stopped().is_none()).map(|s| s.owner) else { return };
+    let base = match &live.draft {
+        Some(d) if d.owner != owner => {
+            let why = "Another window has unsaved changes: save or discard them, then run setup again for curves.";
+            set_proposed(live, Proposal { refused: Some(why.into()), ..Proposal::default() });
+            return;
+        }
+        Some(d) => d.generated.clone().unwrap_or_else(|| d.config.clone()),
+        None => live.saved.clone(),
+    };
+    let g = generate(&base, inventory, &live.measured, live.cpu_model.as_deref());
+    let proposal = Proposal::from(&g);
+    match crate::requests::run_draft(live, inventory, owner, g.config) {
+        Ok(_) => {
+            if let Some(d) = live.draft.as_mut() {
+                d.generated = Some(base);
+            }
+            let n = proposal.curves.len();
+            out.note(live.now, Level::Info, None, format!("Setup proposes {n} curves, as a draft: nothing changes until it is saved"));
+            set_proposed(live, proposal);
+        }
+        Err(e) => set_proposed(live, Proposal { refused: Some(format!("The curves didn't fit the configuration: {e}")), ..proposal }),
+    }
+}
+
+fn set_proposed(live: &mut Live, p: Proposal) {
+    if let Some(s) = live.setup.as_mut() {
+        s.proposed = Some(p);
+    }
 }
 
 /// `identify`: 100 % for 3 s, then back.

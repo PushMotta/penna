@@ -308,6 +308,9 @@ pub struct Progress {
     pub mover: Option<Key>,
     pub controls: Vec<ControlProgress>,
     pub guards: Vec<GuardProgress>,
+    /// Once measuring is over: the curves the daemon proposes, as a draft on setup's connection (§5.5).
+    #[serde(default)]
+    pub proposed: Option<crate::generate::Proposal>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1179,6 +1182,7 @@ impl Setup {
                     limit: g.limit,
                 })
                 .collect(),
+            proposed: None,
         }
     }
 }

@@ -364,7 +364,7 @@ fn drafts_preview_save_discard_and_die_with_their_connection() {
     assert!(cpu["nvml"].is_null());
     assert_eq!(ctl(s, GPU1)["nvml"], json!({"min": 30, "max": 100}));
     assert_eq!(ctl(s, SPARE)["label"], "it87 pwm4", "a control no profile names is in the studio too, named for its chip");
-    assert_eq!(s["draft"], json!({"mine": false, "dirty": false, "curves": [], "controls": []}));
+    assert_eq!(s["draft"], json!({"mine": false, "dirty": false, "curves": [], "controls": [], "generated": []}));
     assert_eq!(s["profiles"][0], json!({"id": "defaults", "label": "Defaults", "assign": {}, "builtin": true}));
     assert!(s["profiles"].as_array().unwrap().iter().any(|p| p["assign"][CPU] == "cpu-quiet"));
 
@@ -374,7 +374,7 @@ fn drafts_preview_save_discard_and_die_with_their_connection() {
     flat_out["points"] = json!([[20.0, 100.0], [100.0, 100.0]]);
     let r = a.call(json!({"op": "draft.put_curve", "curve": flat_out}));
     assert_eq!(r["ok"], true, "{r}");
-    assert_eq!(r["result"]["draft"], json!({"mine": true, "dirty": true, "curves": ["cpu-quiet"], "controls": []}));
+    assert_eq!(r["result"]["draft"], json!({"mine": true, "dirty": true, "curves": ["cpu-quiet"], "controls": [], "generated": []}));
     let t = a.tick_where(40, "the preview", |t| control(t, CPU)["target"] == 100.0);
     assert_eq!(t["draft"], json!({"curves": ["cpu-quiet"], "controls": []}));
 
@@ -395,7 +395,7 @@ fn drafts_preview_save_discard_and_die_with_their_connection() {
     assert_eq!(r["error"], "Another studio has unsaved changes.");
     assert_eq!(b.call(json!({"op": "draft.save"}))["error"], "Another studio has unsaved changes.");
     let theirs = b.call(json!({"op": "studio"}));
-    assert_eq!(theirs["result"]["draft"], json!({"mine": false, "dirty": true, "curves": ["cpu-quiet"], "controls": []}));
+    assert_eq!(theirs["result"]["draft"], json!({"mine": false, "dirty": true, "curves": ["cpu-quiet"], "controls": [], "generated": []}));
 
     // The studio that made the draft closes without saving: back to what is saved, and everyone is told.
     drop(a);
@@ -691,9 +691,9 @@ fn setup_measures_the_x570_desk_from_a_fresh_install() {
     let t = c.tick_where(10, "paired tachs", |t| tach(t, &format!("{it8688}/fan1"))["control"] == format!("{it8688}/pwm1"));
     assert!(tach(&t, &format!("{it8792}/fan2"))["control"].is_null());
 
-    // Every fan back as it was found, and the plan holds nothing the configuration doesn't name.
+    // Every fan back as it was found. The draft of proposed curves names every fan, and runs none of them in Defaults.
     let t = c.tick_where(20, "every fan given back", |t| t["controls"].as_array().unwrap().iter().all(|c| c["state"] != "measuring"));
-    assert!(t["controls"].as_array().unwrap().iter().all(|x| x["key"].as_str().unwrap().starts_with("nvml/")), "{}", t["controls"]);
+    assert!(t["controls"].as_array().unwrap().iter().all(|x| x["state"] == "firmware"), "{}", t["controls"]);
     for n in 1..=5 {
         assert_eq!(enable("it87.2624", 4, n), "2", "IT8688E pwm{n} back on its BIOS");
     }
@@ -726,6 +726,60 @@ fn setup_measures_the_x570_desk_from_a_fresh_install() {
     assert!(sys5["reason"].as_str().is_some_and(|r| r.starts_with("On a pump header")), "{sys5}");
     let r = c.call(json!({"op": "setup.roles", "roles": {"CPU_FAN": "blower"}}));
     assert_eq!(r["error"], "\"blower\" isn't a role. Roles: cpu, gpu, pump, chipset, laptop, case.");
+
+    // The curves setup proposes (§5.5): a draft on this connection, generated again for the confirmed roles, with Defaults on.
+    let proposed = &t["setup"]["proposed"];
+    assert!(proposed["refused"].is_null(), "{proposed}");
+    let curves: Vec<&str> = proposed["curves"].as_array().unwrap().iter().map(|c| c.as_str().unwrap()).collect();
+    for id in ["cpu-balanced", "gpu-balanced", "case-balanced", "pump-balanced", "chipset"] {
+        assert!(curves.contains(&id), "{curves:?}");
+    }
+    assert_eq!(proposed["anchors"]["hwmon/k10temp/0000:00:18.3/temp1"]["limit"], 90.0, "the 5950X's TjMax");
+    assert_eq!(proposed["anchors"]["nvml/GPU-5a1d3090-0000-4000-8000-00000000mock/temp"]["target"], 83.0, "NVML's acoustic target");
+    assert_eq!(d.log().matches("Setup proposes 19 curves").count(), 2, "once measured, and again for the confirmed roles");
+    let studio = c.call(json!({"op": "studio"}))["result"].clone();
+    assert_eq!((studio["draft"]["mine"].as_bool(), studio["profile"].as_str()), (Some(true), Some("defaults")), "{}", studio["draft"]);
+    assert_eq!(studio["draft"]["generated"].as_array().unwrap().len(), 19);
+    let mut other = d.connect();
+    other.line();
+    assert_eq!(other.call(json!({"op": "studio"}))["result"]["draft"]["mine"], false, "the draft is setup's");
+    drop(other);
+    let t = c.tick_where(5, "a tick", |_| true);
+    assert!(t["controls"].as_array().unwrap().iter().all(|x| x["state"] != "curve"), "the draft runs nothing in Defaults");
+
+    // Saving keeps everything and switches to Balanced (§11.3 call 9).
+    let r = c.call(json!({"op": "draft.save"}));
+    assert_eq!(r["ok"], true, "{r}");
+    let following =
+        |t: &Value| t["controls"].as_array().unwrap().iter().filter(|x| x["curve"].is_string() && x["state"] != "firmware").count();
+    let t = c.tick_where(20, "every fan on its curve", |t| t["profile"] == "balanced" && following(t) == 9);
+    assert_eq!(t["controls"].as_array().unwrap().iter().find(|x| x["label"] == "CPU_FAN").unwrap()["curve"], "cpu-balanced");
+    let saved = fs::read_to_string(dir.join("tree/etc/penna/config.toml")).unwrap();
+    assert!(saved.contains("profile = \"balanced\"") && saved.contains("id = \"cpu-balanced\""), "{saved}");
+    assert!(d.log().contains("Profile: Balanced"));
+    d.stop();
+}
+
+/// Setup's draft belongs to its connection: closing it leaves the curves unsaved and Defaults on, and keeps the measurements.
+#[test]
+fn setup_curves_go_with_their_connection() {
+    let dir = fresh("setup-draft-closed");
+    let d = Daemon::start_scenario(&dir, "x570-desk", "tree", &["--speed", "50"]);
+    let mut a = d.connect();
+    a.line();
+    assert_eq!(a.call(json!({"op": "subscribe"}))["ok"], true);
+    assert_eq!(a.call(json!({"op": "setup.start"}))["ok"], true);
+    let t = a.tick_where(3000, "review", |t| t["setup"]["step"] == "review" && !t["setup"]["proposed"].is_null());
+    assert!(t["setup"]["proposed"]["curves"].as_array().is_some_and(|c| !c.is_empty()));
+    let mut b = d.connect();
+    b.line();
+    assert_eq!(b.call(json!({"op": "subscribe"}))["ok"], true);
+    drop(a);
+    let t = b.tick_where(40, "the draft gone", |t| t["draft"].is_null() && t["setup"].is_null());
+    assert_eq!(t["profile"], "defaults");
+    let saved = fs::read_to_string(dir.join("tree/etc/penna/config.toml")).unwrap();
+    assert!(!saved.contains("cpu-balanced"), "nothing was saved");
+    assert!(dir.join("tree/var/lib/penna/measured.toml").exists(), "the measurements are kept");
     d.stop();
 }
 

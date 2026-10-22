@@ -323,6 +323,9 @@ pub struct Live {
 pub struct Draft {
     pub owner: u64,
     pub config: Config,
+    /// Setup generated it from this configuration (§5.5): saving it switches to Balanced (§11.3 call 9), and setup generates
+    /// again from here when the roles change, so a role given up leaves no curve behind.
+    pub generated: Option<Config>,
 }
 
 impl Live {
@@ -351,7 +354,11 @@ impl Live {
             now: self.now,
             rate: self.rate,
             draft: self.draft_tick(),
-            setup: self.setup.as_ref().map(|s| s.run.progress()),
+            setup: self.setup.as_ref().map(|s| {
+                let mut p = s.run.progress();
+                p.proposed = s.proposed.clone();
+                p
+            }),
             drift: &self.drift.drifting,
         })
     }
@@ -504,6 +511,7 @@ fn run(args: Args) -> Result<()> {
         if setup::step(&mut live, &readings, &mut out, now, unix_now()) {
             machine.set_pairing(&live.measured);
             setup::replan(&mut live, &machine.inventory, &mut out, now);
+            setup::propose(&mut live, &machine.inventory, &mut out);
         }
         let (next, cmds) = tick(&live.plan, &live.state, &readings, now);
         live.state = next;

@@ -1,11 +1,13 @@
 //! `penna setup` (DESIGN.md §5, §11.3): the same run as the studio's setup view, in a terminal. It holds its own connection, so
 //! Ctrl-C, or a closed terminal, stops setup and every fan goes back as it was found. One line per step as it ends, a live line
-//! while it runs, then the roles to confirm.
+//! while it runs, then the roles to confirm and the curves setup proposes, a draft on this connection, to save or leave.
 use crate::client::{self, Client};
 use crate::render::Style;
 use anyhow::{Context, Result, anyhow, bail};
+use penna_core::config::MixOp;
+use penna_core::generate::{Anchors, Proposal};
 use penna_core::setup::{ControlProgress, Progress, Role, Step};
-use penna_proto::{Event, Op};
+use penna_proto::{CurveKindName, Event, Op, Studio, StudioCurve};
 use std::collections::BTreeMap;
 use std::io::{BufRead, IsTerminal, Write};
 use std::sync::Arc;
@@ -77,7 +79,8 @@ pub fn run(controls: Vec<String>, style: Style) -> Result<()> {
         bail!("setup stopped: {why} Every fan is back as it was found.");
     }
     print!("{}", step_lines(Step::Review, &p, &p, style));
-    confirm_roles(&p)
+    let proposed = confirm_roles(&mut c, &p)?.or(p.proposed);
+    curves(&mut c, proposed, style)
 }
 
 fn next(s: Step) -> Step {
@@ -193,8 +196,9 @@ fn step_lines(step: Step, before: &Progress, now: &Progress, style: Style) -> St
     s
 }
 
-/// The roles setup suggested, confirmed by the user (§5.3). A dashed suggestion asks; the rest are taken as they are.
-fn confirm_roles(p: &Progress) -> Result<()> {
+/// The roles setup suggested, confirmed by the user (§5.3). A dashed suggestion asks; the rest are taken as they are. Returns
+/// the curves proposed for the confirmed roles, when the daemon proposed again.
+fn confirm_roles(c: &mut Client, p: &Progress) -> Result<Option<Proposal>> {
     let interactive = std::io::stdin().is_terminal();
     let mut roles = BTreeMap::new();
     let stdin = std::io::stdin();
@@ -226,11 +230,11 @@ fn confirm_roles(p: &Progress) -> Result<()> {
         roles.insert(c.key.to_string(), role_id(role).to_owned());
     }
     if roles.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
     if !interactive {
         println!("Roles are suggestions until confirmed: run penna setup in a terminal, or confirm them in the studio.");
-        return Ok(());
+        return Ok(None);
     }
     print!("Confirm these roles? [Y/n] ");
     std::io::stdout().flush()?;
@@ -238,51 +242,201 @@ fn confirm_roles(p: &Progress) -> Result<()> {
     input.read_line(&mut line)?;
     if line.trim().eq_ignore_ascii_case("n") {
         println!("Not confirmed. They stay suggestions until you confirm them.");
-        return Ok(());
+        return Ok(None);
     }
-    let mut c = Client::find().ok_or_else(client::not_running)?;
     let r = c.call(Op::SetupRoles { roles })?;
     let text = r.as_ref().and_then(|r| r.get("text")).and_then(|t| t.as_str()).unwrap_or_default().to_owned();
     println!("{text}.");
-    if text.contains("measuring") {
-        // A case fan on a pump header is measured below 50 % now, on this connection: stay until it is done.
-        let mut done = None;
-        let mut running = false;
-        c.subscribe(|_, ev| {
-            let Some(Event::Tick(t)) = ev else { return Ok(true) };
-            match t.setup {
-                Some(p) if p.stopped.is_some() || p.step == Step::Review => {
-                    if running {
-                        done = Some(*p);
-                    }
-                    Ok(!running)
+    if !text.contains("measuring") {
+        let state = c.call(Op::State)?.unwrap_or_default();
+        return Ok(state.get("setup").and_then(|s| s.get("proposed")).and_then(|p| serde_json::from_value(p.clone()).ok()));
+    }
+    // A case fan on a pump header is measured below 50 % now, on this connection: stay until it is done.
+    let mut done = None;
+    let mut running = false;
+    c.subscribe(|_, ev| {
+        let Some(Event::Tick(t)) = ev else { return Ok(true) };
+        match t.setup {
+            Some(p) if p.stopped.is_some() || p.step == Step::Review => {
+                if running {
+                    done = Some(*p);
                 }
-                Some(_) => {
-                    running = true;
-                    Ok(true)
-                }
-                None => Ok(true),
+                Ok(!running)
             }
-        })?;
-        match done {
-            Some(p) if p.stopped.is_none() => {
-                for c in &p.controls {
-                    let name = c.header.clone().unwrap_or_else(|| c.label.clone());
-                    if let Some(stop) = c.stop {
-                        let start = c.start.map_or(String::new(), |s| format!(", starts at {s:.0} %"));
-                        println!("{name}: stops below {stop:.0} %{start}.");
-                    }
-                    if let Some(note) = &c.note {
-                        println!("{name}: {note}");
-                    }
+            Some(_) => {
+                running = true;
+                Ok(true)
+            }
+            None => Ok(true),
+        }
+    })?;
+    match done {
+        Some(p) if p.stopped.is_none() => {
+            for c in &p.controls {
+                let name = c.header.clone().unwrap_or_else(|| c.label.clone());
+                if let Some(stop) = c.stop {
+                    let start = c.start.map_or(String::new(), |s| format!(", starts at {s:.0} %"));
+                    println!("{name}: stops below {stop:.0} %{start}.");
+                }
+                if let Some(note) = &c.note {
+                    println!("{name}: {note}");
                 }
             }
-            Some(p) => println!("Stopped: {}", p.stopped.unwrap_or_default()),
-            None => {}
+            Ok(p.proposed)
+        }
+        Some(p) => {
+            println!("Stopped: {}", p.stopped.unwrap_or_default());
+            Ok(None)
+        }
+        None => Ok(None),
+    }
+}
+
+/// The curves setup proposes (§5.5), a draft on this connection: shown in words, then saved, which switches to Balanced, or left,
+/// which keeps every fan where it is.
+fn curves(c: &mut Client, proposed: Option<Proposal>, style: Style) -> Result<()> {
+    let Some(p) = proposed else {
+        println!("Setup proposed no curves. Adopt fans in the studio: penna open.");
+        return Ok(());
+    };
+    if let Some(why) = &p.refused {
+        println!("{why}");
+        return Ok(());
+    }
+    let studio: Studio = serde_json::from_value(c.call(Op::Studio)?.unwrap_or_default()).context("the studio's reply")?;
+    println!("\nProposed curves, a draft: nothing changes until you save it.");
+    print!("{}", curve_lines(&studio, &p));
+    for n in &p.notes {
+        println!("{}", style.dim(&format!("  {n}")));
+    }
+    if !std::io::stdin().is_terminal() {
+        println!("The draft goes when this command ends: run penna setup in a terminal to save it.");
+        return Ok(());
+    }
+    print!("Save these curves and switch to Balanced? [y/N] ");
+    std::io::stdout().flush()?;
+    let mut line = String::new();
+    std::io::stdin().lock().read_line(&mut line)?;
+    if line.trim().eq_ignore_ascii_case("y") {
+        c.call(Op::DraftSave)?;
+        println!("Saved. Penna runs every fan on Balanced; switch profiles in the popup, or with penna profile.");
+    } else {
+        c.call(Op::DraftDiscard)?;
+        println!("Not saved: every fan stays with its BIOS or driver. What setup measured is kept; run penna setup again for curves.");
+    }
+    Ok(())
+}
+
+const PROFILES: [(&str, &str); 3] = [("quiet", "Quiet"), ("balanced", "Balanced"), ("render", "Render")];
+
+/// One block per group of fans that share curves: who they are and what they follow, then a line per profile.
+fn curve_lines(studio: &Studio, p: &Proposal) -> String {
+    let assign = |profile: &str| studio.profiles.iter().find(|x| x.id == profile).map(|x| x.assign.clone()).unwrap_or_default();
+    let balanced = assign("balanced");
+    let curve = |id: &str| studio.curves.iter().find(|c| c.id == id);
+    let label = |k: &penna_core::Key| studio.controls.iter().find(|c| &c.key == k).map_or_else(|| k.to_string(), |c| c.label.clone());
+    // Fans grouped by the curve they follow in Balanced, in the order setup made the curves.
+    let mut groups: Vec<(String, Vec<penna_core::Key>)> = Vec::new();
+    for id in &p.curves {
+        let fans: Vec<penna_core::Key> = balanced.iter().filter(|(_, c)| *c == id).map(|(k, _)| k.clone()).collect();
+        if !fans.is_empty() {
+            groups.push((id.clone(), fans));
         }
     }
-    println!("Generated curves arrive with M8; until then, adopt fans in the studio (penna open).");
-    Ok(())
+    let mut s = String::new();
+    for (id, fans) in groups {
+        let Some(b) = curve(&id) else { continue };
+        let names: Vec<String> = fans.iter().map(label).collect();
+        let role = b.label.as_deref().and_then(|l| l.split(" · ").next()).unwrap_or(&id).to_owned();
+        let follows = match (&b.mix, &b.source) {
+            (Some(_), _) => "the larger of a CPU and a GPU curve".to_owned(),
+            (None, Some(src)) => format!("on {}{}", b.source_label.clone().unwrap_or_else(|| src.to_string()), anchors(p.anchors.get(src))),
+            _ => String::new(),
+        };
+        s.push_str(&format!(
+            "  {} · {role}{}\n",
+            names.join(", "),
+            if follows.is_empty() { String::new() } else { format!(", {follows}") }
+        ));
+        let per: Vec<(&str, Option<&StudioCurve>)> = PROFILES
+            .iter()
+            .map(|(pid, name)| (*name, fans.first().and_then(|k| assign(pid).get(k).cloned()).and_then(|c| curve(&c))))
+            .collect();
+        if per.iter().all(|(_, c)| c.map(|c| &c.id) == Some(&b.id)) {
+            s.push_str(&format!("    {:<10} {}\n", "All three", describe(b, studio)));
+        } else if per.iter().all(|(_, c)| c.is_some_and(|c| c.kind == CurveKindName::Flat)) {
+            let flat: Vec<String> =
+                per.iter().map(|(n, c)| format!("{n} {}", c.and_then(|c| c.duty).map_or("—".into(), |d| format!("{d:.0} %")))).collect();
+            s.push_str(&format!("    {}\n", flat.join(" · ")));
+        } else {
+            for (name, c) in per {
+                s.push_str(&format!("    {name:<10} {}\n", c.map_or("its firmware".to_owned(), |c| describe(c, studio))));
+            }
+        }
+    }
+    s
+}
+
+fn anchors(a: Option<&Anchors>) -> String {
+    let Some(a) = a else { return String::new() };
+    let mut parts = vec![format!("idle {:.0} °C", a.idle)];
+    if let Some(t) = a.target {
+        parts.push(format!("target {t:.0} °C"));
+    }
+    if let Some(l) = a.limit {
+        parts.push(format!("limit {l:.0} °C"));
+    }
+    format!(" ({})", parts.join(", "))
+}
+
+/// A curve in words: where it starts, its middle and its top.
+fn describe(c: &StudioCurve, studio: &Studio) -> String {
+    if let Some(d) = c.duty {
+        return format!("{d:.0} %");
+    }
+    if let Some(m) = &c.mix {
+        let parts: Vec<(String, Vec<[f64; 2]>)> =
+            m.of.iter()
+                .filter_map(|id| studio.curves.iter().find(|x| &x.id == id))
+                .filter_map(|x| Some((x.label.as_deref()?.rsplit(" · ").next()?.to_owned(), x.points.clone()?)))
+                .collect();
+        let op = if m.op == MixOp::Max { "" } else { "mixed " };
+        let from: Vec<String> = parts.iter().map(|(n, p)| format!("{:.0} °C ({n})", p[0][0])).collect();
+        let top: Vec<String> = parts.iter().map(|(n, p)| format!("{:.0} °C ({n})", p[p.len() - 1][0])).collect();
+        let duty = parts.first().map_or(0.0, |(_, p)| p[p.len() - 1][1]);
+        let floor = parts.first().map_or(0.0, |(_, p)| p[0][1]);
+        return format!("{op}{floor:.0} % until {}, up to {duty:.0} % at {}", from.join(" or "), top.join(" or "));
+    }
+    let Some(pts) = &c.points else { return String::new() };
+    let gpu = c.source.as_ref().is_some_and(|s| s.as_str().starts_with("nvml/"));
+    let mut words = Vec::new();
+    let mut rest: &[[f64; 2]] = pts.as_slice();
+    if let [[_, d], second, ..] = pts.as_slice()
+        && *d == 0.0
+    {
+        words.push(if gpu {
+            format!("the driver's curve below {:.0} °C", second[0])
+        } else {
+            format!("rests below {:.0} °C", second[0])
+        });
+        rest = &pts[1..];
+    }
+    if let Some(first) = rest.first() {
+        words.push(if words.is_empty() {
+            format!("{:.0} % until {:.0} °C", first[1], first[0])
+        } else {
+            format!("{:.0} % at {:.0} °C", first[1], first[0])
+        });
+    }
+    if rest.len() > 2 {
+        let mid = rest[rest.len() / 2];
+        words.push(format!("{:.0} % at {:.0} °C", mid[1], mid[0]));
+    }
+    if rest.len() > 1 {
+        let last = rest[rest.len() - 1];
+        words.push(format!("{:.0} % at {:.0} °C", last[1], last[0]));
+    }
+    words.join(", ")
 }
 
 fn role_id(r: Role) -> &'static str {
