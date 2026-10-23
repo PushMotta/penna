@@ -136,7 +136,7 @@ enum Command {
     Check {
         #[arg(default_value = "/etc/penna/config.toml")]
         config: PathBuf,
-        /// Pairing and calibration to check against.
+        /// Pairing and calibration to check against. Default: /var/lib/penna/measured.toml on this machine, when it exists.
         #[arg(long, value_name = "FILE")]
         measured: Option<PathBuf>,
     },
@@ -506,7 +506,9 @@ fn check(opts: &Options, path: &std::path::Path, measured: Option<&std::path::Pa
         }
         bail!("{} problem{} in {}", problems.len(), if problems.len() == 1 { "" } else { "s" }, path.display());
     }
-    let measured = match measured {
+    // What setup measured here, as pennad reads it: a fan that may stop needs its calibrated stop.
+    let here = std::path::Path::new("/var/lib/penna/measured.toml");
+    let measured = match measured.or_else(|| (penna_hw::is_real_sysfs(&opts.sysfs_root) && here.exists()).then_some(here)) {
         Some(p) => Measured::parse(&std::fs::read_to_string(p).with_context(|| format!("reading {}", p.display()))?)
             .map_err(|e| anyhow!("{}: {e}", p.display()))?,
         None => Measured::default(),
