@@ -1,6 +1,6 @@
 # Penna — design specification
 
-Draft 3 · 21 October 2026 · status: decisions approved (§11), UI quality bar added (§8.6), M0–M6 done, design review 01 approved (milestone D, §11.1), design review 03 approved (milestone D2, §11.3). Penna 0.8.2 runs as a service on this desk, and since setup's generated curves were saved there it runs every fan on Balanced (M8). Draft 3 widens Penna from this desk to any workstation or laptop, with automatic setup, generated curves and a Defaults profile: design review 02 (§11.2) was approved the same day. M5 was done on 22 Oct 2026: Penna drives every fan on this desk, and it87 is Verified.
+Draft 3 · 21 October 2026 · status: decisions approved (§11), UI quality bar added (§8.6), M0–M6 and M8 done, design review 01 approved (milestone D, §11.1), design review 03 approved (milestone D2, §11.3). Penna 0.8.3 runs as a service on this desk, and since setup's generated curves were saved there, from the studio, it runs every fan on Balanced (M8). Draft 3 widens Penna from this desk to any workstation or laptop, with automatic setup, generated curves and a Defaults profile: design review 02 (§11.2) was approved the same day. M5 was done on 22 Oct 2026: Penna drives every fan on this desk, and it87 is Verified.
 
 Companion: design review 01 — mockups in real theme tokens, live motion prototypes, and eight calls before QML — is published as an artifact (https://claude.ai/artifact/DmFftUzWVBd11NNBv4e8aK). Its source is `design/penna-design-review.html`.
 
@@ -1121,7 +1121,7 @@ Milestones, each ending in something visible:
   Still to do: the simulated drivers when M9 adds them.
 - **M8** — **Generated curves** (§5.5): per role and profile from setup's measurements, the CPU load check, and the review step.
 
-  **In progress since 22 Oct 2026.** Built and tested on the mock desk and against this desk's own measurements, now a fixture (`test/fixtures/measured/x570-desk.toml`).
+  **Done 23 Oct 2026** with the eighth run on this desk, from the studio, start to save (below). Built and tested on the mock desk and against this desk's own measurements, now a fixture (`test/fixtures/measured/x570-desk.toml`).
   - **The generator** (`penna-core/src/generate.rs`): every curve of §5.5 but firmware and laptop curves, every fan's limits, all three profiles. Calibration tables are made monotonic here (§5.4, step 3, moved from M7).
   - **The daemon** proposes the draft when measuring is over and again for confirmed roles. It runs the load check, and saving switches to Balanced. `draft.generate` is in the protocol.
   - **`penna setup`** keeps one connection from start to save. It shows the load check's result, describes the proposed curves per group of fans and profile, and asks to save them. `--no-load-check` skips the check.
@@ -1159,7 +1159,11 @@ Milestones, each ending in something visible:
 
   **The GPU fans' floor (0.8.3, decided 23 Oct 2026).** A GPU fan's floor is its measured stop plus 5 %, *may stop* or not (§4.5), and a curve shared by fans that may stop starts at the highest of their floors (§5.5). On the fourth run's measurements both fans' floors are 50 %; on the fifth's, 40 and 50 %, and every GPU curve starts at 50 %. 179 Rust tests.
 
-  Still to do: a setup run from the studio on this desk, from start to save (the seventh reached the review).
+  **The eighth run (23 Oct 2026, 0.8.3, from the studio)** went from start to save. Measuring took 8:30: pairing 1:43, calibration 3:10, load check 3:00. The review stayed open 24 minutes. Confirming the roles re-measured SYS_FAN5_PUMP in 1:31, down to its stop at 10 %, and *Save* switched to Balanced, as the journal shows ("Saved: … · Profile: Balanced", uid 1000).
+  - **The idle sample** read 42.0–45.8 °C, falling from the first reading on: its lowest fifth gave 42 °C, and Balanced CPU holds its floor to 52 °C.
+  - **The load check settled** at 65 °C with the CPU fans at 53 %, peak 69.1 °C. Over the last 2 minutes CPU_FAN held 53.0–53.2 % and the case fans 46.2–46.3 %, with Tctl at 63.8–66.2 °C.
+  - **The GPU floors under 0.8.3:** GPU fan 2 stopped below 45 %, so its floor is 50 %. GPU fan 1 read faster at 40 % than at 45 % again, as in the seventh run, so its floor is 45 %, its lowest. Every GPU curve now starts at 50 %, where both run: Balanced `[[67, 0], [68, 50], [73, 60], [78, 73], [83, 86], [88, 100]]`. At 38 °C both fans are with the driver, at zero RPM.
+  - **No script warnings** from the plugin in the shell's log across the run.
 - **M9** — **Laptops and other drivers:**
   - `levels`, `firmware-curve`, `modes` and `platform` controls, amdgpu included;
   - a Documented fixture per driver;
