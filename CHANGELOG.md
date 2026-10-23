@@ -15,6 +15,10 @@ hardware; every other driver is built from the kernel's source and tested in a s
 - **Safety:** every fan goes back to its BIOS or driver on every way out, including a crash, `kill -9`, a hung loop and
   removing the package. *Defaults* does it on demand.
 - **Surfaces:** the Omarchy plugin (bar glyph, popup, studio), the `penna` command line, and a Waybar module.
+- **Laptops with a sleeping GPU:** a hybrid laptop's dGPU, runtime-suspended, reads as asleep rather than failed. A curve on it
+  rests at its lowest point instead of running the fans at 100 %.
 - **Machine reports:** `penna capture` packs what Penna needs to learn a machine, without root and without serial numbers.
+- **The plugin and the daemon** say which one to update when they don't fit together, since one comes from git and the other
+  from a package.
 
 Support tiers: `it87` and NVML are Verified; every other driver is Documented. See the README.
