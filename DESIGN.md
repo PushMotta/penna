@@ -1299,6 +1299,12 @@ Milestones, each ending in something visible:
     The capture is `test/fixtures/machines/ac8-n`, with tests. An ACPI fan that reports its speed (`acpi_fan`) is listed as
     read-only, and the Wi-Fi card's sensor is called Wi-Fi.
 
+    **0.10.4 was installed there** the same day, by the README's steps: the release's package, checksum, `pacman -U`,
+    `systemctl enable --now pennad`, and the `penna` group. It was the first install on a machine other than this desk.
+    `pennad` wrote its starter, adopted nothing, read the seven temperatures with coretemp's own 105 °C as the emergency limit,
+    and ran in under 1 MB. The doctor found nothing that needs attention. Switching to Quiet and back to Defaults left
+    power-profiles-daemon on "performance": the lever stayed off. No plugin: the machine runs no desktop session.
+
   Not yet: the AUR, until it takes new accounts again, and the marketplace submission (`plugin/docs/`).
 
 ## 11. Decisions (approved 21 Oct 2026)
