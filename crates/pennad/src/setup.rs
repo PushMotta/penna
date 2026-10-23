@@ -84,7 +84,11 @@ pub fn start(
             t.label = l;
         }
     }
-    if input.targets.is_empty() {
+    // Fans Penna can drive but not measure, a firmware's curve or its modes, still need the idle sample their curves are placed
+    // on: setup runs for that alone (§5.5).
+    let unmeasured =
+        only.is_none() && inventory.devices.iter().flat_map(|d| &d.controls).any(|c| c.kind.drivable() && !c.kind.measurable());
+    if input.targets.is_empty() && !unmeasured {
         return Err("There is no fan here that Penna can drive: penna doctor says why.".into());
     }
     // The load check (§5.5): on by default, but not on battery, and not when measuring only some fans again.
@@ -97,7 +101,11 @@ pub fn start(
     live.plan.carry(&keys, inventory, &live.measured);
     let check = if input.load_check.is_some() { "; after calibration, 3 minutes of full CPU load check the proposed curves" } else { "" };
     live.setup = Some(SetupRun { owner: conn, run: Setup::new(input, live.now), saved: false, last_step: Step::Idle, proposed: None });
-    let text = format!("Setup started: {n} fan control{}. Every fan stays with its firmware for the 30 s idle sample{check}", plural(n));
+    let text = if n == 0 {
+        format!("Setup started: no fan here to measure, so the 30 s idle sample places the proposed curves{check}")
+    } else {
+        format!("Setup started: {n} fan control{}. Every fan stays with its firmware for the 30 s idle sample{check}", plural(n))
+    };
     out.note(live.now, Level::Info, None, text.clone());
     Ok(text)
 }

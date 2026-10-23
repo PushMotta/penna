@@ -137,7 +137,11 @@ pub fn generate(base: &Config, inventory: &Inventory, measured: &Measured, cpu_m
             Role::Laptop => g.laptop(&fans, cpu.as_ref(), &gpus),
         }
     }
-    g.modes(inventory);
+    // With firmware curves on the machine, fans with modes are left to their firmware: on asus-wmi a mode written turns every
+    // custom curve off, and the curves already take Full speed and emergencies, as a flat 100 % curve.
+    if !g.firmware_curves(inventory, cpu.as_ref(), &gpus) {
+        g.modes(inventory);
+    }
     Generated { config: g.config, curves: g.curves, anchors: g.anchors, notes: g.notes }
 }
 
@@ -459,6 +463,45 @@ impl Builder {
             }
             self.assign(fans, p, &id);
         }
+    }
+
+    /// A fan whose firmware runs a curve gets one Graph on what its firmware cools, the driver table says (§3.5, §5.5): the CPU or
+    /// GPU table of each profile, from a floor of 25 % to 100 %, since nothing measures it. The plan fits it to the firmware's
+    /// points. Returns whether there was one.
+    fn firmware_curves(&mut self, inventory: &Inventory, cpu: Option<&Src>, gpus: &[Src]) -> bool {
+        let mut n = 0;
+        for d in &inventory.devices {
+            let on = crate::drivers::lookup(&d.driver).map_or(&[][..], |e| e.curve_on);
+            for c in d.controls.iter().filter(|c| matches!(c.kind, ControlKind::FirmwareCurve { .. })) {
+                let channel: usize = c.key.channel().strip_prefix("pwm").and_then(|n| n.parse().ok()).unwrap_or(1);
+                let gpu = gpus.iter().find(|g| c.key.as_str().starts_with(&g.device)).or(gpus.first());
+                let (name, src, is_gpu) = match (on.get(channel.saturating_sub(1)).copied(), cpu, gpu) {
+                    (Some("gpu"), _, Some(g)) => ("GPU", g, true),
+                    (_, Some(c), _) => ("CPU", c, false),
+                    (_, None, Some(g)) => ("GPU", g, true),
+                    (_, None, None) => {
+                        self.notes.push(format!("{}: there is no CPU or GPU temperature for its firmware curve", c.label));
+                        continue;
+                    }
+                };
+                n += 1;
+                for p in 0..3 {
+                    let at = if is_gpu {
+                        let target = src.a.target.unwrap_or(83.0);
+                        let [below, half] = GPU[p];
+                        legs(target - below, target - half, Self::gpu_full(src, p))
+                    } else {
+                        let [from, half, _] = CPU[p];
+                        legs(src.a.idle + from, src.a.limit.unwrap_or(DEFAULT_EMERGENCY) - half, Self::cpu_full(src, p))
+                    };
+                    let points: Vec<[f64; 2]> = at.iter().map(|(t, share)| [t.round(), (25.0 + 75.0 * share).round()]).collect();
+                    let kind = CurveKind::Graph { source: src.key.clone(), points };
+                    let id = self.put(format!("fw-{n}-{}", PROFILES[p]), format!("{name} fan {n} · {}", title(p)), kind, None, Some(3.0));
+                    self.config.profiles.entry(PROFILES[p].to_owned()).or_default().insert(c.key.clone(), id);
+                }
+            }
+        }
+        n > 0
     }
 
     /// A fan with modes runs its firmware's automatic mode in every profile, held by Penna so that Full speed and emergencies

@@ -163,6 +163,8 @@ pub struct Chip {
     /// repeats the last (§5.4). 0: every read is fresh.
     #[serde(default)]
     pub cache: f64,
+    #[serde(default, rename = "custom")]
+    pub customs: Vec<CustomCurveSpec>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -209,6 +211,27 @@ pub struct PwmSpec {
     /// `pwmN_enable` is 1.
     #[serde(default)]
     pub unreadable_in_auto: bool,
+    /// Modes only (§3.5): `pwmN_enable` 0 is full speed and 2 automatic, and there is no `pwmN`, as on asus-wmi's GPU fan.
+    #[serde(default)]
+    pub modes: bool,
+    /// What `pwmN_enable` reads until something writes it, while the firmware runs `enable`: asus-wmi's cache, 0 from kzalloc.
+    #[serde(default)]
+    pub cache: Option<i64>,
+}
+
+/// A custom fan curve on its own chip, as asus-wmi's `asus_custom_fan_curve` has (drivers/platform/x86/asus-wmi.c at v7.3):
+/// `pwmN_enable` 1 runs `pwmN_auto_point[1-8]_temp` (°C) and `_pwm` (0–255) on the fan another chip's PWM drives; 2 leaves it to
+/// the firmware. Writing a point, or a platform profile change, turns it off until 1 is written again.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CustomCurveSpec {
+    pub channel: u32,
+    /// The factory curve: °C and %.
+    pub points: Vec<[f64; 2]>,
+    pub body: String,
+    /// The chip (its `hwmonN`) and the PWM channel whose fan this curve runs.
+    pub hwmon: u32,
+    pub pwm: u32,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -382,6 +405,10 @@ pub struct Sim {
     boosts: BTreeMap<(usize, u32), f64>,
     /// A watched control's files as last seen, and when someone last wrote them.
     writes: BTreeMap<(usize, u32), (Option<std::time::SystemTime>, f64)>,
+    /// An enable file that reads a cache, and its time when built: until it changes, the firmware runs the fan.
+    cached: BTreeMap<PathBuf, std::time::SystemTime>,
+    /// The platform profile file's time when the custom curves last saw it.
+    profile_seen: Option<std::time::SystemTime>,
     active: BTreeSet<usize>,
     fired: BTreeSet<usize>,
 }
@@ -411,6 +438,8 @@ impl Sim {
             full_cpu: false,
             boosts: BTreeMap::new(),
             writes: BTreeMap::new(),
+            cached: BTreeMap::new(),
+            profile_seen: None,
             active: BTreeSet::new(),
             fired: BTreeSet::new(),
         };
@@ -478,9 +507,25 @@ impl Sim {
                 }
             }
             for p in &chip.pwms {
-                put(&dir.join(format!("pwm{}_enable", p.channel)), &p.enable.to_string())?;
-                let duty = self.firmware_duty(&p.firmware);
-                put(&dir.join(format!("pwm{}", p.channel)), &raw(duty).to_string())?;
+                let enable = dir.join(format!("pwm{}_enable", p.channel));
+                put(&enable, &p.cache.unwrap_or(p.enable).to_string())?;
+                if p.cache.is_some() {
+                    self.cached.insert(enable.clone(), fs::metadata(&enable)?.modified()?);
+                }
+                if !p.modes {
+                    let duty = self.firmware_duty(&p.firmware);
+                    put(&dir.join(format!("pwm{}", p.channel)), &raw(duty).to_string())?;
+                }
+            }
+            for c in &chip.customs {
+                put(&dir.join(format!("pwm{}_enable", c.channel)), "2")?;
+                for (m, [t, pct]) in c.points.iter().enumerate() {
+                    put(&dir.join(format!("pwm{}_auto_point{}_temp", c.channel, m + 1)), &(t.round() as i64).to_string())?;
+                    put(
+                        &dir.join(format!("pwm{}_auto_point{}_pwm", c.channel, m + 1)),
+                        &((pct * 255.0 / 100.0).round() as i64).to_string(),
+                    )?;
+                }
             }
             for f in &chip.fans {
                 put(&dir.join(format!("fan{}_input", f.channel)), "0")?;
@@ -639,7 +684,9 @@ impl Sim {
             let dir = self.chip_dir(&chip);
             for p in &chip.pwms {
                 put(&dir.join(format!("pwm{}_enable", p.channel)), &p.enable.to_string())?;
-                put(&dir.join(format!("pwm{}", p.channel)), &raw(self.firmware_duty(&p.firmware)).to_string())?;
+                if !p.modes {
+                    put(&dir.join(format!("pwm{}", p.channel)), &raw(self.firmware_duty(&p.firmware)).to_string())?;
+                }
             }
         }
         for g in self.sc.gpus.clone() {
@@ -689,7 +736,14 @@ impl Sim {
                 if let Some(w) = &p.watchdog {
                     self.watchdog(ci, p.channel, &self.root.join(w), &pwm_path, &enable_path)?;
                 }
-                let enable: i64 = get(&enable_path).unwrap_or(p.enable);
+                let written =
+                    self.cached.get(&enable_path).is_none_or(|t| fs::metadata(&enable_path).and_then(|m| m.modified()).ok() != Some(*t));
+                let enable: i64 = if written { get(&enable_path).unwrap_or(p.enable) } else { p.enable };
+                if p.modes {
+                    let duty = if enable == 0 { 100.0 } else { self.firmware_duty(&p.firmware) };
+                    duty_of.insert((ci, p.channel), duty);
+                    continue;
+                }
                 if p.unreadable_in_auto {
                     let mode = if enable == 1 { 0o644 } else { 0o200 };
                     fs::set_permissions(&pwm_path, fs::Permissions::from_mode(mode))?;
@@ -723,6 +777,7 @@ impl Sim {
                 duty_of.insert((ci, p.channel), duty);
             }
         }
+        self.custom_curves(&mut duty_of)?;
         // Motherboard fans.
         for (ci, chip) in self.sc.chips.clone().iter().enumerate() {
             let dir = self.chip_dir(chip);
@@ -804,6 +859,42 @@ impl Sim {
             let t = self.temps.get(&b.id).copied().unwrap_or(self.sc.ambient);
             let dt = (p - (b.passive + b.airflow * airflow) * (t - self.sc.ambient)) / b.capacity * h;
             self.temps.insert(b.id.clone(), t + dt);
+        }
+        Ok(())
+    }
+
+    /// Custom fan curves (asus-wmi): an enabled one runs its fan on its points. A point written after the enable, or a platform
+    /// profile change, turns it off, as the driver does.
+    fn custom_curves(&mut self, duty_of: &mut BTreeMap<(usize, u32), f64>) -> Result<()> {
+        let profile = self.root.join("firmware/acpi/platform_profile");
+        let seen = fs::metadata(&profile).and_then(|m| m.modified()).ok();
+        let changed = self.profile_seen.is_some() && seen != self.profile_seen;
+        self.profile_seen = seen;
+        for chip in self.sc.chips.clone() {
+            let dir = self.chip_dir(&chip);
+            for c in &chip.customs {
+                let enable = dir.join(format!("pwm{}_enable", c.channel));
+                let files: Vec<(PathBuf, PathBuf)> = (1..=c.points.len())
+                    .map(|m| {
+                        (dir.join(format!("pwm{}_auto_point{m}_temp", c.channel)), dir.join(format!("pwm{}_auto_point{m}_pwm", c.channel)))
+                    })
+                    .collect();
+                let time = |p: &Path| fs::metadata(p).and_then(|m| m.modified()).ok();
+                let point_after = files.iter().flat_map(|(a, b)| [time(a), time(b)]).max().flatten() > time(&enable);
+                if get::<i64>(&enable) == Some(1) && (point_after || changed) {
+                    put(&enable, "2")?;
+                }
+                if get::<i64>(&enable) != Some(1) {
+                    continue;
+                }
+                let points: Vec<[f64; 2]> =
+                    files.iter().filter_map(|(t, p)| Some([get::<f64>(t)?, (get::<f64>(p)? * 100.0 / 255.0).floor()])).collect();
+                let t = self.temps.get(&c.body).copied().unwrap_or(self.sc.ambient);
+                let duty = penna_core::control::graph(&points, t).clamp(0.0, 100.0);
+                if let Some(ci) = self.sc.chips.iter().position(|x| x.hwmon == c.hwmon) {
+                    duty_of.insert((ci, c.pwm), duty);
+                }
+            }
         }
         Ok(())
     }

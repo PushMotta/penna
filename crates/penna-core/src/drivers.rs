@@ -96,6 +96,8 @@ pub struct Driver {
     /// A firmware fan curve the device offers beside `pwmN`, as a path from the hwmon directory: amdgpu's OverDrive curve, which
     /// Penna drives when `pwm1` isn't writable (RDNA4).
     pub curve: Option<&'static str>,
+    /// What a firmware curve on `pwmN` cools, by channel: `cpu` or `gpu`. Its generated curve follows that source (§5.5).
+    pub curve_on: &'static [&'static str],
     /// Where this entry was written from.
     pub source: &'static str,
 }
@@ -129,6 +131,7 @@ pub const DRIVERS: &[Driver] = &[
         watchdog: None,
         allowed: None,
         curve: None,
+        curve_on: &[],
         source: "drivers/hwmon/it87.c, Documentation/hwmon/it87.rst; github.com/frankcrawford/it87 at bd7a566; the §9.4 test on \
                  this desk's IT8688E and IT8792E with that fork, 22 Oct 2026",
     },
@@ -144,6 +147,7 @@ pub const DRIVERS: &[Driver] = &[
         watchdog: None,
         allowed: None,
         curve: None,
+        curve_on: &[],
         source: "drivers/hwmon/nct6775-core.c, Documentation/hwmon/nct6775.rst",
     },
     // nct6683 reads only (no pwm_enable); the out-of-tree nct6687d registers the same name with writable controls, so the
@@ -160,6 +164,7 @@ pub const DRIVERS: &[Driver] = &[
         watchdog: None,
         allowed: None,
         curve: None,
+        curve_on: &[],
         source: "drivers/hwmon/nct6683.c; github.com/Fred78290/nct6687d",
     },
     Driver {
@@ -174,6 +179,7 @@ pub const DRIVERS: &[Driver] = &[
         watchdog: None,
         allowed: None,
         curve: None,
+        curve_on: &[],
         source: "drivers/hwmon/f71882fg.c, Documentation/hwmon/f71882fg.rst",
     },
     Driver {
@@ -188,6 +194,7 @@ pub const DRIVERS: &[Driver] = &[
         watchdog: None,
         allowed: None,
         curve: None,
+        curve_on: &[],
         source: "Documentation/hwmon/w83627ehf.rst",
     },
     Driver {
@@ -204,6 +211,7 @@ pub const DRIVERS: &[Driver] = &[
         allowed: None,
         // Up to RDNA3 pwm1 takes a duty; on RDNA4 it is read-only, and OverDrive's 5-point curve is the lever.
         curve: Some("device/gpu_od/fan_ctrl/fan_curve"),
+        curve_on: &["gpu"],
         source: "drivers/gpu/drm/amd/pm/amdgpu_pm.c, Documentation/gpu/amdgpu/thermal.rst",
     },
     Driver {
@@ -218,6 +226,7 @@ pub const DRIVERS: &[Driver] = &[
         watchdog: None,
         allowed: None,
         curve: None,
+        curve_on: &[],
         source: "drivers/gpu/drm/nouveau/nouveau_hwmon.c",
     },
     Driver {
@@ -232,6 +241,7 @@ pub const DRIVERS: &[Driver] = &[
         watchdog: None,
         allowed: None,
         curve: None,
+        curve_on: &[],
         source: "Documentation/hwmon/gpd-fan.rst",
     },
     Driver {
@@ -246,6 +256,7 @@ pub const DRIVERS: &[Driver] = &[
         watchdog: None,
         allowed: None,
         curve: None,
+        curve_on: &[],
         source: "Documentation/hwmon/cros_ec_hwmon.rst",
     },
     Driver {
@@ -260,6 +271,7 @@ pub const DRIVERS: &[Driver] = &[
         watchdog: None,
         allowed: None,
         curve: None,
+        curve_on: &[],
         source: "drivers/platform/x86/acer-wmi.c",
     },
     Driver {
@@ -276,6 +288,7 @@ pub const DRIVERS: &[Driver] = &[
         // module_param_named(fan_control, fan_control_allowed, bool, 0444): pwm1 stays 0644 without it, and writes get EPERM.
         allowed: Some(Param { path: "module/thinkpad_acpi/parameters/fan_control", value: "Y" }),
         curve: None,
+        curve_on: &[],
         source: "drivers/platform/x86/lenovo/thinkpad_acpi.c (fan_pwm1_store, fan_pwm1_enable_store, fan_watchdog_store, \
                  tpacpi_hwmon_pdriver); Documentation/admin-guide/laptops/thinkpad-acpi.rst",
     },
@@ -293,6 +306,7 @@ pub const DRIVERS: &[Driver] = &[
         watchdog: None,
         allowed: None,
         curve: None,
+        curve_on: &[],
         source: "drivers/hwmon/dell-smm-hwmon.c (dell_smm_read, dell_smm_write, dell_smm_is_visible); \
                  Documentation/hwmon/dell-smm-hwmon.rst",
     },
@@ -310,6 +324,7 @@ pub const DRIVERS: &[Driver] = &[
         watchdog: None,
         allowed: None,
         curve: None,
+        curve_on: &[],
         source: "drivers/platform/x86/asus-wmi.c (pwm1_enable_store, pwm2_enable_show, asus_hwmon_sysfs_is_visible)",
     },
     Driver {
@@ -324,6 +339,8 @@ pub const DRIVERS: &[Driver] = &[
         watchdog: None,
         allowed: None,
         curve: None,
+        // pwm1 the CPU fan (0x00110024), pwm2 the GPU fan (0x00110025), pwm3 the middle fan (0x00110032).
+        curve_on: &["cpu", "gpu", "cpu"],
         source: "drivers/platform/x86/asus-wmi.c",
     },
     Driver {
@@ -340,6 +357,7 @@ pub const DRIVERS: &[Driver] = &[
         watchdog: None,
         allowed: None,
         curve: None,
+        curve_on: &[],
         source: "drivers/platform/x86/hp/hp-wmi.c",
     },
     Driver {
@@ -355,6 +373,7 @@ pub const DRIVERS: &[Driver] = &[
         watchdog: None,
         allowed: None,
         curve: None,
+        curve_on: &[],
         source: "drivers/platform/x86/dell/alienware-wmi-wmax.c; Documentation/admin-guide/laptops/alienware-wmi.rst",
     },
     Driver {
@@ -370,6 +389,7 @@ pub const DRIVERS: &[Driver] = &[
         watchdog: None,
         allowed: None,
         curve: None,
+        curve_on: &[],
         source: "drivers/platform/x86/lenovo/wmi-other.c (lwmi_om_hwmon_write); Documentation/wmi/devices/lenovo-wmi-other.rst",
     },
     Driver {
@@ -384,6 +404,7 @@ pub const DRIVERS: &[Driver] = &[
         watchdog: None,
         allowed: None,
         curve: None,
+        curve_on: &[],
         source: "drivers/hwmon/applesmc.c (applesmc_hwmon_write from 7.3; applesmc_store_fan_manual up to 7.2)",
     },
     // Penna never writes its curve files: one written in the wrong unit hard-powered-off a Legion Pro 5 (§3.5).
@@ -399,6 +420,7 @@ pub const DRIVERS: &[Driver] = &[
         watchdog: None,
         allowed: None,
         curve: None,
+        curve_on: &[],
         source: "github.com/johnfanv2/LenovoLegionLinux README",
     },
     Driver {
@@ -413,6 +435,7 @@ pub const DRIVERS: &[Driver] = &[
         watchdog: None,
         allowed: None,
         curve: None,
+        curve_on: &[],
         source: LINUX,
     },
 ];

@@ -1,0 +1,87 @@
+# An ASUS laptop, as asus-wmi documents it (DESIGN.md §3.5; drivers/platform/x86/asus-wmi.c at v7.3). The `asus` hwmon device
+# has the CPU and GPU fans' modes alone, `pwm1_enable` and `pwm2_enable`, 0 full speed and 2 automatic, with no `pwmN` (the
+# SPEC83 kind); `pwm2_enable` reads a cache that says 0 until something writes it. `asus_custom_fan_curve` has an 8-point curve
+# per fan, °C and 0–255 kept as a percent, applied by writing 1 to its `pwmN_enable`; a point written, or a platform profile
+# change, turns it off. The firmware's platform profile is quiet, balanced or performance. A Documented fixture. The CPU is an
+# AMD Ryzen 9 7940HS, as in a ROG Zephyrus G14.
+name = "asus"
+cpu_model = "AMD Ryzen 9 7940HS w/ Radeon 780M Graphics"
+ambient = 24.0
+seed = 21
+config = "asus.config.toml"
+seconds = 600
+fresh = true
+platform = { choices = ["quiet", "balanced", "performance"], profile = "balanced" }
+
+[load]
+points = [{ at = 0, cpu = 0.03, gpu = 0.0 }]
+
+[[body]]
+id = "cpu"
+load = "cpu"
+capacity = 18.0
+idle_watts = 5.0
+load_watts = 54.0
+passive = 0.15
+airflow = 1.3
+fan = [{ id = "cpu-fan", weight = 1.0 }, { id = "gpu-fan", weight = 0.6 }]
+
+[[chip]]
+driver = "k10temp"
+path = "devices/pci0000:00/0000:00:18.3"
+hwmon = 2
+temp = [{ channel = 1, label = "Tctl", body = "cpu", noise = 0.3, spikes = 4.0 }]
+
+[[chip]]
+driver = "asus"
+path = "devices/platform/asus-nb-wmi"
+hwmon = 6
+temp = [{ channel = 1, body = "cpu", offset = -5.0, noise = 0.2 }]
+
+[[chip.pwm]]
+channel = 1
+enable = 2
+modes = true
+firmware = { body = "cpu", points = [[44, 0], [45, 25], [70, 60], [85, 100]] }
+
+[[chip.pwm]]
+channel = 2
+enable = 2
+modes = true
+cache = 0
+firmware = { body = "cpu", points = [[54, 0], [55, 25], [75, 60], [88, 100]] }
+
+[[chip.fan]]
+channel = 1
+id = "cpu-fan"
+pwm = 1
+max_rpm = 6300
+stop = 15
+start = 20
+
+[[chip.fan]]
+channel = 2
+id = "gpu-fan"
+pwm = 2
+max_rpm = 6000
+stop = 15
+start = 20
+
+[[chip]]
+driver = "asus_custom_fan_curve"
+path = "devices/platform/asus-nb-wmi"
+hwmon = 7
+
+[[chip.custom]]
+channel = 1
+points = [[30, 0], [40, 10], [50, 20], [60, 35], [70, 55], [80, 75], [90, 90], [100, 100]]
+body = "cpu"
+hwmon = 6
+pwm = 1
+
+[[chip.custom]]
+channel = 2
+points = [[30, 0], [40, 10], [50, 20], [60, 35], [70, 55], [80, 75], [90, 90], [100, 100]]
+body = "cpu"
+hwmon = 6
+pwm = 2

@@ -1050,3 +1050,45 @@ fn setup_measures_a_framework_laptop() {
     assert_eq!(controls.len(), 1);
     assert!(controls[0]["stop"].as_f64().is_some_and(|s| s <= 20.0), "{}", controls[0]);
 }
+
+/// An ASUS laptop (§3.5, §6.7): its fans run custom curves its firmware keeps, which setup proposes from the CPU table, fitted to
+/// 8 points, and leaves the modes alone. Saved, the curves are written and applied, and written ahead to firmware.json since
+/// nobody knows whether they outlive a reboot. A platform profile change turns them off; Penna puts them back. Defaults puts
+/// back the factory curves as found.
+#[test]
+fn an_asus_laptop_s_fans_run_curves_its_firmware_keeps() {
+    let dir = fresh("asus");
+    let scenario = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/fixtures/drivers/asus.toml");
+    let d = Daemon::start_scenario(&dir, scenario.to_str().unwrap(), "tree", &["--speed", "50"]);
+    let curve_dir = dir.join("tree/sys/devices/platform/asus-nb-wmi/hwmon/hwmon7");
+    let file = |f: &str| fs::read_to_string(curve_dir.join(f)).unwrap().trim().to_owned();
+    let firmware = dir.join("tree/var/lib/penna/firmware.json");
+    let mut c = d.connect();
+    c.line();
+    assert_eq!(c.call(json!({"op": "subscribe"}))["ok"], true);
+    assert_eq!(c.call(json!({"op": "setup.start"}))["ok"], true);
+    let t = c.tick_where(3000, "review", |t| t["setup"]["step"] == "review");
+    let s = &t["setup"];
+    assert!(s["stopped"].is_null(), "{s}");
+    let curves: Vec<&str> = s["proposed"]["curves"].as_array().unwrap().iter().map(|c| c.as_str().unwrap()).collect();
+    assert!(curves.contains(&"fw-1-balanced") && curves.contains(&"fw-2-balanced"), "{curves:?}");
+    assert!(!curves.contains(&"automatic"), "the modes are left alone: a mode written turns the curves off: {curves:?}");
+
+    assert_eq!(c.call(json!({"op": "draft.save"}))["ok"], true);
+    c.tick_where(30, "the curves applied", |_| file("pwm1_enable") == "1" && file("pwm2_enable") == "1");
+    let temps: Vec<i64> = (1..=8).map(|m| file(&format!("pwm1_auto_point{m}_temp")).parse().unwrap()).collect();
+    assert!(temps.windows(2).all(|w| w[0] < w[1]), "8 points, rising: {temps:?}");
+    let fw = fs::read_to_string(&firmware).expect("written ahead to firmware.json");
+    assert!(fw.contains("point-curve") && fw.contains("pwm1_auto_point1_temp"), "{fw}");
+
+    // A platform profile change turns the curves off; Penna writes them again.
+    fs::write(dir.join("tree/sys/firmware/acpi/platform_profile"), "performance\n").unwrap();
+    c.tick_where(10, "turned off", |_| file("pwm1_enable") == "2");
+    c.tick_where(10, "applied again", |_| file("pwm1_enable") == "1");
+
+    assert_eq!(c.call(json!({"op": "profile.set", "name": "defaults"}))["ok"], true);
+    c.tick_where(30, "the factory curves back", |_| file("pwm1_enable") == "2" && file("pwm1_auto_point1_temp") == "30");
+    assert_eq!(file("pwm1_auto_point8_pwm"), "255");
+    assert!(!firmware.exists(), "nothing left to put back");
+    d.stop();
+}
