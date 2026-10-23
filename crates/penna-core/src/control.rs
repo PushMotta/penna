@@ -630,6 +630,11 @@ fn step_control(
             ControlKind::Nvml { .. } => true,
             // A level or a mode reads back as itself, or something else is choosing it.
             ControlKind::Levels { .. } | ControlKind::Modes => reading.raw == Some(raw),
+            // A target speed comes back rounded: `lenovo_wmi_other` rounds down to 100 RPM.
+            ControlKind::Speed { .. } => {
+                let tolerance = (scale as f64 * READBACK_TOLERANCE).max(100.0) as u32;
+                reading.raw.is_some_and(|r| r.abs_diff(raw) <= tolerance)
+            }
             _ => {
                 let tolerance = (scale as f64 * READBACK_TOLERANCE).round().max(1.0) as u32;
                 reading.raw.is_some_and(|r| r.abs_diff(raw) <= tolerance)
@@ -652,6 +657,7 @@ fn step_control(
                     (ControlKind::Duty { scale }, Some(r)) => format!("read back {:.0} %", r as f64 * 100.0 / scale as f64),
                     (ControlKind::Levels { .. }, Some(r)) => format!("read back level {r}"),
                     (ControlKind::Modes, Some(r)) => format!("read back {}", if r == 1 { "full speed" } else { "automatic" }),
+                    (ControlKind::Speed { .. }, Some(r)) => format!("read back {r} RPM"),
                     _ => format!("read back {:.0} %", reading.percent),
                 };
                 cs.reason = Some(format!(

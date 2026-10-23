@@ -98,8 +98,8 @@ pub struct ControlInfo {
     pub kind: ControlKind,
 }
 
-/// What a control accepts (DESIGN.md §3.5). Penna drives `Duty` and `Nvml` from M5, `Levels` and `Modes` from M9; the others are
-/// listed for what they are.
+/// What a control accepts (DESIGN.md §3.5). Penna drives `Duty` and `Nvml` from M5, and `Levels`, `Speed` and `Modes` from M9;
+/// the others are listed for what they are.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", tag = "type")]
 pub enum ControlKind {
@@ -115,7 +115,8 @@ pub enum ControlKind {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         refresh: bool,
     },
-    /// A target RPM between the driver's bounds.
+    /// A target RPM between the driver's bounds. Its raw value is the RPM: % maps onto `min`–`max` evenly, so 0 % asks for
+    /// `min`, never 0, which some drivers take as "automatic" (`lenovo_wmi_other`).
     Speed { min: u32, max: u32 },
     /// Points the firmware runs by itself.
     FirmwareCurve { points: u32 },
@@ -129,13 +130,16 @@ pub enum ControlKind {
 impl ControlKind {
     /// Whether this Penna drives it.
     pub fn drivable(self) -> bool {
-        matches!(self, ControlKind::Duty { .. } | ControlKind::Nvml { .. } | ControlKind::Levels { .. } | ControlKind::Modes)
+        matches!(
+            self,
+            ControlKind::Duty { .. } | ControlKind::Nvml { .. } | ControlKind::Levels { .. } | ControlKind::Speed { .. } | ControlKind::Modes
+        )
     }
 
     /// Whether setup can measure it: a duty or a level gives a speed to read (§5.4). A control with modes has only its firmware's
     /// speeds and full speed.
     pub fn measurable(self) -> bool {
-        matches!(self, ControlKind::Duty { .. } | ControlKind::Nvml { .. } | ControlKind::Levels { .. })
+        matches!(self, ControlKind::Duty { .. } | ControlKind::Nvml { .. } | ControlKind::Levels { .. } | ControlKind::Speed { .. })
     }
 
     pub fn name(self) -> &'static str {
@@ -154,8 +158,9 @@ impl ControlKind {
     pub fn undrivable_reason(self) -> Option<String> {
         let later = "Penna drives these from M9 (DESIGN.md §3.5)";
         match self {
-            ControlKind::Duty { .. } | ControlKind::Nvml { .. } | ControlKind::Levels { .. } | ControlKind::Modes => None,
-            ControlKind::Speed { .. } => Some(format!("This fan takes a target speed in RPM; {later}.")),
+            ControlKind::Duty { .. } | ControlKind::Nvml { .. } | ControlKind::Levels { .. } | ControlKind::Speed { .. } | ControlKind::Modes => {
+                None
+            }
             ControlKind::FirmwareCurve { points } => Some(format!("Its firmware runs a {points}-point curve itself; {later}.")),
             ControlKind::ReadOnly => Some("Its driver offers no control Penna can use.".to_owned()),
         }
@@ -172,6 +177,11 @@ pub fn level_of(steps: u32, duty: f64) -> u32 {
 /// The duty a level stands for: level 0 is 0 %, the top level 100 %, and the ones between evenly spaced.
 pub fn level_duty(steps: u32, level: u32) -> f64 {
     level as f64 * 100.0 / steps.saturating_sub(1).max(1) as f64
+}
+
+/// The target RPM a speed control is given for a duty: `min` at 0 %, `max` at 100 %, evenly between.
+pub fn speed_rpm(min: u32, max: u32, duty: f64) -> u32 {
+    (min as f64 + duty.clamp(0.0, 100.0) * max.saturating_sub(min) as f64 / 100.0).round().clamp(min as f64, max as f64) as u32
 }
 
 /// A device that exists but that no backend can reach, and why.

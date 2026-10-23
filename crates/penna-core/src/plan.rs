@@ -83,6 +83,7 @@ impl ControlPlan {
             Some(ControlKind::Levels { steps, .. }) => crate::model::level_of(steps, duty),
             // Full speed only at 100 %; anything less is its firmware's automatic mode.
             Some(ControlKind::Modes) => u32::from(duty >= 99.95),
+            Some(ControlKind::Speed { min, max }) => crate::model::speed_rpm(min, max, duty),
             _ => {
                 let scale = self.scale() as f64;
                 (duty * scale / 100.0 - 1e-9).ceil().clamp(0.0, scale) as u32
@@ -97,6 +98,7 @@ impl ControlPlan {
             Some(ControlKind::Nvml { max, .. }) => max,
             Some(ControlKind::Levels { steps, .. }) => steps.saturating_sub(1),
             Some(ControlKind::Modes) => 1,
+            Some(ControlKind::Speed { max, .. }) => max,
             _ => 255,
         }
     }

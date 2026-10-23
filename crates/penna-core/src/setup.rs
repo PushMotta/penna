@@ -1517,6 +1517,18 @@ fn readback(kind: ControlKind, reading: Option<&Sample<ControlReading>>, duty: f
                 _ => Check::Ok,
             }
         }
+        ControlKind::Speed { min, max } => {
+            if r.mode != ControlMode::Manual {
+                return Check::Reverted("its firmware took it back".to_owned());
+            }
+            let want = crate::model::speed_rpm(min, max, duty);
+            // A target comes back rounded: `lenovo_wmi_other` rounds down to 100 RPM.
+            let tolerance = (max as f64 * READBACK_TOLERANCE).max(100.0) as u32;
+            match r.raw {
+                Some(got) if got.abs_diff(want) > tolerance => Check::Mapped(want, got),
+                _ => Check::Ok,
+            }
+        }
         _ => Check::Unread("not a kind setup measures yet".to_owned()),
     }
 }
