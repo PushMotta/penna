@@ -19,6 +19,9 @@ Item {
 
   property var hello: null
   readonly property bool connected: hello !== null
+  // Set when pennad answers but doesn't fit this plugin (Model.daemonProblem): the surfaces say which one to update, and
+  // nothing is subscribed until it does.
+  property string mismatch: ""
   readonly property bool canWrite: hello !== null && hello.can_write === true
   // The daemon's own sentence for why this user can't change fans, when it gives one (§7.3, as built in M2).
   readonly property string writeWhy: hello !== null && !canWrite && hello.why ? String(hello.why) : ""
@@ -113,6 +116,8 @@ Item {
       return
     }
     if (msg.ev === "hello") {
+      mismatch = Model.daemonProblem(msg)
+      if (mismatch !== "") return
       hello = msg
       lastMock = msg.mock === true
       attempts = 0
@@ -135,6 +140,7 @@ Item {
 
   function dropConnection() {
     hello = null
+    mismatch = ""
     callbacks = ({})
     if (!reconnect.running) reconnect.restart()
   }

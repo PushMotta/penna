@@ -225,3 +225,15 @@ test("a profile that sets the power profile shows as a pill on a laptop with no 
   assert.deepEqual(M.profileOptions(tick).map(p => p.value), ["defaults", "quiet", "balanced"])
   assert.equal(M.needsSetup(tick), false)
 })
+
+test("a pennad that doesn't fit this plugin is named, with what to update", () => {
+  assert.equal(M.daemonProblem(null), "")
+  assert.equal(M.daemonProblem({ v: 2, daemon: "0.10.0" }), "")
+  assert.equal(M.daemonProblem({ v: 2, daemon: "0.9.0" }), "")
+  assert.match(M.daemonProblem({ v: 2, daemon: "0.8.3" }), /0\.8\.3 is older .* Update the penna package/)
+  assert.match(M.daemonProblem({ v: 3, daemon: "1.0.0" }), /omarchy plugin update io\.github\.pushmotta\.penna/)
+  assert.match(M.daemonProblem({ v: 1, daemon: "0.2.0" }), /Update the penna package/)
+  assert.equal(M.olderThan("0.10.0 (1e0255d)", "0.9.0"), false, "numbers, not text: 10 is after 9")
+  assert.equal(M.olderThan("0.9.0", "0.10.0"), true)
+  assert.equal(M.olderThan("", "0.9.0"), true, "an unreadable version is older")
+})

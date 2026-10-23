@@ -35,6 +35,33 @@ function socketCandidates(pennaSocket, runtimeDir) {
   return list.filter(function(p, i) { return list.indexOf(p) === i })
 }
 
+// What this plugin reads from pennad (§7.3): protocol 2, with the fields 0.9.0 added (power profiles, kinds, device classes).
+// The plugin comes from git and pennad from a package, so the two can drift apart; this says which one to update.
+var PROTOCOL = 2
+var OLDEST_DAEMON = "0.9.0"
+
+// Whether version `a` ("0.10.0", or "0.10.0 (1e0255d)") is older than `b`. An unreadable version counts as older.
+function olderThan(a, b) {
+  function parts(v) { return (String(v).match(/^\s*(\d+)\.(\d+)\.(\d+)/) || []).slice(1).map(Number) }
+  var x = parts(a), y = parts(b)
+  if (x.length !== 3) return true
+  for (var i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] < y[i]
+  return false
+}
+
+// The sentence that says the running pennad and this plugin don't fit together, or "" when they do.
+function daemonProblem(hello) {
+  if (!hello) return ""
+  var version = String(hello.daemon || "")
+  if (Number(hello.v) > PROTOCOL)
+    return "pennad " + version + " is newer than this plugin understands, and keeps running your fans. Update the plugin: "
+      + "omarchy plugin update io.github.pushmotta.penna"
+  if (Number(hello.v) < PROTOCOL || olderThan(version, OLDEST_DAEMON))
+    return "pennad " + (version || "") + " is older than this plugin needs (" + OLDEST_DAEMON + " or newer), and keeps running "
+      + "your fans. Update the penna package."
+  return ""
+}
+
 function controls(tick) { return tick && Array.isArray(tick.controls) ? tick.controls : [] }
 
 // The fans Penna runs: configured controls a profile adopts and that are present. A configured control on "firmware" folds
@@ -747,6 +774,7 @@ function writeBlockedReason(connected, canWrite) {
 if (typeof module !== "undefined") {
   module.exports = {
     GLYPH: GLYPH, ALERT_STATES: ALERT_STATES, socketCandidates: socketCandidates, controls: controls, sensors: sensors,
+    PROTOCOL: PROTOCOL, OLDEST_DAEMON: OLDEST_DAEMON, olderThan: olderThan, daemonProblem: daemonProblem,
     isAlert: isAlert, alerts: alerts, adopted: adopted, firmwareLines: firmwareLines, unreachableLines: unreachableLines, hasEmergency: hasEmergency, fanCount: fanCount, barState: barState,
     profileLabel: profileLabel, profileOptions: profileOptions, needsSetup: needsSetup, hero: hero, setupRunning: setupRunning,
     setupMeta: setupMeta, paired: paired, defaultsRows: defaultsRows, emptyHeaders: emptyHeaders, deviceOf: deviceOf,

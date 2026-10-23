@@ -834,7 +834,8 @@ Item {
                   horizontalAlignment: Text.AlignHCenter
                   wrapMode: Text.Wrap
                   visible: root.selectedCurve === null
-                  text: !root.connected ? "Penna isn't running. Start it, and the studio picks up where it was."
+                  text: !root.connected && root.service && root.service.mismatch !== "" ? root.service.mismatch
+                      : !root.connected ? "Penna isn't running. Start it, and the studio picks up where it was."
                       : root.selectedKey === "" ? "No fan is adopted yet. Adopting one saves the way back first."
                       : "The firmware runs this fan. Choose a curve above to adopt it."
                   color: root.dim
