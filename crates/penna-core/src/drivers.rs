@@ -52,6 +52,17 @@ pub enum Class {
     Other,
 }
 
+impl Class {
+    pub fn name(self) -> &'static str {
+        match self {
+            Class::Motherboard => "motherboard",
+            Class::Laptop => "laptop",
+            Class::Gpu => "gpu",
+            Class::Other => "other",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Driver {
     /// What people call it: the kernel module, or the out-of-tree project.

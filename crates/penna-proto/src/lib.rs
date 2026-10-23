@@ -419,6 +419,9 @@ pub struct ControlTick {
     /// How much slower than calibrated it has turned for ten minutes (§5.6): 0.3 is 30 % slower. `null`: as calibrated.
     #[serde(default)]
     pub drift: Option<f64>,
+    /// What its driver is for: `motherboard`, `laptop`, `gpu` or `other`, for the card's device heading (§11.3 call 10).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -564,10 +567,17 @@ pub struct StudioControl {
     /// A stepped control's levels, off included: the editor draws them, and the curve is rounded up to one (§3.5).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub levels: Option<u32>,
+    /// A speed control's range in RPM: 0 % asks for `min`, 100 % for `max` (§3.5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed: Option<NvmlRange>,
+    /// A firmware curve's point count: the editor keeps the curve to that many (§3.5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub points: Option<u32>,
     /// Measured duty → RPM, ascending (§5.4), or `null` before calibration.
     pub calibration: Option<Vec<[f64; 2]>>,
 }
 
+/// A range of whole numbers: an NVIDIA fan's settable percent, or a speed control's RPM.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NvmlRange {
     pub min: u32,

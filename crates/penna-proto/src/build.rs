@@ -106,6 +106,7 @@ pub fn tick(cx: &Context) -> Tick {
                 may_stop: c.may_stop,
                 override_: ov.map(|o| OverrideTick { duty: r1(o.duty), until: o.until.map(|u| r2(cx.t + (u - cx.now) / cx.rate)) }),
                 drift: cx.drift.get(key).map(|d| r2(*d)),
+                class: class_of(cx.inventory, key).map(|c| c.name().to_owned()),
             }
         })
         .collect();
@@ -189,6 +190,15 @@ pub fn tick(cx: &Context) -> Tick {
 /// How far the driver behind a control has been checked (§3.6).
 fn tier_of(inventory: &Inventory, key: &Key) -> Option<Tier> {
     inventory.devices.iter().find(|d| d.controls.iter().any(|c| &c.key == key)).map(|d| drivers::tier(&d.driver))
+}
+
+/// What a control's driver is for: an NVIDIA fan's is a GPU, an hwmon driver's is in the driver table.
+fn class_of(inventory: &Inventory, key: &Key) -> Option<drivers::Class> {
+    let d = inventory.devices.iter().find(|d| d.controls.iter().any(|c| &c.key == key))?;
+    Some(match d.source {
+        penna_core::Source::Nvml => drivers::Class::Gpu,
+        penna_core::Source::Hwmon => drivers::lookup(&d.driver).map_or(drivers::Class::Other, |e| e.class),
+    })
 }
 
 fn profile_rank(id: &str) -> (usize, String) {
@@ -308,6 +318,14 @@ fn studio_control(c: &penna_core::plan::ControlPlan, inventory: &Inventory, meas
         },
         levels: match c.kind {
             Some(ControlKind::Levels { steps, .. }) => Some(steps),
+            _ => None,
+        },
+        speed: match c.kind {
+            Some(ControlKind::Speed { min, max }) => Some(NvmlRange { min, max }),
+            _ => None,
+        },
+        points: match c.kind {
+            Some(ControlKind::FirmwareCurve { points }) => Some(points),
             _ => None,
         },
         calibration: measured.get(&c.key).map(|m| m.calibration.clone()).filter(|t| !t.is_empty()),

@@ -177,10 +177,10 @@ test("while setup runs, the bar shows the timed glyph and the hero says how far 
 test("cards are grouped under their device, which names the tier once (call 10)", () => {
   const t = tick({ tachs, sensors: [cpu, gpu], controls: [
     control({ key: it8688 + "/pwm1", label: "CPU_FAN", tier: "verified" }), gpuFan,
-    control({ key: "hwmon/thinkpad/thinkpad_hwmon/pwm1", label: "Fan", kind: "levels", tier: "documented" })] })
+    control({ key: "hwmon/thinkpad/thinkpad_hwmon/pwm1", label: "Fan", kind: "levels", tier: "documented", class: "laptop" })] })
   const g = M.deviceGroups(M.controls(t), t)
   assert.deepEqual(g.map(x => [x.heading, x.tier, x.keys.length]),
-    [["IT8688E · MOTHERBOARD", "Verified", 1], ["RTX 3090 · NVML", "Verified", 1], ["THINKPAD · MOTHERBOARD", "Documented", 1]])
+    [["IT8688E · MOTHERBOARD", "Verified", 1], ["RTX 3090 · NVML", "Verified", 1], ["THINKPAD · LAPTOP", "Documented", 1]])
   assert.equal(g[2].note, "Nobody has verified this driver with Penna yet.")
   assert.equal(M.kindLine(M.controls(t)[0]), "", "plain duty adds no line")
   assert.equal(M.kindLine(M.controls(t)[2]), "Fixed levels. The curve is rounded to a level.")

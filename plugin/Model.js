@@ -210,7 +210,8 @@ function deviceOf(control, tick) {
   } else {
     var t = (tick && Array.isArray(tick.tachs) ? tick.tachs : []).filter(function(x) { return String(x.key).indexOf(id + "/") === 0 })[0]
     name = t ? String(t.device) : parts[1]
-    kind = "motherboard"
+    // What its driver is for (§11.3 call 10): a laptop's embedded controller, an AMD GPU, or a motherboard chip.
+    kind = control.class === "laptop" ? "laptop" : control.class === "gpu" ? "GPU" : control.class === "other" ? "fans" : "motherboard"
   }
   return { id: id, name: name, kind: kind, tier: control.tier ? String(control.tier) : "" }
 }
@@ -250,9 +251,15 @@ function kindLine(control) {
   if (!control || !control.kind || control.kind === "duty" || control.kind === "nvml") return ""
   var k = String(control.kind)
   if (k === "levels") return "Fixed levels. The curve is rounded to a level."
-  if (k === "speed") return "A target speed in RPM."
-  if (k === "firmware-curve") return "Its firmware runs the curve itself, so it keeps running if Penna stops."
-  if (k === "modes") return "Automatic or full speed only; there is no curve."
+  if (k === "speed") {
+    if (!control.speed) return "A target speed in RPM."
+    return "A target speed: 0 % asks for " + formatNumber(control.speed.min, 10, 0, true) + " RPM, 100 % for " + formatNumber(control.speed.max, 10, 0, true) + "."
+  }
+  if (k === "firmware-curve") {
+    var n = control.points ? " of " + control.points + " points" : ""
+    return "Its firmware runs a curve" + n + " itself, on its own sensor, so it keeps running if Penna stops."
+  }
+  if (k === "modes") return "Automatic or full speed only: Penna switches it to full speed for Full speed and emergencies."
   if (k === "read-only") return "Penna only reads this fan."
   return ""
 }
