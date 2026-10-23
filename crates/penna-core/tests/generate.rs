@@ -137,9 +137,10 @@ fn this_desk_gets_a_curve_per_role_and_profile() {
     assert_eq!(points(&g.config, "cpu-quiet")[0][0], 57.0, "Quiet holds the floor to idle + 15");
     assert_eq!(points(&g.config, "cpu-render").last().unwrap()[0], 75.0, "Render reaches 100 % at the limit less 15");
 
-    // Balanced GPU: the driver's curve below 68 °C, then the 3090's measured floor of 45 %, 50 % at 78 °C and 100 % at 88 °C.
+    // Balanced GPU: the driver's curve below 68 °C, then the 3090's floor, its measured stop of 45 % and the margin, 50 % of
+    // its airflow at 78 °C and 100 % at 88 °C.
     let gpu = points(&g.config, "gpu-balanced");
-    assert_eq!((gpu[0], gpu[1], gpu[3][0], gpu.last().unwrap()[0]), ([67.0, 0.0], [68.0, 45.0], 78.0, 88.0), "{gpu:?}");
+    assert_eq!((gpu[0], gpu[1], gpu[3][0], gpu.last().unwrap()[0]), ([67.0, 0.0], [68.0, 50.0], 78.0, 88.0), "{gpu:?}");
     let fan = g.config.control(&Key::nvml_fan(UUID, 0)).unwrap();
     assert!(fan.may_stop && fan.label.as_deref() == Some("GPU fan 1"), "{fan:?}");
 
@@ -165,6 +166,22 @@ fn this_desk_gets_a_curve_per_role_and_profile() {
     let chipset = points(&g.config, "chipset");
     assert_eq!((chipset[0], chipset[1]), ([60.0, 0.0], [65.0, 10.0]), "{chipset:?}");
     assert!(graph(&chipset, 63.0) < 10.0 && graph(&chipset, 65.0) >= 10.0);
+}
+
+#[test]
+fn gpu_fans_that_stop_at_different_duties_share_a_curve_from_the_higher_floor() {
+    // The fifth run: GPU fan 1 stood still below 35 %, GPU fan 2 below 45 %. A GPU fan below its floor goes back to its driver
+    // rather than being lifted, so a curve from the lower floor would leave fan 2 there while fan 1 ran.
+    let mut m = measured();
+    m.controls.iter_mut().find(|c| c.key == Key::nvml_fan(UUID, 0)).unwrap().stop = Some(35.0);
+    let g = generate(&starter(), &desk(), &m, Some(CPU_MODEL));
+    let plan = Plan::new(g.config.clone(), &desk(), &m, Some(CPU_MODEL)).expect("the draft plans");
+    let floor = |f| plan.controls[&Key::nvml_fan(UUID, f)].floor;
+    assert_eq!((floor(0), floor(1)), (40.0, 50.0), "the stop and the margin");
+    for id in ["gpu-quiet", "gpu-balanced", "gpu-render"] {
+        let gpu = points(&g.config, id);
+        assert_eq!((gpu[0][1], gpu[1][1]), (0.0, 50.0), "{id}: {gpu:?}");
+    }
 }
 
 #[test]

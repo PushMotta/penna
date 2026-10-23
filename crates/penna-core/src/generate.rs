@@ -3,7 +3,8 @@
 //! Points are placed in airflow, a share of a fan's range from its floor to its top speed, and turned into duty through its
 //! calibration, so a curve means the same on a fan whose RPM barely moves below 40 % as on one that is linear. Fans that share a
 //! role share its curve: the curve's duty gives them, on average, the airflow it was placed at. Each fan's floor comes from the
-//! plan (§4.5), which lifts it there whatever the curve asks, and its top from its own calibration.
+//! plan (§4.5), which lifts it there whatever the curve asks, and its top from its own calibration. A fan that may stop isn't
+//! lifted, so a curve it shares starts at its floor.
 use crate::config::{Config, ControlConfig, Curve, CurveKind, HysteresisDirection, Measured, MeasuredControl, MixOp};
 use crate::plan::{DEFAULT_EMERGENCY, control_plan, tjmax};
 use crate::setup::{Role, WriteResult};
@@ -156,6 +157,8 @@ struct Fan {
     /// Where the plan lifts it (§4.5), and the lowest duty at which it reaches its top speed.
     floor: f64,
     top: f64,
+    /// Below its floor it stops or goes back to its driver instead.
+    may_stop: bool,
     /// Its calibration, made monotonic (§5.4, step 3): duty → RPM.
     table: Vec<[f64; 2]>,
 }
@@ -181,9 +184,12 @@ impl Fan {
     }
 }
 
-/// The duty at which `fans` give, on average, this share of their airflow: the floor of the lowest at 0.
+/// The duty at which `fans` give, on average, this share of their airflow. At 0 it is the lowest floor, raised to the highest of a
+/// fan that may stop: below its floor such a fan stops, or goes back to its driver, rather than being lifted (§4.5), so a curve
+/// it shares starts where every one of them runs.
 fn duty_for(fans: &[Fan], share: f64) -> f64 {
-    let lo = fans.iter().map(|f| f.floor).fold(f64::INFINITY, f64::min);
+    let lowest = fans.iter().map(|f| f.floor).fold(f64::INFINITY, f64::min);
+    let lo = fans.iter().filter(|f| f.may_stop).map(|f| f.floor).fold(lowest, f64::max);
     let hi = fans.iter().map(|f| f.top).fold(0.0, f64::max).max(lo);
     if share <= 0.0 || fans.is_empty() {
         return lo.min(100.0).round();
@@ -292,7 +298,7 @@ impl Builder {
             Some(c) => *c = cfg,
             None => self.config.controls.push(cfg),
         }
-        Fan { key: m.key.clone(), label: label.to_owned(), floor: plan.floor, top, table }
+        Fan { key: m.key.clone(), label: label.to_owned(), floor: plan.floor, top, may_stop: plan.may_stop, table }
     }
 
     fn left(&mut self, fans: &[Fan], why: &str) {

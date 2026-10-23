@@ -508,7 +508,7 @@ function rpmAt(calibration, duty) {
   return table[table.length - 1][1]
 }
 
-// Below this, an NVIDIA fan goes back to its driver: its settable minimum, or its measured stop when it stands still above that.
+// Below this, an NVIDIA fan goes back to its driver: its settable minimum, or 5 % above its measured stop when that is higher.
 function nvmlFloor(control) {
   return control.floor !== null && control.floor !== undefined ? Number(control.floor) : Number(control.nvml.min)
 }

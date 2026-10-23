@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Without calibration, a fan that may not stop never runs below this.
 pub const UNCALIBRATED_FLOOR: f64 = 30.0;
-/// The margin kept above a calibrated stop duty when a fan may not stop (§4.5).
+/// The margin kept above a calibrated stop duty when a fan may not stop, and above a GPU fan's always (§4.5).
 pub const STOP_MARGIN: f64 = 5.0;
 /// An NVML fan resumes manual control this far above its floor (§4.5).
 pub const RESUME_MARGIN: f64 = 5.0;
@@ -233,9 +233,9 @@ pub fn control_plan(cfg: &config::ControlConfig, present: Option<(ControlKind, &
     let at = format!("control {key}");
     let lowest = m.and_then(|m| m.lowest);
     let floor = match kind {
-        // A GPU fan has a stop too, once setup has measured one: the 3090's stand still below 35–40 % in manual (§5.4). One that
-        // may stop is handed back to its driver below it; one that may not keeps the margin.
-        Some(ControlKind::Nvml { min, .. }) if cfg.may_stop => cfg.min.max(min as f64).max(stop.unwrap_or(0.0)),
+        // A GPU fan has a stop too, once setup has measured one: the 3090's stand still below 35–45 % in manual, a different
+        // duty each run, and held at it for long enough they stall there too (§5.4). The floor keeps the margin above it, and one
+        // that may stop is handed back to its driver below the floor.
         Some(ControlKind::Nvml { min, .. }) => cfg.min.max(min as f64).max(stop.map_or(0.0, |s| s + STOP_MARGIN)),
         _ if cfg.may_stop => cfg.min.max(stop.unwrap_or(0.0)),
         // Measured down to its lowest without stopping is calibration enough: a pump, or a header that races below it.

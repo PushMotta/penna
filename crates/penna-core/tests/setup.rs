@@ -521,8 +521,8 @@ fn setup_measures_this_desk_and_hands_every_fan_back() {
         let cfg = penna_core::config::ControlConfig { may_stop, ..penna_core::config::ControlConfig::defaults(key) };
         penna_core::plan::control_plan(&cfg, Some((kind, "")), &m).0.floor
     };
-    assert_eq!(floor(gpu_fan(), true), 40.0, "handed to its driver below its stop");
-    assert_eq!(floor(gpu_fan(), false), 45.0, "or kept clear of it");
+    assert_eq!(floor(gpu_fan(), true), 45.0, "kept clear of its stop, and handed to its driver below that");
+    assert_eq!(floor(gpu_fan(), false), 45.0, "or held there");
     assert_eq!(floor(pwm(2), false), 5.0, "SYS_FAN1: measured down to 5 % without stopping");
     assert_eq!(floor(pwm(7), false), 50.0, "the pump: never below 50 %");
     assert_eq!(floor(pwm(1), false), 25.0, "CPU_FAN: its stop and the margin");
