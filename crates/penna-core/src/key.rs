@@ -2,7 +2,8 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-/// `hwmon/<name>/<device>/<channel>`, `nvml/<uuid>/<fanN|temp>`, `virt/<id>` or `mock/<scenario>/<channel>`.
+/// `hwmon/<name>/<device>/<channel>`, `nvml/<uuid>/<fanN|temp>`, `virt/<id>`, `mock/<scenario>/<channel>`, or `platform/profile`, the
+/// machine's power profile (§3.5).
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct Key(String);
@@ -17,6 +18,9 @@ impl Key {
     pub fn nvml_temp(uuid: &str) -> Key {
         Key(format!("nvml/{}/temp", part(uuid)))
     }
+    pub fn platform_profile() -> Key {
+        Key("platform/profile".to_owned())
+    }
 
     /// Checks the shape of a key read from a config file or the wire.
     pub fn parse(s: &str) -> Option<Key> {
@@ -29,6 +33,7 @@ impl Key {
             "nvml" => parts.len() == 3 && (parts[2] == "temp" || fan_index(parts[2]).is_some()),
             "virt" => parts.len() == 2,
             "mock" => parts.len() == 3,
+            "platform" => parts == ["platform", "profile"],
             _ => false,
         };
         ok.then(|| Key(s.to_owned()))
@@ -95,10 +100,17 @@ mod tests {
 
     #[test]
     fn parse_accepts_each_source_and_rejects_the_rest() {
-        for ok in ["hwmon/nvme/0000:04:00.0/temp1", "nvml/GPU-1/fan1", "nvml/GPU-1/temp", "virt/case", "mock/render-burst/pwm2"] {
+        for ok in [
+            "hwmon/nvme/0000:04:00.0/temp1",
+            "nvml/GPU-1/fan1",
+            "nvml/GPU-1/temp",
+            "virt/case",
+            "mock/render-burst/pwm2",
+            "platform/profile",
+        ] {
             assert_eq!(Key::parse(ok).map(|k| k.0), Some(ok.to_owned()), "{ok}");
         }
-        for bad in ["hwmon3/temp1", "hwmon/k10temp/temp1", "nvml/GPU-1/pwm0", "virt/", "virt//x", "sysfs/a/b/c", ""] {
+        for bad in ["hwmon3/temp1", "hwmon/k10temp/temp1", "nvml/GPU-1/pwm0", "virt/", "virt//x", "sysfs/a/b/c", "platform/fan", ""] {
             assert!(Key::parse(bad).is_none(), "{bad}");
         }
     }

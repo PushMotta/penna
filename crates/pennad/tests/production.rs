@@ -96,7 +96,8 @@ fn restoring_real_fans_asks_for_root_and_keeps_held_json() {
         r#"{"version":1,"pid":1,"controls":[{"kind":"nvml","key":"nvml/GPU-168e2769-d673-f36a-ea7b-64df57f8d090/fan0","uuid":"GPU-168e2769-d673-f36a-ea7b-64df57f8d090","fan":0,"original_policy":"driver"}]}"#,
     )
     .unwrap();
-    let out = Command::new(penna()).args(["restore", "--from"]).arg(&held).output().unwrap();
+    let out =
+        Command::new(penna()).args(["restore", "--from"]).arg(&held).arg("--firmware").arg(dir.join("firmware.json")).output().unwrap();
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("needs root: sudo penna restore --from"), "{err}");

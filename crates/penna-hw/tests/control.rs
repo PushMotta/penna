@@ -191,8 +191,10 @@ fn a_stepped_control_is_written_and_read_as_its_levels() {
     machine.rediscover();
     let tp = Key::hwmon("thinkpad", "thinkpad_hwmon", "pwm1");
     let dir = sim.root().join("devices/platform/thinkpad_hwmon/hwmon/hwmon12");
-    assert!(matches!(machine.inventory.devices.iter().flat_map(|d| &d.controls).find(|c| c.key == tp).unwrap().kind,
-        ControlKind::Levels { steps: 8, .. }));
+    assert!(matches!(
+        machine.inventory.devices.iter().flat_map(|d| &d.controls).find(|c| c.key == tp).unwrap().kind,
+        ControlKind::Levels { steps: 8, .. }
+    ));
     let entry = machine.original(&tp).unwrap();
     assert!(matches!(&entry, HeldEntry::Hwmon { original_enable: 2, original_pwm: Some(128), .. }), "{entry:?}");
     // 128 is level 4 (`128 >> 5`), which the driver reads back as 4 × 255 / 7.
@@ -204,7 +206,10 @@ fn a_stepped_control_is_written_and_read_as_its_levels() {
         assert_eq!((read(&dir.join("pwm1")), r.raw), (file.to_owned(), Some(level)), "level {level}");
     }
     let mut readings = penna_core::Readings::default();
-    readings = { let _ = &mut readings; machine.read() };
+    readings = {
+        let _ = &mut readings;
+        machine.read()
+    };
     let r = readings.controls[&tp].value().unwrap();
     assert_eq!(r.raw, Some(5));
     assert!((r.percent - 500.0 / 7.0).abs() < 1e-6);

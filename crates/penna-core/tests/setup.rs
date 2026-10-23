@@ -690,8 +690,8 @@ fn a_busy_machine_waits_and_stop_is_at_once() {
 fn the_idle_sample_finds_where_the_cpu_rests_when_something_starts() {
     let mut rig = Rig::new();
     let seen = [
-        40.8, 40.4, 40.2, 40.0, 41.2, 41.8, 41.2, 41.1, 41.2, 47.9, 48.0, 48.8, 47.6, 46.5, 46.6, 45.8, 49.9, 53.8, 55.1, 53.8, 55.1,
-        55.0, 58.9, 59.6, 58.6, 56.9, 57.4, 56.4, 57.4, 61.0,
+        40.8, 40.4, 40.2, 40.0, 41.2, 41.8, 41.2, 41.1, 41.2, 47.9, 48.0, 48.8, 47.6, 46.5, 46.6, 45.8, 49.9, 53.8, 55.1, 53.8, 55.1, 55.0,
+        58.9, 59.6, 58.6, 56.9, 57.4, 56.4, 57.4, 61.0,
     ];
     for t in seen.iter().chain(std::iter::repeat(&61.0)) {
         if rig.setup.step_now() > Step::Idle {

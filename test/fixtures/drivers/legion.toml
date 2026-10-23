@@ -1,0 +1,53 @@
+# A Lenovo Legion laptop: its fans are read-only to Penna, which never writes legion_hwmon's curve files (DESIGN.md §3.5: one
+# written in the wrong unit hard-powered-off a Legion Pro 5), and its firmware's platform profile is the only fan lever. No
+# power-profiles-daemon here, so Penna writes `/sys/firmware/acpi/platform_profile` itself
+# (Documentation/userspace-api/sysfs-platform_profile.rst). A Documented fixture.
+name = "legion"
+cpu_model = "AMD Ryzen 7 7840HS w/ Radeon 780M Graphics"
+ambient = 24.0
+seed = 7
+config = "legion.config.toml"
+seconds = 600
+fresh = true
+platform = { choices = ["quiet", "balanced", "performance"], profile = "balanced" }
+
+[load]
+points = [{ at = 0, cpu = 0.03, gpu = 0.0 }]
+
+[[body]]
+id = "cpu"
+load = "cpu"
+capacity = 20.0
+idle_watts = 6.0
+load_watts = 54.0
+passive = 0.2
+airflow = 1.4
+fan = [{ id = "fan1", weight = 1.0 }, { id = "fan2", weight = 1.0 }]
+
+[[chip]]
+driver = "k10temp"
+path = "devices/pci0000:00/0000:00:18.3"
+hwmon = 2
+temp = [{ channel = 1, label = "Tctl", body = "cpu", noise = 0.3, spikes = 4.0 }]
+
+# legion_hwmon: tachs only, as Penna sees it.
+[[chip]]
+driver = "legion_hwmon"
+path = "devices/platform/PNP0C09:00"
+hwmon = 6
+
+[[chip.fan]]
+channel = 1
+id = "fan1"
+pwm = 0
+max_rpm = 4400
+stop = 0
+start = 0
+
+[[chip.fan]]
+channel = 2
+id = "fan2"
+pwm = 0
+max_rpm = 4600
+stop = 0
+start = 0

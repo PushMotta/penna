@@ -10,11 +10,15 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 pub const FILE: &str = "held.json";
+/// Beside `measured.toml`: the way back for what outlives a reboot (§6.7).
+pub const FIRMWARE_FILE: &str = "firmware.json";
 
 /// The daemon's live copy of `held.json`.
 pub struct Held {
     path: PathBuf,
     file: HeldFile,
+    /// `firmware.json`: entries whose change outlives a reboot are written there too, and leave it with `held.json` (§6.7).
+    firmware: Option<PathBuf>,
 }
 
 impl Held {
@@ -25,7 +29,13 @@ impl Held {
     /// Starts from entries a previous daemon left for devices that were gone (§3.6): they wait here, on disk, until the
     /// device comes back and can be put back as it was found.
     pub fn resume(path: impl Into<PathBuf>, entries: Vec<HeldEntry>) -> Held {
-        Held { path: path.into(), file: HeldFile { version: VERSION, pid: std::process::id(), controls: entries } }
+        Held { path: path.into(), file: HeldFile { version: VERSION, pid: std::process::id(), controls: entries }, firmware: None }
+    }
+
+    /// Mirrors what outlives a reboot to `firmware.json`, so it is put back even after a reboot has emptied `/run` (§6.7).
+    pub fn with_firmware(mut self, path: impl Into<PathBuf>) -> Held {
+        self.firmware = Some(path.into());
+        self
     }
 
     pub fn path(&self) -> &Path {
@@ -40,8 +50,15 @@ impl Held {
         self.file.controls.iter().find(|e| e.key() == key)
     }
 
-    /// Adds the way back for a control and puts it on disk before returning: the write-ahead of §6.1.
+    /// Adds the way back for a control and puts it on disk before returning: the write-ahead of §6.1. What outlives a reboot
+    /// goes to `firmware.json` first.
     pub fn add(&mut self, entry: HeldEntry) -> Result<()> {
+        if let (Some(fw), true) = (&self.firmware, entry.outlives_reboot()) {
+            let mut f = load(fw).unwrap_or_else(|_| HeldFile { version: VERSION, pid: std::process::id(), controls: Vec::new() });
+            f.controls.retain(|e| e.key() != entry.key());
+            f.controls.push(entry.clone());
+            write_atomically(fw, f.to_json().as_bytes())?;
+        }
         self.file.controls.retain(|e| e.key() != entry.key());
         self.file.controls.push(entry);
         self.save()
@@ -49,6 +66,9 @@ impl Held {
 
     pub fn remove(&mut self, key: &Key) -> Result<()> {
         self.file.controls.retain(|e| e.key() != key);
+        if let Some(fw) = &self.firmware {
+            forget(fw, &[key.clone()])?;
+        }
         if self.file.controls.is_empty() { remove_if_present(&self.path) } else { self.save() }
     }
 
@@ -118,7 +138,9 @@ pub fn restore(entry: &HeldEntry) -> Result<String> {
             match duty {
                 Some(Ok(raw)) => Ok(format!("{key}: pwm_enable {original_enable}, pwm {raw}{beside}")),
                 // The mode is what hands the fan back; a duty the driver refused is reported, not retried on every start.
-                Some(Err(e)) => Ok(format!("{key}: pwm_enable {original_enable}, but not pwm {}: {e:#}{beside}", original_pwm.unwrap_or(0))),
+                Some(Err(e)) => {
+                    Ok(format!("{key}: pwm_enable {original_enable}, but not pwm {}: {e:#}{beside}", original_pwm.unwrap_or(0)))
+                }
                 None => Ok(format!("{key}: pwm_enable {original_enable}{beside}")),
             }
         }
@@ -130,6 +152,7 @@ pub fn restore(entry: &HeldEntry) -> Result<String> {
             Ok(format!("{key}: {original_policy} policy"))
         }
         HeldEntry::Nvml { .. } => crate::nvml::restore_entry(entry),
+        HeldEntry::Platform { via, original, .. } => crate::platform::restore(via, original),
     }
 }
 
@@ -148,7 +171,43 @@ pub fn gone(entry: &HeldEntry) -> bool {
         HeldEntry::Hwmon { enable, .. } => !enable.exists(),
         HeldEntry::MockNvml { policy, .. } => !policy.exists(),
         HeldEntry::Nvml { .. } => false,
+        HeldEntry::Platform { via, .. } => crate::platform::gone(via),
     }
+}
+
+/// Takes entries out of a file of ways back, removing it when none are left.
+fn forget(path: &Path, keys: &[Key]) -> Result<()> {
+    let Ok(mut f) = load(path) else { return Ok(()) };
+    let before = f.controls.len();
+    f.controls.retain(|e| !keys.contains(e.key()));
+    if f.controls.is_empty() {
+        remove_if_present(path)
+    } else if f.controls.len() < before {
+        write_atomically(path, f.to_json().as_bytes())
+    } else {
+        Ok(())
+    }
+}
+
+/// `held.json`, then `firmware.json` (§6.7): what went back from the first leaves the second too, and what is only in the second
+/// is a change that outlived a reboot, put back now.
+pub fn restore_both(held: &Path, firmware: &Path) -> Result<Restored> {
+    let mut out = Restored::default();
+    if held.exists() {
+        let entries = load(held)?.controls;
+        out = restore_file(held)?;
+        // What restore_file kept is what didn't go back: gone, or failed.
+        let kept = if held.exists() { load(held)?.controls } else { Vec::new() };
+        let back: Vec<Key> = entries.iter().filter(|e| !kept.contains(e)).map(|e| e.key().clone()).collect();
+        forget(firmware, &back)?;
+    }
+    if firmware.exists() {
+        let r = restore_file(firmware)?;
+        out.done.extend(r.done);
+        out.failed.extend(r.failed);
+        out.gone.extend(r.gone);
+    }
+    Ok(out)
 }
 
 /// Restores every entry. The file is removed when every entry went back; otherwise it keeps exactly the ones that didn't.
@@ -196,8 +255,15 @@ mod tests {
         fs::write(&enable, "5\n").unwrap();
         let mut held = Held::new(d.join(FILE));
         let key = Key::parse("hwmon/it87/it87.2608/pwm1").unwrap();
-        held.add(HeldEntry::Hwmon { key: key.clone(), enable: enable.clone(), original_enable: 5, pwm: d.join("pwm1"), original_pwm: Some(77), also: vec![] })
-            .unwrap();
+        held.add(HeldEntry::Hwmon {
+            key: key.clone(),
+            enable: enable.clone(),
+            original_enable: 5,
+            pwm: d.join("pwm1"),
+            original_pwm: Some(77),
+            also: vec![],
+        })
+        .unwrap();
         assert_eq!(load(&d.join(FILE)).unwrap().controls.len(), 1);
         assert!(fs::read_dir(&d).unwrap().all(|e| !e.unwrap().file_name().to_string_lossy().ends_with(".tmp")));
         held.remove(&key).unwrap();
@@ -253,13 +319,61 @@ mod tests {
     }
 
     #[test]
+    fn a_change_that_outlives_a_reboot_is_in_firmware_json_too_and_goes_back_after_one() {
+        let d = dir("firmware");
+        let profile = d.join("platform_profile");
+        fs::write(&profile, "low-power\n").unwrap();
+        let entry = HeldEntry::Platform {
+            key: Key::platform_profile(),
+            via: penna_core::held::PlatformVia::Sysfs { path: profile.clone() },
+            original: "balanced".into(),
+        };
+        let (run, fw) = (d.join("run").join(FILE), d.join(FIRMWARE_FILE));
+        let mut held = Held::new(&run).with_firmware(&fw);
+        held.add(entry.clone()).unwrap();
+        assert_eq!(load(&fw).unwrap().controls, [entry.clone()], "written ahead to firmware.json");
+        // A reboot empties /run: only firmware.json is left, and it puts the profile back.
+        fs::remove_file(&run).unwrap();
+        let r = restore_both(&run, &fw).unwrap();
+        assert_eq!((r.done.len(), r.failed.len()), (1, 0), "{r:?}");
+        assert_eq!(fs::read_to_string(&profile).unwrap().trim(), "balanced");
+        assert!(!fw.exists());
+        // Without a reboot, held.json puts it back, and firmware.json forgets it: a profile chosen later is left alone.
+        let mut held = Held::new(&run).with_firmware(&fw);
+        held.add(entry).unwrap();
+        fs::write(&profile, "performance\n").unwrap();
+        restore_both(&run, &fw).unwrap();
+        assert!(!fw.exists() && !run.exists());
+        fs::write(&profile, "quiet\n").unwrap();
+        restore_both(&run, &fw).unwrap();
+        assert_eq!(fs::read_to_string(&profile).unwrap().trim(), "quiet", "nothing left to put back");
+        // Removing the entry takes it out of both.
+        let mut held = Held::new(&run).with_firmware(&fw);
+        held.add(HeldEntry::Platform {
+            key: Key::platform_profile(),
+            via: penna_core::held::PlatformVia::Sysfs { path: profile },
+            original: "balanced".into(),
+        })
+        .unwrap();
+        held.remove(&Key::platform_profile()).unwrap();
+        assert!(!fw.exists() && !run.exists());
+    }
+
+    #[test]
     fn an_entry_whose_device_is_gone_waits_in_the_file() {
         let d = dir("gone");
         let (enable, pwm) = (d.join("pwm1_enable"), d.join("pwm1"));
         fs::write(&enable, "1\n").unwrap();
         fs::write(&pwm, "90\n").unwrap();
         let mut held = Held::new(d.join(FILE));
-        let here = HeldEntry::Hwmon { key: Key::parse("hwmon/it87/a/pwm1").unwrap(), enable, original_enable: 2, pwm, original_pwm: Some(0), also: vec![] };
+        let here = HeldEntry::Hwmon {
+            key: Key::parse("hwmon/it87/a/pwm1").unwrap(),
+            enable,
+            original_enable: 2,
+            pwm,
+            original_pwm: Some(0),
+            also: vec![],
+        };
         let away = HeldEntry::Hwmon {
             key: Key::parse("hwmon/it8792/it87.2656/pwm1").unwrap(),
             enable: d.join("unloaded/pwm1_enable"),

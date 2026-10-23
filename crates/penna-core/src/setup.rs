@@ -192,7 +192,9 @@ impl Target {
         };
         let tachs = match (device.source, class) {
             (Source::Nvml, _) => vec![control.key.clone()],
-            (Source::Hwmon, Class::Laptop | Class::Gpu) if device.controls.len() == 1 => device.tachs.iter().map(|t| t.key.clone()).collect(),
+            (Source::Hwmon, Class::Laptop | Class::Gpu) if device.controls.len() == 1 => {
+                device.tachs.iter().map(|t| t.key.clone()).collect()
+            }
             (Source::Hwmon, Class::Laptop | Class::Gpu) => {
                 let n = control.key.channel().strip_prefix("pwm").unwrap_or_default();
                 device.tachs.iter().filter(|t| t.key.channel() == format!("fan{n}")).map(|t| t.key.clone()).collect()

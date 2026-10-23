@@ -89,7 +89,8 @@ function profileLabel(tick) {
 // daemon that doesn't say how many fans a profile runs shows every profile, as before.
 function profileOptions(tick) {
   var list = tick && Array.isArray(tick.profiles) ? tick.profiles : []
-  return list.filter(function(p) { return p.builtin || p.fans === undefined || Number(p.fans) > 0 || p.id === tick.profile })
+  // A profile shows once it runs a fan, or sets the power profile where that is the only fan lever (§4.7).
+  return list.filter(function(p) { return p.builtin || p.fans === undefined || Number(p.fans) > 0 || !!p.power || p.id === tick.profile })
              .map(function(p) { return { value: String(p.id), label: String(p.label || capitalise(String(p.id))), builtin: !!p.builtin } })
 }
 

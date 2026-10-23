@@ -325,6 +325,9 @@ pub struct ProfileTick {
     /// How many controls it gives a curve: a profile shows as a pill once it runs a fan (§11.3 call 2).
     #[serde(default)]
     pub fans: u32,
+    /// The power profile it sets, on a machine where that is the only fan lever (§3.5, §4.7): it shows as a pill for that too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub power: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

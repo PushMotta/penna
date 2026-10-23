@@ -108,16 +108,21 @@ enum Command {
     },
     /// Snapshot /sys/class/hwmon and the PCI display devices into DIR, read-only, for test fixtures.
     Capture { dir: PathBuf },
-    /// Put every fan in held.json back exactly as Penna found it. Works without the daemon: it is the unit's ExecStopPost.
+    /// Put every fan in held.json back exactly as Penna found it, and what firmware.json holds of changes that outlive a reboot
+    /// (the power profile). Works without the daemon: it is the unit's ExecStopPost.
     Restore {
         #[arg(long, value_name = "FILE", default_value = "/run/penna/held.json")]
         from: PathBuf,
+        #[arg(long, value_name = "FILE", default_value = "/var/lib/penna/firmware.json")]
+        firmware: PathBuf,
     },
     /// Every fan back to its BIOS or driver, and kept there: the Defaults profile. Through pennad when it runs; without it
     /// (as root), restores held.json and saves Defaults so a restarted pennad leaves the fans alone.
     Reset {
         #[arg(long, value_name = "FILE", default_value = "/run/penna/held.json")]
         held: PathBuf,
+        #[arg(long, value_name = "FILE", default_value = "/var/lib/penna/firmware.json")]
+        firmware: PathBuf,
         #[arg(long, value_name = "FILE", default_value = "/etc/penna/config.toml")]
         config: PathBuf,
     },
@@ -222,8 +227,8 @@ fn run(cli: Cli) -> Result<()> {
         Command::Open => open_studio(),
         Command::Events { json } => events(json),
         Command::Waybar { follow, sensor } => bar(follow, sensor.as_deref()),
-        Command::Restore { from } => restore(&from),
-        Command::Reset { held, config } => reset(&held, &config),
+        Command::Restore { from, firmware } => restore(&from, &firmware),
+        Command::Reset { held, firmware, config } => reset(&held, &firmware, &config),
         Command::Check { config, measured } => check(&opts, &config, measured.as_deref()),
         Command::Doctor { json } => {
             if doctor::run(json)? > 0 {
@@ -405,17 +410,24 @@ fn bar(follow: bool, sensor: Option<&str>) -> Result<()> {
     }
 }
 
-fn restore(from: &std::path::Path) -> Result<()> {
-    if !from.exists() {
+fn restore(from: &std::path::Path, firmware: &std::path::Path) -> Result<()> {
+    if !from.exists() && !firmware.exists() {
         println!("Nothing to restore: {} does not exist, so Penna holds no fan.", from.display());
         return Ok(());
     }
     // Real fans need root to put back; a simulated desk's files belong to whoever made them.
-    let held = penna_hw::held::load(from)?;
-    let real = held.controls.iter().any(|e| match e {
+    let mut entries = Vec::new();
+    for f in [from, firmware].into_iter().filter(|f| f.exists()) {
+        entries.extend(penna_hw::held::load(f)?.controls);
+    }
+    let real = entries.iter().any(|e| match e {
         penna_core::held::HeldEntry::Nvml { .. } => true,
         penna_core::held::HeldEntry::Hwmon { enable, .. } => penna_hw::is_real_sysfs(enable),
         penna_core::held::HeldEntry::MockNvml { .. } => false,
+        penna_core::held::HeldEntry::Platform { via, .. } => match via {
+            penna_core::held::PlatformVia::Daemon => true,
+            penna_core::held::PlatformVia::Sysfs { path } => penna_hw::is_real_sysfs(path),
+        },
     });
     // SAFETY: geteuid has no preconditions.
     if real && unsafe { libc::geteuid() } != 0 {
@@ -425,7 +437,7 @@ fn restore(from: &std::path::Path) -> Result<()> {
             from.display()
         );
     }
-    let r = penna_hw::held::restore_file(from)?;
+    let r = penna_hw::held::restore_both(from, firmware)?;
     for d in &r.done {
         println!("restored {d}");
     }
@@ -447,7 +459,7 @@ fn restore(from: &std::path::Path) -> Result<()> {
 }
 
 /// Defaults, with or without the daemon (§6.7).
-fn reset(held: &std::path::Path, config: &std::path::Path) -> Result<()> {
+fn reset(held: &std::path::Path, firmware: &std::path::Path, config: &std::path::Path) -> Result<()> {
     // SAFETY: geteuid has no preconditions.
     let root = unsafe { libc::geteuid() } == 0;
     if let Some(c) = Client::find()
@@ -459,7 +471,7 @@ fn reset(held: &std::path::Path, config: &std::path::Path) -> Result<()> {
     if !root {
         bail!("pennad isn't running, and handing fans back without it needs root: sudo penna reset");
     }
-    restore(held)?;
+    restore(held, firmware)?;
     let text = match std::fs::read_to_string(config) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {

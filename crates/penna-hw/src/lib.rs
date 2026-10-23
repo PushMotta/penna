@@ -13,6 +13,7 @@ pub mod hwmon;
 pub mod mock_nvml;
 pub mod nvml;
 pub mod pci;
+pub mod platform;
 pub mod sim;
 
 use anyhow::{Result, anyhow, bail};

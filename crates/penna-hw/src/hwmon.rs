@@ -249,7 +249,11 @@ impl Backend for Hwmon {
                     let sample = match read_int_sample(&pwm.enable) {
                         Sample::Value(v) => {
                             let raw = u32::from(v == 0);
-                            Sample::Value(ControlReading { percent: 100.0 * raw as f64, raw: Some(raw), mode: ControlMode::from_pwm_enable(v) })
+                            Sample::Value(ControlReading {
+                                percent: 100.0 * raw as f64,
+                                raw: Some(raw),
+                                mode: ControlMode::from_pwm_enable(v),
+                            })
                         }
                         Sample::Implausible(v) => Sample::Implausible(v),
                         Sample::Error(e) => Sample::Error(e),

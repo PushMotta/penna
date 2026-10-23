@@ -335,7 +335,10 @@ pub fn control_plan(cfg: &config::ControlConfig, present: Option<(ControlKind, &
         _ => cfg.min.max(stop.map_or(lowest.unwrap_or(UNCALIBRATED_FLOOR), |s| s + STOP_MARGIN)),
     }
     .max(lowest.unwrap_or(0.0));
-    if kind.is_some() && !matches!(kind, Some(ControlKind::Nvml { .. } | ControlKind::Levels { .. } | ControlKind::Modes)) && cfg.may_stop && stop.is_none()
+    if kind.is_some()
+        && !matches!(kind, Some(ControlKind::Nvml { .. } | ControlKind::Levels { .. } | ControlKind::Modes))
+        && cfg.may_stop
+        && stop.is_none()
     {
         problems.push(Problem { at: at.clone(), message: "may_stop needs a calibrated stop duty (penna calibrate)".into() });
     }

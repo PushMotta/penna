@@ -12,6 +12,7 @@ mod auth;
 mod burn;
 mod history;
 mod ipc;
+mod platform_lever;
 mod requests;
 mod setup;
 mod trace;
@@ -19,8 +20,8 @@ mod trace;
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
 use penna_core::config::{Config, Measured};
-use penna_core::generate::Anchors;
 use penna_core::control::{Command, LoopState, Outcome, tick};
+use penna_core::generate::Anchors;
 use penna_core::plan::Plan;
 use penna_core::{Inventory, Key, Readings};
 use penna_hw::held::{self, Held};
@@ -322,6 +323,8 @@ pub struct Live {
     pub drift: penna_core::drift::DriftWatch,
     /// Setup's load check wants every CPU thread busy (§5.5).
     pub load_wanted: bool,
+    /// Profile → the power profile it sets, where that is the only fan lever (§4.7).
+    pub power: std::collections::BTreeMap<String, String>,
 }
 
 /// A draft belongs to the connection that made it: when that connection closes, the daemon goes back to `saved`.
@@ -367,6 +370,7 @@ impl Live {
                 p
             }),
             drift: &self.drift.drifting,
+            power: self.power.clone(),
         })
     }
 }
@@ -388,6 +392,10 @@ fn run(args: Args) -> Result<()> {
     };
     let mut machine = Machine::open(&opts)?;
     machine.set_pairing(&measured);
+    // The power profile, through power-profiles-daemon on a real machine, or the mock tree's file (§3.5, §4.7).
+    let platform = penna_hw::platform::Platform::open(&opts.sysfs_root, real);
+    // Beside measured.toml: the way back for what outlives a reboot (§6.7).
+    let firmware_path = measured_path.as_ref().and_then(|p| p.parent()).map(|d| d.join(held::FIRMWARE_FILE));
     let config = match config {
         Some(text) => Config::parse(&text).map_err(|e| anyhow!("configuration: {e}"))?,
         None => first_start(&machine.inventory, config_path.as_deref()),
@@ -408,9 +416,13 @@ fn run(args: Args) -> Result<()> {
     }
     let held_path = runtime_dir.join(held::FILE);
     let mut waiting = Vec::new();
-    if held_path.exists() {
-        // A daemon before this one died holding fans: put them back before anything else.
-        let r = held::restore_file(&held_path)?;
+    if held_path.exists() || firmware_path.as_ref().is_some_and(|p| p.exists()) {
+        // A daemon before this one died holding fans, or a reboot came before it could put back what outlives one: put them
+        // back before anything else.
+        let r = match &firmware_path {
+            Some(fw) => held::restore_both(&held_path, fw)?,
+            None => held::restore_file(&held_path)?,
+        };
         if !r.done.is_empty() {
             eprintln!("pennad: restored what a previous run left in {}: {}", held_path.display(), r.done.join(", "));
         }
@@ -444,6 +456,7 @@ fn run(args: Args) -> Result<()> {
         real,
         drift: penna_core::drift::DriftWatch::default(),
         load_wanted: false,
+        power: Default::default(),
     };
     let mut ring = history::Ring::default();
     let mut burn = burn::Burn::default();
@@ -483,6 +496,10 @@ fn run(args: Args) -> Result<()> {
     let mut out = trace::Trace::new(&live.plan, &live.measured, args.quiet);
     out.banner(&live.plan, &machine, sim.as_ref(), (&held_path, &socket), args.tick, args.speed, seconds);
     let mut held = Held::resume(&held_path, waiting);
+    if let Some(fw) = &firmware_path {
+        held = held.with_firmware(fw);
+    }
+    let mut lever = platform_lever::Lever::new(platform);
     // The loop pings the watchdog after every tick, and between ticks whenever half of WatchdogSec has passed: never from a
     // thread of its own, so a loop that stops stops the pings (§6.2).
     let ping_every = sd_notify::watchdog_enabled().map(|d| d / 2);
@@ -537,6 +554,8 @@ fn run(args: Args) -> Result<()> {
             }
         }
         live.plan.drop_released(&live.state);
+        lever.step(&machine.inventory, &live.state.profile, &mut held, &mut out, now);
+        live.power = lever.profiles(&machine.inventory, live.plan.config.profiles.keys());
         for change in live.drift.update(&live.state, &readings, &live.measured, now) {
             drifted(&live, &mut out, now, change);
         }

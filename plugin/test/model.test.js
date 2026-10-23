@@ -215,3 +215,13 @@ test("a drifting fan says how much slower, and nothing when it turns as calibrat
   assert.equal(M.driftLine(control({ drift: null })), "")
   assert.equal(M.driftLine(control()), "")
 })
+
+test("a profile that sets the power profile shows as a pill on a laptop with no other lever", () => {
+  const tick = { profile: "defaults", profiles: [
+    { id: "defaults", label: "Defaults", builtin: true, fans: 0 },
+    { id: "quiet", label: "Quiet", fans: 0, power: "quiet" },
+    { id: "balanced", label: "Balanced", fans: 0, power: "balanced" },
+    { id: "render", label: "Render", fans: 0 } ] }
+  assert.deepEqual(M.profileOptions(tick).map(p => p.value), ["defaults", "quiet", "balanced"])
+  assert.equal(M.needsSetup(tick), false)
+})

@@ -112,7 +112,14 @@ fn kill_9_then_penna_restore() {
     child.wait().unwrap();
     assert_eq!(it87(&dir, "pwm1_enable"), "1", "after kill -9 the fans are still Penna's: this is what restore is for");
     assert_eq!(policy(&dir, 0), "manual");
-    let out = Command::new(penna()).arg("restore").arg("--from").arg(held(&dir)).output().unwrap();
+    let out = Command::new(penna())
+        .arg("restore")
+        .arg("--from")
+        .arg(held(&dir))
+        .arg("--firmware")
+        .arg(dir.join("firmware.json"))
+        .output()
+        .unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     assert_firmware(&dir);
     assert!(!held(&dir).exists(), "held.json goes once everything is back");

@@ -33,6 +33,9 @@ pub enum HeldEntry {
     },
     /// The simulator's file-backed NVML (§9.1).
     MockNvml { key: Key, policy: PathBuf, original_policy: String },
+    /// The machine's power profile (§3.5, §4.7), set through power-profiles-daemon or the firmware's file, and the one that was
+    /// set before Penna changed it. It outlives a reboot, so the entry goes to `firmware.json` as well (§6.7).
+    Platform { key: Key, via: PlatformVia, original: String },
     /// A real NVIDIA fan (M4): the policy it was on, `driver` (restored with `nvmlDeviceSetDefaultFanSpeed_v2`) or `manual`
     /// (restored with that policy and `original_speed`, the target speed it was holding).
     Nvml {
@@ -53,6 +56,16 @@ pub struct Also {
     pub value: String,
 }
 
+/// How a platform profile is set.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "via", rename_all = "kebab-case")]
+pub enum PlatformVia {
+    /// power-profiles-daemon's `ActiveProfile`, on the system bus.
+    Daemon,
+    /// `/sys/firmware/acpi/platform_profile`, when no daemon runs.
+    Sysfs { path: PathBuf },
+}
+
 fn driver_policy() -> String {
     "driver".to_owned()
 }
@@ -60,8 +73,18 @@ fn driver_policy() -> String {
 impl HeldEntry {
     pub fn key(&self) -> &Key {
         match self {
-            HeldEntry::Hwmon { key, .. } | HeldEntry::MockNvml { key, .. } | HeldEntry::Nvml { key, .. } => key,
+            HeldEntry::Hwmon { key, .. }
+            | HeldEntry::MockNvml { key, .. }
+            | HeldEntry::Nvml { key, .. }
+            | HeldEntry::Platform { key, .. } => key,
         }
+    }
+}
+
+impl HeldEntry {
+    /// What it changed survives a reboot: it goes to `firmware.json` too, not only `held.json` in `/run` (§6.7).
+    pub fn outlives_reboot(&self) -> bool {
+        matches!(self, HeldEntry::Platform { .. })
     }
 }
 

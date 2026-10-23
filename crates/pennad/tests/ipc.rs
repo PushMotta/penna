@@ -885,7 +885,9 @@ fn setup_measures_a_thinkpad_level_by_level() {
     let scenario = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/fixtures/drivers/thinkpad.toml");
     let d = Daemon::start_scenario(&dir, scenario.to_str().unwrap(), "tree", &["--speed", "50"]);
     let tp = "hwmon/thinkpad/thinkpad_hwmon";
-    let file = |f: &str| fs::read_to_string(dir.join(format!("tree/sys/devices/platform/thinkpad_hwmon/hwmon/hwmon5/{f}"))).unwrap().trim().to_owned();
+    let file = |f: &str| {
+        fs::read_to_string(dir.join(format!("tree/sys/devices/platform/thinkpad_hwmon/hwmon/hwmon5/{f}"))).unwrap().trim().to_owned()
+    };
     let mut c = d.connect();
     c.line();
     assert_eq!(c.call(json!({"op": "subscribe"}))["ok"], true);
@@ -926,4 +928,39 @@ fn setup_measures_a_thinkpad_level_by_level() {
     c.tick_where(30, "given back", |t| t["controls"][0]["state"] == "firmware");
     assert_eq!(file("pwm1_enable"), "2");
     d.stop();
+}
+
+/// A Lenovo Legion (§3.5, §4.7, §6.7): its fans are read-only, so the power profile is its only fan lever. Each profile sets one,
+/// written ahead to `firmware.json` as well as `held.json`, since it outlives a reboot. Defaults and a clean stop put back the one
+/// Penna found.
+#[test]
+fn a_laptop_whose_only_lever_is_the_power_profile() {
+    let dir = fresh("legion");
+    let scenario = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/fixtures/drivers/legion.toml");
+    let d = Daemon::start_scenario(&dir, scenario.to_str().unwrap(), "tree", &["--speed", "20"]);
+    let profile = || fs::read_to_string(dir.join("tree/sys/firmware/acpi/platform_profile")).unwrap().trim().to_owned();
+    let firmware = dir.join("tree/var/lib/penna/firmware.json");
+    let mut c = d.connect();
+    c.line();
+    assert_eq!(c.call(json!({"op": "subscribe"}))["ok"], true);
+    let t = c.tick_where(10, "the profiles", |t| t["profiles"].as_array().is_some_and(|p| p.len() > 1));
+    let power = |t: &Value, id: &str| t["profiles"].as_array().unwrap().iter().find(|p| p["id"] == id).unwrap()["power"].clone();
+    assert_eq!((power(&t, "quiet"), power(&t, "render"), power(&t, "defaults")), (json!("quiet"), json!("performance"), Value::Null));
+
+    assert_eq!(c.call(json!({"op": "profile.set", "name": "quiet"}))["ok"], true);
+    c.tick_where(10, "quiet", |_| profile() == "quiet");
+    let fw = fs::read_to_string(&firmware).expect("written ahead to firmware.json");
+    assert!(fw.contains("\"original\": \"balanced\""), "{fw}");
+    assert!(fs::read_to_string(dir.join("run/held.json")).unwrap().contains("platform/profile"));
+
+    assert_eq!(c.call(json!({"op": "profile.set", "name": "defaults"}))["ok"], true);
+    c.tick_where(10, "balanced again", |_| profile() == "balanced");
+    assert!(!firmware.exists(), "nothing left to put back");
+
+    assert_eq!(c.call(json!({"op": "profile.set", "name": "render"}))["ok"], true);
+    c.tick_where(10, "performance", |_| profile() == "performance");
+    assert!(d.log().contains("Power profile: performance, for render"), "{}", d.log());
+    d.stop();
+    assert_eq!(profile(), "balanced", "a clean stop puts it back");
+    assert!(!firmware.exists());
 }

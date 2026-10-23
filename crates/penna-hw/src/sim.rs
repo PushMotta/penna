@@ -76,6 +76,17 @@ pub struct Scenario {
     /// and calibration would have found.
     #[serde(default)]
     pub fresh: bool,
+    /// `/sys/firmware/acpi/platform_profile`, when the firmware has one (§3.5).
+    #[serde(default)]
+    pub platform: Option<PlatformSpec>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlatformSpec {
+    pub choices: Vec<String>,
+    /// The one set at boot.
+    pub profile: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -416,6 +427,12 @@ impl Sim {
     fn build(&mut self) -> Result<()> {
         let class = self.root.join("class/hwmon");
         fs::create_dir_all(&class)?;
+        if let Some(p) = &self.sc.platform {
+            let acpi = self.root.join("firmware/acpi");
+            fs::create_dir_all(&acpi)?;
+            put(&acpi.join("platform_profile_choices"), &p.choices.join(" "))?;
+            put(&acpi.join("platform_profile"), &p.profile)?;
+        }
         if let Some(b) = &self.sc.board {
             let dmi = self.root.join("class/dmi/id");
             fs::create_dir_all(&dmi)?;

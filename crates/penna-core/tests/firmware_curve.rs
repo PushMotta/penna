@@ -18,7 +18,10 @@ fn curves(cmds: &[Command]) -> Vec<Vec<[f64; 2]>> {
 #[test]
 fn a_graph_is_fitted_to_the_firmware_s_points_and_written_once() {
     // The `cpu` graph has 4 points; the firmware takes 5: the widest gap, 45–65 °C, is split at 55.
-    assert_eq!(fit(&[[45.0, 30.0], [65.0, 40.0], [78.0, 65.0], [88.0, 100.0]], 5), [[45.0, 30.0], [55.0, 35.0], [65.0, 40.0], [78.0, 65.0], [88.0, 100.0]]);
+    assert_eq!(
+        fit(&[[45.0, 30.0], [65.0, 40.0], [78.0, 65.0], [88.0, 100.0]], 5),
+        [[45.0, 30.0], [55.0, 35.0], [65.0, 40.0], [78.0, 65.0], [88.0, 100.0]]
+    );
     let mut rig = with_firmware_curve();
     rig.step();
     let cmds = rig.step();

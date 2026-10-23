@@ -77,7 +77,11 @@ fn a_level_the_firmware_changes_is_reasserted_then_contested() {
     }
     assert_eq!(reasserts, 3);
     assert_eq!(rig.state(&pwm()), State::Contested);
-    assert!(rig.st.controls[&pwm()].reason.as_deref().is_some_and(|r| r.contains("read back level 6")), "{:?}", rig.st.controls[&pwm()].reason);
+    assert!(
+        rig.st.controls[&pwm()].reason.as_deref().is_some_and(|r| r.contains("read back level 6")),
+        "{:?}",
+        rig.st.controls[&pwm()].reason
+    );
 }
 
 #[test]

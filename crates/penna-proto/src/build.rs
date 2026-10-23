@@ -32,6 +32,8 @@ pub struct Context<'a> {
     pub setup: Option<penna_core::setup::Progress>,
     /// Drifting controls (§5.6): how much slower than calibrated.
     pub drift: &'a BTreeMap<Key, f64>,
+    /// Profile → the power profile it sets, where that is the machine's only fan lever (§4.7); empty elsewhere.
+    pub power: BTreeMap<String, String>,
 }
 
 /// A sparkline starts here (§11.1, call 5).
@@ -56,10 +58,11 @@ pub fn tick(cx: &Context) -> Tick {
             label: words(id),
             builtin: false,
             fans: assign.values().filter(|c| c.as_str() != penna_core::config::FIRMWARE).count() as u32,
+            power: cx.power.get(id).cloned(),
         })
         .collect();
     profiles.sort_by_key(|p| profile_rank(&p.id));
-    profiles.insert(0, ProfileTick { id: DEFAULTS.to_owned(), label: words(DEFAULTS), builtin: true, fans: 0 });
+    profiles.insert(0, ProfileTick { id: DEFAULTS.to_owned(), label: words(DEFAULTS), builtin: true, fans: 0, power: None });
 
     let emergency = st
         .emergency
