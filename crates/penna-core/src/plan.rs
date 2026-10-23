@@ -152,6 +152,9 @@ impl Plan {
             let cfg = config.control(&key).cloned().unwrap_or_else(|| config::ControlConfig::defaults(key.clone()));
             let (plan, found) = control_plan(&cfg, present.get(&key).map(|f| (f.0, f.1)), measured);
             problems.extend(found);
+            if let Some(ControlKind::FirmwareCurve { .. }) = plan.kind {
+                problems.extend(firmware_curve_problems(&config, &key));
+            }
             controls.insert(key, plan);
         }
         if !problems.is_empty() {
@@ -228,6 +231,17 @@ impl Plan {
         self.carried.append(&mut self.setup);
     }
 
+    /// The curve a firmware-curve control runs in `profile`, fitted to its `n` points (§3.5): a Graph's points, or a Flat
+    /// curve's duty across 20–100 °C. `None` for anything else, which the plan refuses for such a control.
+    pub fn firmware_curve(&self, profile: &str, key: &Key, n: usize) -> Option<Vec<[f64; 2]>> {
+        let id = self.assignment(profile, key)?;
+        match &self.config.curve(id)?.kind {
+            CurveKind::Graph { points, .. } => Some(fit(points, n)),
+            CurveKind::Flat { percent } => Some(fit(&[[20.0, *percent], [100.0, *percent]], n)),
+            _ => None,
+        }
+    }
+
     /// The curve a profile gives a control, or `None` for firmware. Defaults gives every control to its firmware (§4.7).
     pub fn assignment(&self, profile: &str, key: &Key) -> Option<&str> {
         if profile == config::DEFAULTS {
@@ -236,6 +250,64 @@ impl Plan {
         let curve = self.config.profiles.get(profile)?.get(key)?;
         (curve != config::FIRMWARE).then_some(curve.as_str())
     }
+}
+
+/// A firmware runs one curve on its own sensor (§3.5): a fan whose firmware runs its curve can follow a Graph on a sensor, or a
+/// Flat curve, and nothing that mixes curves, switches between two, or reads a virtual sensor.
+fn firmware_curve_problems(config: &Config, key: &Key) -> Vec<Problem> {
+    let mut out = Vec::new();
+    for (profile, assign) in &config.profiles {
+        let Some(id) = assign.get(key).filter(|id| id.as_str() != config::FIRMWARE) else { continue };
+        let ok = match config.curve(id).map(|c| &c.kind) {
+            Some(CurveKind::Graph { source, .. }) => config.virtual_sensor(source).is_none(),
+            Some(CurveKind::Flat { .. }) => true,
+            _ => false,
+        };
+        if !ok {
+            out.push(Problem {
+                at: format!("profile {profile}, control {key}"),
+                message: format!("its firmware runs one curve on its own sensor: give it a Graph on a sensor, or a Flat curve, not {id:?}"),
+            });
+        }
+    }
+    out
+}
+
+/// A graph as exactly `n` points, for a firmware that runs that many (§3.5). Fewer: the widest gap is split at its middle until
+/// there are `n`. More: the graph is read at `n` temperatures evenly from its first point to its last. Temperatures are whole
+/// degrees and duties whole percent, both never falling.
+pub fn fit(points: &[[f64; 2]], n: usize) -> Vec<[f64; 2]> {
+    let mut out: Vec<[f64; 2]> = points.to_vec();
+    if out.is_empty() || n == 0 {
+        return out;
+    }
+    if out.len() > n {
+        let (a, b) = (out[0][0], out[out.len() - 1][0]);
+        out = (0..n)
+            .map(|i| {
+                let t = if n == 1 { a } else { a + (b - a) * i as f64 / (n - 1) as f64 };
+                [t, crate::control::graph(points, t)]
+            })
+            .collect();
+    }
+    while out.len() < n {
+        let i = (0..out.len().saturating_sub(1))
+            .max_by(|&i, &j| (out[i + 1][0] - out[i][0]).total_cmp(&(out[j + 1][0] - out[j][0])))
+            .unwrap_or(0);
+        let mid = match (out.get(i), out.get(i + 1)) {
+            (Some(p), Some(q)) => [(p[0] + q[0]) / 2.0, (p[1] + q[1]) / 2.0],
+            (Some(p), None) => [p[0] + 1.0, p[1]],
+            _ => break,
+        };
+        out.insert(i + 1, mid);
+    }
+    let mut last = [f64::NEG_INFINITY, 0.0];
+    for p in &mut out {
+        p[0] = p[0].round().max(last[0] + 1.0);
+        p[1] = p[1].round().clamp(last[1], 100.0);
+        last = *p;
+    }
+    out
 }
 
 /// One control's limits resolved against what is on the machine (`present`: its kind and hardware label) and what calibration

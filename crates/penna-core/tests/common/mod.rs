@@ -125,6 +125,24 @@ may_stop = true
 "nvml/GPU-1/fan0" = "case"
 "#;
 
+/// The same desk with its motherboard header swapped for a fan whose firmware runs a 5-point curve, as amdgpu's OverDrive does
+/// (§3.5), on the `cpu` curve. The `boost` profile's Trigger is one it can't run, so that profile leaves it to its firmware.
+pub fn with_firmware_curve() -> Rig {
+    let kind = ControlKind::FirmwareCurve { points: 5 };
+    let mut inv = inventory();
+    for c in inv.devices.iter_mut().flat_map(|d| &mut d.controls).filter(|c| c.key == pwm()) {
+        c.kind = kind;
+    }
+    let cfg = Config::parse(&CONFIG.replace("\"hwmon/it87/it87.2608/pwm1\" = \"boost\"", "\"hwmon/it87/it87.2608/pwm1\" = \"firmware\""))
+        .expect("test config parses");
+    let plan = Plan::new(cfg, &inv, &Measured::default(), Some("AMD Ryzen 9 5950X 16-Core Processor")).expect("test config plans");
+    let mut rig = Rig::new(plan);
+    let h = rig.hw.get_mut(&pwm()).expect("the header");
+    h.kind = kind;
+    h.mode = ControlMode::Automatic(2);
+    rig
+}
+
 /// The same desk with its motherboard header swapped for a laptop fan with modes: automatic or full speed (§3.5), on the
 /// `quiet` curve, a Flat 35 %.
 pub fn with_modes() -> Rig {
@@ -179,6 +197,8 @@ pub struct Hw {
     pub raw: u32,
     pub fail_writes: bool,
     pub unreadable: bool,
+    /// A firmware curve as last written.
+    pub curve: Option<Vec<[f64; 2]>>,
 }
 
 pub struct Rig {
@@ -206,6 +226,7 @@ impl Rig {
                     raw: 102,
                     fail_writes: false,
                     unreadable: false,
+                    curve: None,
                 },
             ),
             (
@@ -217,6 +238,7 @@ impl Rig {
                     raw: 0,
                     fail_writes: false,
                     unreadable: false,
+                    curve: None,
                 },
             ),
         ]);
@@ -303,6 +325,14 @@ impl Rig {
             }
             Command::Handback { .. } => {
                 h.mode = ControlMode::Driver;
+                Outcome::Done
+            }
+            Command::Curve { points, .. } => {
+                if h.fail_writes {
+                    return Outcome::Failed("Input/output error".into());
+                }
+                h.mode = ControlMode::Manual;
+                h.curve = Some(points.clone());
                 Outcome::Done
             }
             Command::Release { .. } => {

@@ -95,6 +95,7 @@ impl Hwmon {
             self.chips.iter().flat_map(|c| &c.pwms).find(|p| &p.key == key).ok_or_else(|| anyhow!("{key} is not a PWM control here"))?;
         match p.kind.undrivable_reason() {
             Some(why) => bail!("{key}: {why}"),
+            None if matches!(p.kind, ControlKind::FirmwareCurve { .. }) => bail!("{key}: its firmware curve isn't written through pwmN"),
             None => Ok(p),
         }
     }

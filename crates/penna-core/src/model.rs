@@ -132,7 +132,12 @@ impl ControlKind {
     pub fn drivable(self) -> bool {
         matches!(
             self,
-            ControlKind::Duty { .. } | ControlKind::Nvml { .. } | ControlKind::Levels { .. } | ControlKind::Speed { .. } | ControlKind::Modes
+            ControlKind::Duty { .. }
+                | ControlKind::Nvml { .. }
+                | ControlKind::Levels { .. }
+                | ControlKind::Speed { .. }
+                | ControlKind::FirmwareCurve { .. }
+                | ControlKind::Modes
         )
     }
 
@@ -156,12 +161,13 @@ impl ControlKind {
 
     /// Why Penna doesn't drive it, in words, or `None` when it does.
     pub fn undrivable_reason(self) -> Option<String> {
-        let later = "Penna drives these from M9 (DESIGN.md §3.5)";
         match self {
-            ControlKind::Duty { .. } | ControlKind::Nvml { .. } | ControlKind::Levels { .. } | ControlKind::Speed { .. } | ControlKind::Modes => {
-                None
-            }
-            ControlKind::FirmwareCurve { points } => Some(format!("Its firmware runs a {points}-point curve itself; {later}.")),
+            ControlKind::Duty { .. }
+            | ControlKind::Nvml { .. }
+            | ControlKind::Levels { .. }
+            | ControlKind::Speed { .. }
+            | ControlKind::FirmwareCurve { .. }
+            | ControlKind::Modes => None,
             ControlKind::ReadOnly => Some("Its driver offers no control Penna can use.".to_owned()),
         }
     }

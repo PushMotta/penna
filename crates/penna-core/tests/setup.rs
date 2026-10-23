@@ -265,6 +265,7 @@ impl Desk {
                     self.gpu_manual = false;
                     Outcome::Done
                 }
+                Command::Curve { .. } => Outcome::Failed("no firmware curve on this desk".into()),
             };
         }
         let c = self.channel(&key).expect("a header of this desk");
@@ -280,6 +281,7 @@ impl Desk {
                 Outcome::Done
             }
             Command::Handback { .. } => Outcome::Done,
+            Command::Curve { .. } => Outcome::Failed("no firmware curve on this desk".into()),
             Command::Release { .. } => {
                 c.mode = ControlMode::Automatic(2);
                 c.raw = raw(c.h.firmware);

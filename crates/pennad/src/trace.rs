@@ -332,6 +332,7 @@ fn verb(cmd: &Command) -> &'static str {
         Command::Write { .. } => "write",
         Command::Reassert { .. } => "re-assert",
         Command::Handback { .. } => "hand-back",
+        Command::Curve { .. } => "write the curve of",
         Command::Release { .. } => "release",
     }
 }

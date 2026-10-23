@@ -55,6 +55,10 @@ pub trait Backend {
     fn handback(&mut self, key: &Key) -> Result<()> {
         bail!("{}: {key} has no driver curve to hand back to", self.name())
     }
+    /// A firmware curve, °C → %, written whole for the firmware to run (§3.5).
+    fn write_curve(&mut self, key: &Key, _points: &[[f64; 2]]) -> Result<()> {
+        bail!("{}: {key} runs no firmware curve", self.name())
+    }
     /// Exactly what `held.json` recorded, with this backend's own handle where it has one.
     fn release(&mut self, entry: &HeldEntry) -> Result<String> {
         held::restore(entry)
@@ -280,6 +284,9 @@ impl Machine {
     }
     pub fn handback(&mut self, key: &Key) -> Result<()> {
         self.owner(key)?.handback(key)
+    }
+    pub fn write_curve(&mut self, key: &Key, points: &[[f64; 2]]) -> Result<()> {
+        self.owner(key)?.write_curve(key, points)
     }
     pub fn relocate(&self, entry: &HeldEntry) -> Option<HeldEntry> {
         let i = *self.owners.get(entry.key())?;

@@ -720,6 +720,7 @@ fn carry_out(machine: &mut Machine, held: &mut Held, cmd: &Command) -> Outcome {
         Command::Write { key, raw } => machine.write(key, *raw).map(|_| Outcome::Done),
         Command::Reassert { key, raw } => machine.reassert(key, *raw).map(|_| Outcome::Done),
         Command::Handback { key } => machine.handback(key).map(|_| Outcome::Done),
+        Command::Curve { key, points } => machine.write_curve(key, points).map(|_| Outcome::Done),
         Command::Release { key } => {
             let entry = held.get(key).cloned().ok_or_else(|| anyhow!("{key} is not in held.json"))?;
             machine.release(&entry)?;

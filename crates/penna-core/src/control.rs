@@ -67,7 +67,7 @@ pub enum Trend {
     Falling,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Command {
     /// Leave firmware: the daemon writes the way back to `held.json` first (§6.1), then switches to manual without a jump.
     Take {
@@ -86,6 +86,11 @@ pub enum Command {
     Handback {
         key: Key,
     },
+    /// A firmware curve, written whole: the firmware runs it, °C → %, on its own sensor (§3.5).
+    Curve {
+        key: Key,
+        points: Vec<[f64; 2]>,
+    },
     /// Restore the original mode and stop holding the control.
     Release {
         key: Key,
@@ -99,6 +104,7 @@ impl Command {
             | Command::Write { key, .. }
             | Command::Reassert { key, .. }
             | Command::Handback { key }
+            | Command::Curve { key, .. }
             | Command::Release { key } => key,
         }
     }
@@ -158,6 +164,8 @@ pub struct ControlState {
     pub trend: Trend,
     /// The raw value last written and not since overridden.
     pub written: Option<u32>,
+    /// A firmware curve: the points last written (§3.5).
+    pub curve: Option<Vec<[f64; 2]>>,
     pub kick_until: Option<f64>,
     pub mismatch: u32,
     pub reasserts: Vec<f64>,
@@ -312,7 +320,11 @@ impl LoopState {
                 cs.written = None;
                 None
             }
-            (Command::Write { .. } | Command::Reassert { .. } | Command::Handback { .. }, Outcome::Failed(e)) => {
+            (Command::Curve { points, .. }, Outcome::Done | Outcome::Taken { .. }) => {
+                cs.curve = Some(points.clone());
+                None
+            }
+            (Command::Write { .. } | Command::Reassert { .. } | Command::Handback { .. } | Command::Curve { .. }, Outcome::Failed(e)) => {
                 cs.state = State::Fault;
                 cs.reason = Some(format!("write failed: {e}"));
                 cs.releasing = true;
@@ -323,6 +335,7 @@ impl LoopState {
                 cs.held = false;
                 cs.handback = false;
                 cs.written = None;
+                cs.curve = None;
                 if !matches!(cs.state, State::Fault | State::Contested) {
                     cs.state = State::Firmware;
                 }
@@ -377,6 +390,11 @@ pub fn tick(plan: &Plan, prev: &LoopState, readings: &Readings, now: f64) -> (Lo
         };
         let cs = st.controls.entry(key.clone()).or_default();
         let reason = if emergency { st.emergency.iter().next().map(|(k, l)| format!("{k} at or above {l} °C")) } else { None };
+        if let Some(ControlKind::FirmwareCurve { points }) = c.kind {
+            let compiled = plan.firmware_curve(&st.profile, key, points as usize);
+            step_curve(c, cs, output, compiled, readings.controls.get(key), reason, ov, now, &mut cmds);
+            continue;
+        }
         step_control(c, cs, output, readings.controls.get(key), reason, ov, measuring.is_some(), now, dt, &mut cmds);
     }
     (st, cmds)
@@ -787,6 +805,135 @@ fn contested(c: &ControlPlan, cs: &mut ControlState, emergency: Option<String>, 
                 cs.reason = Some(reason);
             }
         }
+    }
+}
+
+/// A fan whose firmware runs a curve itself (§3.5). Penna writes the whole curve, fitted to the firmware's points, when it changes,
+/// and the firmware runs it on its own sensor, so it keeps running if Penna stops. An emergency, an override, Full speed or a
+/// failed source writes a flat curve at that duty. Read-back is the firmware still running Penna's curve: a mode that says
+/// otherwise for two ticks is written again, three times in 30 s, then contested (§6.4).
+#[allow(clippy::too_many_arguments)]
+fn step_curve(
+    c: &ControlPlan,
+    cs: &mut ControlState,
+    output: Option<Result<f64, String>>,
+    compiled: Option<Vec<[f64; 2]>>,
+    reading: Option<&Sample<ControlReading>>,
+    emergency: Option<String>,
+    ov: Option<f64>,
+    now: f64,
+    cmds: &mut Vec<Command>,
+) {
+    let key = &c.key;
+    if cs.releasing || (cs.state == State::Fault && !cs.force_reassert) {
+        return;
+    }
+    if (cs.state == State::Contested || cs.parked.is_some()) && !cs.force_reassert {
+        // A contested firmware curve is left to whoever is writing it, except in an emergency.
+        if let Some(why) = emergency.filter(|_| cs.held) {
+            if cs.parked.is_none() {
+                cs.parked = Some(cs.reason.take().unwrap_or_else(|| "contested".to_owned()));
+            }
+            cs.state = State::Emergency;
+            cs.reason = Some(why);
+            cs.duty = 100.0;
+            cs.target = 100.0;
+            cmds.push(Command::Curve { key: key.clone(), points: flat(compiled.as_deref(), 100.0) });
+        } else if let Some(reason) = cs.parked.take() {
+            cs.state = State::Contested;
+            cs.reason = Some(reason);
+        }
+        return;
+    }
+    let Some(output) = output else {
+        if cs.held {
+            cs.releasing = true;
+            cmds.push(Command::Release { key: key.clone() });
+        } else {
+            cs.state = State::Firmware;
+        }
+        cs.reason = None;
+        return;
+    };
+    if !cs.held {
+        if !cs.taking {
+            cs.taking = true;
+            cs.state = State::Firmware;
+            cmds.push(Command::Take { key: key.clone() });
+        }
+        return;
+    }
+    let reading = match reading {
+        Some(Sample::Value(r)) => *r,
+        other => {
+            let why = match other {
+                Some(Sample::Error(e)) => e.clone(),
+                Some(Sample::Implausible(v)) => format!("read {v}"),
+                _ => "not read".to_owned(),
+            };
+            cs.state = State::Fault;
+            cs.reason = Some(format!("cannot read the control back: {why}"));
+            cs.releasing = true;
+            cmds.push(Command::Release { key: key.clone() });
+            return;
+        }
+    };
+    if cs.curve.is_some() && !cs.force_reassert && overridden(cs, reading.mode == ControlMode::Manual, now) {
+        cs.state = State::Contested;
+        cs.reason = Some(format!(
+            "wrote a curve, and its firmware went back to its own (mode {:?}) {MAX_REASSERTS} times in {REASSERT_WINDOW:.0} s; stopped writing",
+            reading.mode
+        ));
+        return;
+    }
+    let (state, duty, reason) = match (emergency, output) {
+        (Some(why), _) => (State::Emergency, 100.0, Some(why)),
+        (None, Err(e)) => (State::Failsafe, c.failsafe, Some(e)),
+        (None, Ok(_)) if ov.is_some() => (State::Override, ov.expect("checked"), None),
+        (None, Ok(v)) => (State::Curve, v, None),
+    };
+    let want = match (state, compiled) {
+        (State::Curve, Some(points)) => points,
+        (_, compiled) => flat(compiled.as_deref(), duty),
+    };
+    cs.state = state;
+    cs.reason = reason;
+    cs.duty = duty;
+    cs.target = duty;
+    cs.trend = Trend::Steady;
+    if cs.force_reassert || cs.curve.as_ref() != Some(&want) {
+        cs.force_reassert = false;
+        cmds.push(Command::Curve { key: key.clone(), points: want });
+    }
+}
+
+/// A flat curve at `duty`, on the temperatures of `like` or 20–100 °C evenly, with as many points as the firmware takes.
+fn flat(like: Option<&[[f64; 2]]>, duty: f64) -> Vec<[f64; 2]> {
+    match like {
+        Some(points) if !points.is_empty() => points.iter().map(|p| [p[0], duty]).collect(),
+        _ => (0..5).map(|i| [20.0 + 20.0 * i as f64, duty]).collect(),
+    }
+}
+
+/// Counts a read-back that doesn't match; after two ticks running, asks for a reassert, up to three in 30 s. Returns true once
+/// the control is to be contested (§6.4).
+fn overridden(cs: &mut ControlState, ok: bool, now: f64) -> bool {
+    if ok {
+        cs.mismatch = 0;
+        return false;
+    }
+    cs.mismatch += 1;
+    if cs.mismatch < MISMATCH_TICKS {
+        return false;
+    }
+    cs.mismatch = 0;
+    cs.reasserts.retain(|t| now - t < REASSERT_WINDOW);
+    if cs.reasserts.len() < MAX_REASSERTS {
+        cs.reasserts.push(now);
+        cs.force_reassert = true;
+        false
+    } else {
+        true
     }
 }
 
