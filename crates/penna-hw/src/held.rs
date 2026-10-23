@@ -67,7 +67,7 @@ impl Held {
     pub fn remove(&mut self, key: &Key) -> Result<()> {
         self.file.controls.retain(|e| e.key() != key);
         if let Some(fw) = &self.firmware {
-            forget(fw, &[key.clone()])?;
+            forget(fw, std::slice::from_ref(key))?;
         }
         if self.file.controls.is_empty() { remove_if_present(&self.path) } else { self.save() }
     }
@@ -331,7 +331,7 @@ mod tests {
         let (run, fw) = (d.join("run").join(FILE), d.join(FIRMWARE_FILE));
         let mut held = Held::new(&run).with_firmware(&fw);
         held.add(entry.clone()).unwrap();
-        assert_eq!(load(&fw).unwrap().controls, [entry.clone()], "written ahead to firmware.json");
+        assert_eq!(load(&fw).unwrap().controls, std::slice::from_ref(&entry), "written ahead to firmware.json");
         // A reboot empties /run: only firmware.json is left, and it puts the profile back.
         fs::remove_file(&run).unwrap();
         let r = restore_both(&run, &fw).unwrap();
