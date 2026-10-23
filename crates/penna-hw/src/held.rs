@@ -153,6 +153,28 @@ pub fn restore(entry: &HeldEntry) -> Result<String> {
         }
         HeldEntry::Nvml { .. } => crate::nvml::restore_entry(entry),
         HeldEntry::Platform { via, original, .. } => crate::platform::restore(via, original),
+        HeldEntry::Target { key, target, original, switch, original_switch } => {
+            write_number(target, *original)?;
+            match (switch, original_switch) {
+                (Some(path), Some(v)) => {
+                    write_number(path, *v)?;
+                    Ok(format!("{key}: target {original}, {} {v}", file_name(path)))
+                }
+                _ => Ok(format!("{key}: target {original}")),
+            }
+        }
+        HeldEntry::OdCurve { key, path, original } => {
+            crate::hwmon::od_write(path, original)?;
+            Ok(format!("{key}: its OverDrive curve as found"))
+        }
+        HeldEntry::PointCurve { key, enable, original_enable, points } => {
+            // The points first: writing one switches the curve off, and the enable then puts it back as it was.
+            for p in points {
+                fs::write(&p.path, format!("{}\n", p.value)).with_context(|| format!("writing {}", p.path.display()))?;
+            }
+            write_number(enable, *original_enable)?;
+            Ok(format!("{key}: its curve as found, enable {original_enable}"))
+        }
     }
 }
 
@@ -172,6 +194,9 @@ pub fn gone(entry: &HeldEntry) -> bool {
         HeldEntry::MockNvml { policy, .. } => !policy.exists(),
         HeldEntry::Nvml { .. } => false,
         HeldEntry::Platform { via, .. } => crate::platform::gone(via),
+        HeldEntry::Target { target, .. } => !target.exists(),
+        HeldEntry::OdCurve { path, .. } => !path.exists(),
+        HeldEntry::PointCurve { enable, .. } => !enable.exists(),
     }
 }
 

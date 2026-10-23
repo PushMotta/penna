@@ -1,8 +1,10 @@
 # A ThinkPad, as thinkpad_acpi documents it (DESIGN.md §3.5, Documentation/admin-guide/laptops/thinkpad-acpi.rst): one `pwm1`
 # with 8 levels, 0 (off) to 7, that runs both fans; a write `v` is level `v >> 5`, and the level reads back as level × 255 / 7.
 # Writes count only with `pwm1_enable` 1; 2 is the embedded controller's automatic mode, which stops the fans when cool. Loaded
-# with `fan_control=1`, so `pwm1` is writable. A Documented fixture: no real ThinkPad has run Penna yet. The CPU is an AMD
-# Ryzen 7 PRO 6850U, as in a T14 Gen 3 AMD.
+# with `fan_control=1`: without it `pwm1` still looks writable and writes get EPERM. `fan_watchdog`, a driver attribute of
+# thinkpad_hwmon, gives the fan back to the controller once nothing has written it for that many seconds
+# (drivers/platform/x86/lenovo/thinkpad_acpi.c at v7.3). A Documented fixture: no real ThinkPad has run Penna yet. The CPU is an
+# AMD Ryzen 7 PRO 6850U, as in a T14 Gen 3 AMD.
 name = "thinkpad"
 cpu_model = "AMD Ryzen 7 PRO 6850U with Radeon Graphics"
 ambient = 24.0
@@ -10,6 +12,10 @@ seed = 14
 config = "thinkpad.config.toml"
 seconds = 600
 fresh = true
+
+[files]
+"module/thinkpad_acpi/parameters/fan_control" = "Y"
+"bus/platform/drivers/thinkpad_hwmon/fan_watchdog" = "0"
 
 [load]
 points = [{ at = 0, cpu = 0.02, gpu = 0.0 }]
@@ -41,6 +47,7 @@ temp = [{ channel = 1, body = "cpu", offset = -4.0, noise = 0.2 }, { channel = 2
 channel = 1
 enable = 2
 levels = 8
+watchdog = "bus/platform/drivers/thinkpad_hwmon/fan_watchdog"
 firmware = { body = "cpu", points = [[44, 0], [45, 14.3], [60, 42.9], [75, 71.4], [85, 100]] }
 
 [[chip.fan]]

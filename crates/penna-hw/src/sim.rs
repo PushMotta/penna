@@ -79,6 +79,9 @@ pub struct Scenario {
     /// `/sys/firmware/acpi/platform_profile`, when the firmware has one (§3.5).
     #[serde(default)]
     pub platform: Option<PlatformSpec>,
+    /// Other files under the sysfs root that a module or driver offers, by path: `module/thinkpad_acpi/parameters/fan_control`.
+    #[serde(default)]
+    pub files: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -198,6 +201,10 @@ pub struct PwmSpec {
     /// `level × 255 / (levels − 1)`. Its firmware runs levels too.
     #[serde(default)]
     pub levels: Option<u32>,
+    /// A watchdog file under the sysfs root, in seconds, 0 for off: once nothing has written `pwmN` or `pwmN_enable` for that
+    /// long, the firmware takes the fan back, as a ThinkPad's `fan_watchdog` does (thinkpad_acpi.c, `fan_watchdog_fire`).
+    #[serde(default)]
+    pub watchdog: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -369,6 +376,8 @@ pub struct Sim {
     full_cpu: bool,
     gpu_on: Vec<bool>,
     boosts: BTreeMap<(usize, u32), f64>,
+    /// A watched control's files as last seen, and when someone last wrote them.
+    writes: BTreeMap<(usize, u32), (Option<std::time::SystemTime>, f64)>,
     active: BTreeSet<usize>,
     fired: BTreeSet<usize>,
 }
@@ -397,6 +406,7 @@ impl Sim {
             read_at: BTreeMap::new(),
             full_cpu: false,
             boosts: BTreeMap::new(),
+            writes: BTreeMap::new(),
             active: BTreeSet::new(),
             fired: BTreeSet::new(),
         };
@@ -427,6 +437,11 @@ impl Sim {
     fn build(&mut self) -> Result<()> {
         let class = self.root.join("class/hwmon");
         fs::create_dir_all(&class)?;
+        for (path, value) in &self.sc.files {
+            let file = self.root.join(path);
+            fs::create_dir_all(file.parent().unwrap_or(&self.root))?;
+            put(&file, value)?;
+        }
         if let Some(p) = &self.sc.platform {
             let acpi = self.root.join("firmware/acpi");
             fs::create_dir_all(&acpi)?;
@@ -667,15 +682,21 @@ impl Sim {
                 if let Some(f) = self.targeted(FaultKind::PwmEnable, &format!("{}/pwm{}", chip.driver, p.channel)) {
                     put(&enable_path, &f.value.unwrap_or(2).to_string())?;
                 }
+                if let Some(w) = &p.watchdog {
+                    self.watchdog(ci, p.channel, &self.root.join(w), &pwm_path, &enable_path)?;
+                }
                 let enable: i64 = get(&enable_path).unwrap_or(p.enable);
                 let duty = match (enable, p.levels) {
                     (0, _) => 100.0,
                     (1, None) => get::<i64>(&pwm_path).map_or(100.0, |r| r.clamp(0, 255) as f64 * 100.0 / 255.0),
                     (1, Some(n)) => {
-                        // The level a write stands for, read back as the driver reads it.
+                        // The level a write stands for, read back as the driver reads it. Rewritten only when it reads otherwise,
+                        // so the file's time says when someone else wrote it.
                         let v = get::<i64>(&pwm_path).unwrap_or(255).clamp(0, 255);
                         let level = (v as u64 * n as u64 / 256) as u32;
-                        put(&pwm_path, &level_raw(level, n).to_string())?;
+                        if v != level_raw(level, n) {
+                            put(&pwm_path, &level_raw(level, n).to_string())?;
+                        }
                         penna_core::model::level_duty(n, level)
                     }
                     (_, None) => {
@@ -685,7 +706,9 @@ impl Sim {
                     }
                     (_, Some(n)) => {
                         let level = penna_core::model::level_of(n, self.firmware_duty(&p.firmware));
-                        put(&pwm_path, &level_raw(level, n).to_string())?;
+                        if get::<i64>(&pwm_path) != Some(level_raw(level, n)) {
+                            put(&pwm_path, &level_raw(level, n).to_string())?;
+                        }
                         penna_core::model::level_duty(n, level)
                     }
                 };
@@ -773,6 +796,24 @@ impl Sim {
             let t = self.temps.get(&b.id).copied().unwrap_or(self.sc.ambient);
             let dt = (p - (b.passive + b.airflow * airflow) * (t - self.sc.ambient)) / b.capacity * h;
             self.temps.insert(b.id.clone(), t + dt);
+        }
+        Ok(())
+    }
+
+    /// A firmware watchdog (§3.5): a write to the control rearms it; once it has gone unwritten for the watchdog's seconds, the
+    /// firmware takes it back, automatic mode, and the watchdog waits for the next write.
+    fn watchdog(&mut self, ci: usize, ch: u32, file: &Path, pwm: &Path, enable: &Path) -> Result<()> {
+        let seen = [pwm, enable].iter().filter_map(|p| fs::metadata(p).and_then(|m| m.modified()).ok()).max();
+        let t = self.t;
+        let entry = self.writes.entry((ci, ch)).or_insert((seen, t));
+        if entry.0 != seen {
+            *entry = (seen, t);
+        }
+        let seconds: f64 = get(file).unwrap_or(0.0);
+        if seconds > 0.0 && t - entry.1 >= seconds && get::<i64>(enable) == Some(1) {
+            put(enable, "2")?;
+            let seen = [pwm, enable].iter().filter_map(|p| fs::metadata(p).and_then(|m| m.modified()).ok()).max();
+            self.writes.insert((ci, ch), (seen, t));
         }
         Ok(())
     }

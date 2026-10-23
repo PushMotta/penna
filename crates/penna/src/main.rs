@@ -424,6 +424,9 @@ fn restore(from: &std::path::Path, firmware: &std::path::Path) -> Result<()> {
         penna_core::held::HeldEntry::Nvml { .. } => true,
         penna_core::held::HeldEntry::Hwmon { enable, .. } => penna_hw::is_real_sysfs(enable),
         penna_core::held::HeldEntry::MockNvml { .. } => false,
+        penna_core::held::HeldEntry::Target { target: path, .. }
+        | penna_core::held::HeldEntry::OdCurve { path, .. }
+        | penna_core::held::HeldEntry::PointCurve { enable: path, .. } => penna_hw::is_real_sysfs(path),
         penna_core::held::HeldEntry::Platform { via, .. } => match via {
             penna_core::held::PlatformVia::Daemon => true,
             penna_core::held::PlatformVia::Sysfs { path } => penna_hw::is_real_sysfs(path),

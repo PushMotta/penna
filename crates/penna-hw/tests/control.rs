@@ -148,11 +148,14 @@ fn held_entries_follow_a_control_to_its_new_path() {
 fn channels_penna_does_not_drive_are_listed_and_never_written() {
     let (sim, mut machine) = desk("kinds", "render-burst");
     plug(sim.root(), "nct6683.2592", 13, "nct6687", &[(1, 0o444)]);
-    plug(sim.root(), "thinkpad_hwmon", 14, "thinkpad", &[(1, 0o444)]);
+    // pwm1 stays 0644 without fan_control=1, and writes get EPERM: the module parameter is what says.
+    plug(sim.root(), "thinkpad_hwmon", 14, "thinkpad", &[(1, 0o644)]);
+    fs::create_dir_all(sim.root().join("module/thinkpad_acpi/parameters")).unwrap();
+    fs::write(sim.root().join("module/thinkpad_acpi/parameters/fan_control"), "N\n").unwrap();
     machine.rediscover();
     let kind = |driver: &str| machine.inventory.devices.iter().find(|d| d.driver == driver).unwrap().controls[0].kind;
     assert_eq!(kind("nct6687"), ControlKind::ReadOnly, "nct6683's pwm is read-only");
-    assert_eq!(kind("thinkpad"), ControlKind::ReadOnly, "without fan_control=1 a ThinkPad's pwm is read-only");
+    assert_eq!(kind("thinkpad"), ControlKind::ReadOnly, "without fan_control=1 a ThinkPad's pwm is read-only to Penna");
     let nct = Key::hwmon("nct6687", "nct6683.2592", "pwm1");
     let err = machine.original(&nct).unwrap_err().to_string();
     assert!(err.contains("no control Penna can use"), "{err}");
@@ -170,12 +173,16 @@ fn a_control_with_modes_is_held_in_automatic_and_switched_to_full_speed() {
     fs::write(dir.join("pwm2_enable"), "2\n").unwrap();
     machine.rediscover();
     let kinds: Vec<_> = machine.inventory.devices.iter().find(|d| d.driver == "asus").unwrap().controls.iter().map(|c| c.kind).collect();
-    assert_eq!(kinds, [ControlKind::Modes, ControlKind::Modes]);
+    assert_eq!(kinds, [ControlKind::Duty { scale: 255 }, ControlKind::Modes], "pwm1 has a duty of its own (AGFN); pwm2 only modes");
     let gpu = Key::hwmon("asus", "asus-nb-wmi", "pwm2");
+    // asus reads pwm2_enable from a cache that says 0, full speed, until something writes it: automatic is what goes back.
+    fs::write(dir.join("pwm2_enable"), "0\n").unwrap();
     let entry = machine.original(&gpu).unwrap();
     assert!(matches!(&entry, HeldEntry::Hwmon { original_enable: 2, original_pwm: None, .. }), "a mode, and no duty: {entry:?}");
-    assert_eq!(machine.take(&gpu).unwrap(), 0.0, "taken in automatic, and nothing written");
-    assert_eq!(read(&dir.join("pwm2_enable")), "2");
+    assert_eq!(machine.take(&gpu).unwrap(), 0.0, "taken as automatic, which is what the driver left it in, whatever the cache says");
+    assert_eq!(read(&dir.join("pwm2_enable")), "0", "and nothing written");
+    assert_eq!(machine.write(&gpu, 0).unwrap().raw, Some(0));
+    assert_eq!(read(&dir.join("pwm2_enable")), "2", "the first write sets the mode");
     assert_eq!(machine.write(&gpu, 1).unwrap().raw, Some(1));
     assert_eq!(read(&dir.join("pwm2_enable")), "0", "full speed");
     let r = machine.read();
@@ -188,6 +195,11 @@ fn a_control_with_modes_is_held_in_automatic_and_switched_to_full_speed() {
 fn a_stepped_control_is_written_and_read_as_its_levels() {
     let (sim, mut machine) = desk("levels", "render-burst");
     plug(sim.root(), "thinkpad_hwmon", 12, "thinkpad", &[(1, 0o644)]);
+    // Loaded with fan_control=1, and the watchdog the driver offers then.
+    for (file, v) in [("module/thinkpad_acpi/parameters/fan_control", "Y"), ("bus/platform/drivers/thinkpad_hwmon/fan_watchdog", "0")] {
+        fs::create_dir_all(sim.root().join(file).parent().unwrap()).unwrap();
+        fs::write(sim.root().join(file), format!("{v}\n")).unwrap();
+    }
     machine.rediscover();
     let tp = Key::hwmon("thinkpad", "thinkpad_hwmon", "pwm1");
     let dir = sim.root().join("devices/platform/thinkpad_hwmon/hwmon/hwmon12");
@@ -196,11 +208,13 @@ fn a_stepped_control_is_written_and_read_as_its_levels() {
         ControlKind::Levels { steps: 8, .. }
     ));
     let entry = machine.original(&tp).unwrap();
-    assert!(matches!(&entry, HeldEntry::Hwmon { original_enable: 2, original_pwm: Some(128), .. }), "{entry:?}");
+    let HeldEntry::Hwmon { original_enable: 2, original_pwm: None, also, .. } = &entry else { panic!("{entry:?}") };
+    assert_eq!(also[0].value, "0", "the watchdog as found, put back after the mode");
     // 128 is level 4 (`128 >> 5`), which the driver reads back as 4 × 255 / 7.
     let duty = machine.take(&tp).unwrap();
     assert!((duty - 400.0 / 7.0).abs() < 1e-6, "{duty}");
     assert_eq!((read(&dir.join("pwm1_enable")), read(&dir.join("pwm1"))), ("1".to_owned(), "146".to_owned()));
+    assert_eq!(read(&sim.root().join("bus/platform/drivers/thinkpad_hwmon/fan_watchdog")), "5", "armed once taken");
     for (level, file) in [(7, "255"), (1, "36"), (0, "0"), (5, "182")] {
         let r = machine.write(&tp, level).unwrap();
         assert_eq!((read(&dir.join("pwm1")), r.raw), (file.to_owned(), Some(level)), "level {level}");
@@ -336,4 +350,25 @@ fn builtin_scenarios_and_their_config_load() {
         assert_eq!(config.validate(), []);
     }
     assert!(sim::load("nope").is_err());
+}
+
+/// A ThinkPad's watchdog (§3.5): armed when Penna takes the fan, kept quiet by a write every tick, and once the writes stop, as
+/// they would if Penna were killed with nothing to run `penna restore`, the embedded controller takes the fan back.
+#[test]
+fn a_thinkpad_s_watchdog_takes_the_fan_back_when_penna_stops_writing() {
+    let scenario = concat!(env!("CARGO_MANIFEST_DIR"), "/../../test/fixtures/drivers/thinkpad.toml");
+    let (mut sim, mut machine) = desk("watchdog", scenario);
+    let tp = Key::hwmon("thinkpad", "thinkpad_hwmon", "pwm1");
+    let dir = sim.root().join("devices/platform/thinkpad_hwmon/hwmon/hwmon5");
+    let kind = machine.inventory.devices.iter().flat_map(|d| &d.controls).find(|c| c.key == tp).unwrap().kind;
+    assert_eq!(kind, ControlKind::Levels { steps: 8, refresh: true }, "written every tick, for its watchdog");
+    machine.original(&tp).unwrap();
+    machine.take(&tp).unwrap();
+    for _ in 0..8 {
+        machine.write(&tp, 3).unwrap();
+        sim.advance(1.0).unwrap();
+    }
+    assert_eq!(read(&dir.join("pwm1_enable")), "1", "written every second, the watchdog never fires");
+    sim.advance(6.0).unwrap();
+    assert_eq!(read(&dir.join("pwm1_enable")), "2", "5 s without a write: back to the embedded controller");
 }

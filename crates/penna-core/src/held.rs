@@ -33,6 +33,22 @@ pub enum HeldEntry {
     },
     /// The simulator's file-backed NVML (§9.1).
     MockNvml { key: Key, policy: PathBuf, original_policy: String },
+    /// A target speed (`lenovo_wmi_other`, applesmc): the target found, and the switch to manual with the value it held when the
+    /// driver has one. The target goes back first, then the switch.
+    Target {
+        key: Key,
+        target: PathBuf,
+        original: i64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        switch: Option<PathBuf>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        original_switch: Option<i64>,
+    },
+    /// amdgpu's OverDrive fan curve: the points found, °C and %, written back and committed. It resets at boot.
+    OdCurve { key: Key, path: PathBuf, original: Vec<[i64; 2]> },
+    /// asus-wmi's custom fan curve: every point's file as found, then its enable. Nobody has checked whether the firmware keeps
+    /// it across a reboot, so it goes to `firmware.json` too (§6.7).
+    PointCurve { key: Key, enable: PathBuf, original_enable: i64, points: Vec<Also> },
     /// The machine's power profile (§3.5, §4.7), set through power-profiles-daemon or the firmware's file, and the one that was
     /// set before Penna changed it. It outlives a reboot, so the entry goes to `firmware.json` as well (§6.7).
     Platform { key: Key, via: PlatformVia, original: String },
@@ -76,6 +92,9 @@ impl HeldEntry {
             HeldEntry::Hwmon { key, .. }
             | HeldEntry::MockNvml { key, .. }
             | HeldEntry::Nvml { key, .. }
+            | HeldEntry::Target { key, .. }
+            | HeldEntry::OdCurve { key, .. }
+            | HeldEntry::PointCurve { key, .. }
             | HeldEntry::Platform { key, .. } => key,
         }
     }
@@ -84,7 +103,7 @@ impl HeldEntry {
 impl HeldEntry {
     /// What it changed survives a reboot: it goes to `firmware.json` too, not only `held.json` in `/run` (§6.7).
     pub fn outlives_reboot(&self) -> bool {
-        matches!(self, HeldEntry::Platform { .. })
+        matches!(self, HeldEntry::Platform { .. } | HeldEntry::PointCurve { .. })
     }
 }
 

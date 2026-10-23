@@ -1,7 +1,8 @@
 //! What Penna knows about each fan driver (DESIGN.md §3.5, §3.6): the kind of control it offers, what a write needs, how far that
 //! knowledge has been checked, and where it came from. Data, not code paths: a driver missing from here gets the generic hwmon ABI.
 //!
-//! Checked against the kernel source and documentation as of Linux 7.3, and the out-of-tree drivers' READMEs, on 21 Oct 2026.
+//! Checked against the kernel source and documentation as of Linux 7.3, and the out-of-tree drivers' READMEs, on 21 Oct 2026; the
+//! laptop and GPU drivers again on 23 Oct 2026, against master at 734bef548a96 (7.3, byte for byte in these files), for M9.
 use serde::{Deserialize, Serialize};
 
 /// How far Penna's knowledge of a driver has been checked (§3.6).
@@ -36,10 +37,17 @@ pub enum Offers {
     Levels {
         steps: u32,
     },
+    /// A target RPM: `fanN_target` (`lenovo_wmi_other`; applesmc from 7.3, with `pwmN_enable`) or `fanN_output` (applesmc up to
+    /// 7.2, with `fanN_manual`), between `fanN_min` and `fanN_max`.
+    Speed,
     FirmwareCurve {
         points: u32,
     },
-    Modes,
+    /// `pwmN_enable` 0 (full speed) or 2 (automatic). `duty`: a channel with a `pwmN` of its own takes a duty instead
+    /// (asus-wmi's AGFN CPU fan).
+    Modes {
+        duty: bool,
+    },
     /// Nothing Penna writes.
     ReadOnly,
 }
@@ -82,8 +90,21 @@ pub struct Driver {
     /// A firmware watchdog that takes the fan back when nothing writes it for a while: Penna arms it and writes every tick, so a
     /// Penna that stops for any reason hands the fan back with nothing else running (§3.5).
     pub watchdog: Option<Watchdog>,
+    /// A module parameter, under the sysfs root, and the value writes need: without it the driver refuses them (`EPERM`) while
+    /// its files still look writable, so the channel is read-only to Penna and the doctor names `needs`.
+    pub allowed: Option<Param>,
+    /// A firmware fan curve the device offers beside `pwmN`, as a path from the hwmon directory: amdgpu's OverDrive curve, which
+    /// Penna drives when `pwm1` isn't writable (RDNA4).
+    pub curve: Option<&'static str>,
     /// Where this entry was written from.
     pub source: &'static str,
+}
+
+/// A module parameter's file under the sysfs root, and the value that allows writes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Param {
+    pub path: &'static str,
+    pub value: &'static str,
 }
 
 /// A watchdog file, under the sysfs root, and the seconds Penna arms it with.
@@ -106,6 +127,8 @@ pub const DRIVERS: &[Driver] = &[
         needs: None,
         restore: None,
         watchdog: None,
+        allowed: None,
+        curve: None,
         source: "drivers/hwmon/it87.c, Documentation/hwmon/it87.rst; github.com/frankcrawford/it87 at bd7a566; the §9.4 test on \
                  this desk's IT8688E and IT8792E with that fork, 22 Oct 2026",
     },
@@ -119,6 +142,8 @@ pub const DRIVERS: &[Driver] = &[
         needs: None,
         restore: None,
         watchdog: None,
+        allowed: None,
+        curve: None,
         source: "drivers/hwmon/nct6775-core.c, Documentation/hwmon/nct6775.rst",
     },
     // nct6683 reads only (no pwm_enable); the out-of-tree nct6687d registers the same name with writable controls, so the
@@ -133,6 +158,8 @@ pub const DRIVERS: &[Driver] = &[
         needs: None,
         restore: None,
         watchdog: None,
+        allowed: None,
+        curve: None,
         source: "drivers/hwmon/nct6683.c; github.com/Fred78290/nct6687d",
     },
     Driver {
@@ -145,6 +172,8 @@ pub const DRIVERS: &[Driver] = &[
         needs: None,
         restore: None,
         watchdog: None,
+        allowed: None,
+        curve: None,
         source: "drivers/hwmon/f71882fg.c, Documentation/hwmon/f71882fg.rst",
     },
     Driver {
@@ -157,6 +186,8 @@ pub const DRIVERS: &[Driver] = &[
         needs: None,
         restore: None,
         watchdog: None,
+        allowed: None,
+        curve: None,
         source: "Documentation/hwmon/w83627ehf.rst",
     },
     Driver {
@@ -166,9 +197,13 @@ pub const DRIVERS: &[Driver] = &[
         label: "AMD GPU",
         offers: Offers::Duty { scale: 255 },
         tier: Tier::Documented,
-        needs: None,
+        // OverDrive needs PP_OVERDRIVE_MASK (0x4000), which the default mask 0xfff7bfff leaves clear.
+        needs: Some("amdgpu ppfeaturemask=0xfff7ffff"),
         restore: None,
         watchdog: None,
+        allowed: None,
+        // Up to RDNA3 pwm1 takes a duty; on RDNA4 it is read-only, and OverDrive's 5-point curve is the lever.
+        curve: Some("device/gpu_od/fan_ctrl/fan_curve"),
         source: "drivers/gpu/drm/amd/pm/amdgpu_pm.c, Documentation/gpu/amdgpu/thermal.rst",
     },
     Driver {
@@ -181,6 +216,8 @@ pub const DRIVERS: &[Driver] = &[
         needs: None,
         restore: None,
         watchdog: None,
+        allowed: None,
+        curve: None,
         source: "drivers/gpu/drm/nouveau/nouveau_hwmon.c",
     },
     Driver {
@@ -193,6 +230,8 @@ pub const DRIVERS: &[Driver] = &[
         needs: None,
         restore: None,
         watchdog: None,
+        allowed: None,
+        curve: None,
         source: "Documentation/hwmon/gpd-fan.rst",
     },
     Driver {
@@ -205,6 +244,8 @@ pub const DRIVERS: &[Driver] = &[
         needs: None,
         restore: None,
         watchdog: None,
+        allowed: None,
+        curve: None,
         source: "Documentation/hwmon/cros_ec_hwmon.rst",
     },
     Driver {
@@ -217,6 +258,8 @@ pub const DRIVERS: &[Driver] = &[
         needs: None,
         restore: None,
         watchdog: None,
+        allowed: None,
+        curve: None,
         source: "drivers/platform/x86/acer-wmi.c",
     },
     Driver {
@@ -228,32 +271,46 @@ pub const DRIVERS: &[Driver] = &[
         tier: Tier::Documented,
         needs: Some("thinkpad_acpi fan_control=1"),
         restore: None,
-        watchdog: None,
-        source: "Documentation/admin-guide/laptops/thinkpad-acpi.rst",
+        // fan_watchdog_store: 0–120 s; fan_watchdog_fire hands the fan to the embedded controller, at level 4 or above.
+        watchdog: Some(Watchdog { path: "bus/platform/drivers/thinkpad_hwmon/fan_watchdog", seconds: 5 }),
+        // module_param_named(fan_control, fan_control_allowed, bool, 0444): pwm1 stays 0644 without it, and writes get EPERM.
+        allowed: Some(Param { path: "module/thinkpad_acpi/parameters/fan_control", value: "Y" }),
+        curve: None,
+        source: "drivers/platform/x86/lenovo/thinkpad_acpi.c (fan_pwm1_store, fan_pwm1_enable_store, fan_watchdog_store, \
+                 tpacpi_hwmon_pdriver); Documentation/admin-guide/laptops/thinkpad-acpi.rst",
     },
     Driver {
         name: "dell-smm-hwmon",
         hwmon: &["dell_smm"],
         class: Class::Laptop,
         label: "Dell laptop",
+        // fan_max + 1 states, 3 by default: pwm 0, 128, 255 (85 apart with 4). A machine with 4 runs on 0, 2 and 3 here.
         offers: Offers::Levels { steps: 3 },
         tier: Tier::Documented,
         needs: None,
-        restore: None,
+        // A whitelisted model's one pwm1_enable is write-only (0200); automatic is what the BIOS runs at boot.
+        restore: Some(2),
         watchdog: None,
-        source: "Documentation/hwmon/dell-smm-hwmon.rst",
+        allowed: None,
+        curve: None,
+        source: "drivers/hwmon/dell-smm-hwmon.c (dell_smm_read, dell_smm_write, dell_smm_is_visible); \
+                 Documentation/hwmon/dell-smm-hwmon.rst",
     },
     Driver {
         name: "asus-wmi",
         hwmon: &["asus"],
         class: Class::Laptop,
         label: "ASUS laptop",
-        offers: Offers::Modes,
+        offers: Offers::Modes { duty: true },
         tier: Tier::Documented,
         needs: None,
-        restore: None,
+        // pwmN_enable reads a cache: pwm2_enable and pwm3_enable read 0, full speed, until written, though probe left them
+        // automatic. Automatic is what goes back.
+        restore: Some(2),
         watchdog: None,
-        source: "drivers/platform/x86/asus-wmi.c",
+        allowed: None,
+        curve: None,
+        source: "drivers/platform/x86/asus-wmi.c (pwm1_enable_store, pwm2_enable_show, asus_hwmon_sysfs_is_visible)",
     },
     Driver {
         name: "asus-wmi custom fan curves",
@@ -265,6 +322,8 @@ pub const DRIVERS: &[Driver] = &[
         needs: None,
         restore: None,
         watchdog: None,
+        allowed: None,
+        curve: None,
         source: "drivers/platform/x86/asus-wmi.c",
     },
     Driver {
@@ -272,11 +331,15 @@ pub const DRIVERS: &[Driver] = &[
         hwmon: &["hp"],
         class: Class::Laptop,
         label: "HP laptop",
-        offers: Offers::Modes,
+        // Manual duty (since 7.0, Victus S and Omen) sends both fans in one call, and the GPU fan has no enable of its own: taking
+        // the CPU fan would hold the GPU fan where it was. Penna keeps to the modes.
+        offers: Offers::Modes { duty: false },
         tier: Tier::Documented,
         needs: None,
         restore: None,
         watchdog: None,
+        allowed: None,
+        curve: None,
         source: "drivers/platform/x86/hp/hp-wmi.c",
     },
     Driver {
@@ -284,12 +347,44 @@ pub const DRIVERS: &[Driver] = &[
         hwmon: &["alienware_wmi"],
         class: Class::Laptop,
         label: "Alienware",
-        offers: Offers::Modes,
+        // fanN_boost adds to the firmware's own speed; there is no pwmN and no pwmN_enable.
+        offers: Offers::ReadOnly,
         tier: Tier::Documented,
         needs: None,
         restore: None,
         watchdog: None,
-        source: "Documentation/admin-guide/laptops/alienware-wmi.rst",
+        allowed: None,
+        curve: None,
+        source: "drivers/platform/x86/dell/alienware-wmi-wmax.c; Documentation/admin-guide/laptops/alienware-wmi.rst",
+    },
+    Driver {
+        name: "lenovo-wmi-other",
+        hwmon: &["lenovo_wmi_other"],
+        class: Class::Laptop,
+        label: "Lenovo laptop",
+        // fanN_target: 0 is automatic, otherwise within fanN_min..fanN_max, rounded down to 100 RPM; it reads back the cache.
+        offers: Offers::Speed,
+        tier: Tier::Documented,
+        needs: None,
+        restore: None,
+        watchdog: None,
+        allowed: None,
+        curve: None,
+        source: "drivers/platform/x86/lenovo/wmi-other.c (lwmi_om_hwmon_write); Documentation/wmi/devices/lenovo-wmi-other.rst",
+    },
+    Driver {
+        name: "applesmc",
+        hwmon: &["applesmc"],
+        class: Class::Laptop,
+        label: "Mac",
+        offers: Offers::Speed,
+        tier: Tier::Documented,
+        needs: None,
+        restore: None,
+        watchdog: None,
+        allowed: None,
+        curve: None,
+        source: "drivers/hwmon/applesmc.c (applesmc_hwmon_write from 7.3; applesmc_store_fan_manual up to 7.2)",
     },
     // Penna never writes its curve files: one written in the wrong unit hard-powered-off a Legion Pro 5 (§3.5).
     Driver {
@@ -302,6 +397,8 @@ pub const DRIVERS: &[Driver] = &[
         needs: None,
         restore: None,
         watchdog: None,
+        allowed: None,
+        curve: None,
         source: "github.com/johnfanv2/LenovoLegionLinux README",
     },
     Driver {
@@ -314,6 +411,8 @@ pub const DRIVERS: &[Driver] = &[
         needs: None,
         restore: None,
         watchdog: None,
+        allowed: None,
+        curve: None,
         source: LINUX,
     },
 ];
@@ -354,6 +453,8 @@ mod tests {
         assert!(lookup("k10temp").is_none());
         assert!(lookup("asus_custom_fan_curve").is_some_and(|d| d.offers == Offers::FirmwareCurve { points: 8 }));
         assert_eq!(lookup("asus").unwrap().name, "asus-wmi", "asus is not a prefix of asus_custom_fan_curve's entry");
+        assert_eq!(lookup("alienware_wmi").unwrap().offers, Offers::ReadOnly, "a boost is not a mode");
+        assert_eq!(lookup("lenovo_wmi_other").unwrap().offers, Offers::Speed);
     }
 
     #[test]
