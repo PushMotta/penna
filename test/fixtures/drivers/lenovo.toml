@@ -1,0 +1,62 @@
+# A Lenovo laptop whose fans take a target speed, as lenovo-wmi-other documents it (DESIGN.md §3.5;
+# drivers/platform/x86/lenovo/wmi-other.c at v7.3, Documentation/wmi/devices/lenovo-wmi-other.rst): `fanN_target` in RPM, 0
+# for automatic, otherwise within `fanN_min`–`fanN_max` and kept rounded down to 100 RPM; no pwm. A Documented fixture.
+name = "lenovo"
+cpu_model = "AMD Ryzen 7 8845HS w/ Radeon 780M Graphics"
+ambient = 24.0
+seed = 8
+config = "lenovo.config.toml"
+seconds = 600
+fresh = true
+
+[load]
+points = [{ at = 0, cpu = 0.03, gpu = 0.0 }]
+
+[[body]]
+id = "cpu"
+load = "cpu"
+capacity = 18.0
+idle_watts = 6.0
+load_watts = 54.0
+passive = 0.15
+airflow = 1.3
+fan = [{ id = "fan1", weight = 1.0 }, { id = "fan2", weight = 1.0 }]
+
+[[chip]]
+driver = "k10temp"
+path = "devices/pci0000:00/0000:00:18.3"
+hwmon = 2
+temp = [{ channel = 1, label = "Tctl", body = "cpu", noise = 0.3, spikes = 4.0 }]
+
+[[chip]]
+driver = "lenovo_wmi_other"
+path = "devices/platform/PNP0C14:00/wmi_bus/wmi_bus-PNP0C14:00/DC2A8805-3A8C-41BA-A6F7-092E0089CD3B"
+hwmon = 8
+
+[[chip.target]]
+channel = 1
+min = 1700
+max = 4800
+firmware = { body = "cpu", points = [[44, 0], [45, 35], [70, 60], [85, 100]] }
+
+[[chip.target]]
+channel = 2
+min = 1700
+max = 4800
+firmware = { body = "cpu", points = [[44, 0], [45, 35], [70, 60], [85, 100]] }
+
+[[chip.fan]]
+channel = 1
+id = "fan1"
+pwm = 1
+max_rpm = 4800
+stop = 10
+start = 15
+
+[[chip.fan]]
+channel = 2
+id = "fan2"
+pwm = 2
+max_rpm = 4800
+stop = 10
+start = 15

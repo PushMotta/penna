@@ -165,6 +165,27 @@ pub struct Chip {
     pub cache: f64,
     #[serde(default, rename = "custom")]
     pub customs: Vec<CustomCurveSpec>,
+    #[serde(default, rename = "target")]
+    pub targets: Vec<TargetSpec>,
+    /// Registered the old way: its attributes are on the device, and its hwmon directory has only `name` (applesmc up to 7.2).
+    #[serde(default)]
+    pub legacy: bool,
+}
+
+/// A target speed in RPM (§3.5): `fanN_target`, with `fanN_min` and `fanN_max`. The fan on the same channel runs it.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TargetSpec {
+    pub channel: u32,
+    pub min: u32,
+    pub max: u32,
+    /// How it is switched to manual: `enable`, applesmc's `pwmN_enable` from 7.3 (1 manual, 2 automatic); `manual`, its
+    /// `fanN_manual` up to 7.2 (1, 0), with the target in `fanN_output`; none, `lenovo_wmi_other`, where a target of 0 is
+    /// automatic and any other is rounded down to 100 RPM.
+    #[serde(default)]
+    pub switch: Option<String>,
+    /// What the firmware runs in automatic: a duty curve.
+    pub firmware: FirmwareCurve,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -463,6 +484,10 @@ impl Sim {
     fn chip_dir(&self, chip: &Chip) -> PathBuf {
         self.root.join(&chip.path).join("hwmon").join(format!("hwmon{}", chip.hwmon))
     }
+    /// Where a chip's attributes are: its hwmon directory, or the device for a driver registered the old way.
+    fn attr_dir(&self, chip: &Chip) -> PathBuf {
+        if chip.legacy { self.root.join(&chip.path) } else { self.chip_dir(chip) }
+    }
     fn gpu_dir(&self, g: &GpuSpec) -> PathBuf {
         self.mock_nvml_root().join(&g.uuid)
     }
@@ -488,10 +513,11 @@ impl Sim {
             put(&dmi.join("board_name"), &b.name)?;
         }
         for chip in self.sc.chips.clone() {
-            let dir = self.chip_dir(&chip);
-            fs::create_dir_all(&dir)?;
-            put(&dir.join("name"), &chip.driver)?;
-            symlink("../..", dir.join("device"))?;
+            let hw = self.chip_dir(&chip);
+            fs::create_dir_all(&hw)?;
+            put(&hw.join("name"), &chip.driver)?;
+            symlink("../..", hw.join("device"))?;
+            let dir = self.attr_dir(&chip);
             symlink(format!("../../{}/hwmon/hwmon{}", chip.path, chip.hwmon), class.join(format!("hwmon{}", chip.hwmon)))?;
             if let Some(m) = &chip.model {
                 put(&self.root.join(&chip.path).join("model"), m)?;
@@ -515,6 +541,25 @@ impl Sim {
                 if !p.modes {
                     let duty = self.firmware_duty(&p.firmware);
                     put(&dir.join(format!("pwm{}", p.channel)), &raw(duty).to_string())?;
+                }
+            }
+            for t in &chip.targets {
+                let n = t.channel;
+                let (target, start) = if t.switch.as_deref() == Some("manual") {
+                    ("output", t.min)
+                } else if t.switch.is_some() {
+                    ("target", t.min)
+                } else {
+                    ("target", 0)
+                };
+                put(&dir.join(format!("fan{n}_{target}")), &start.to_string())?;
+                put(&dir.join(format!("fan{n}_min")), &t.min.to_string())?;
+                put(&dir.join(format!("fan{n}_max")), &t.max.to_string())?;
+                fs::set_permissions(dir.join(format!("fan{n}_max")), fs::Permissions::from_mode(0o444))?;
+                match t.switch.as_deref() {
+                    Some("enable") => put(&dir.join(format!("pwm{n}_enable")), "2")?,
+                    Some("manual") => put(&dir.join(format!("fan{n}_manual")), "0")?,
+                    _ => {}
                 }
             }
             for c in &chip.customs {
@@ -640,7 +685,7 @@ impl Sim {
                 continue;
             }
             self.read_at.insert(ci, self.t);
-            let dir = self.chip_dir(chip);
+            let dir = self.attr_dir(chip);
             for f in &chip.fans {
                 let shown = self.fans.get(&f.id).map_or(0.0, |st| st.shown);
                 put(&dir.join(format!("fan{}_input", f.channel)), &(shown.round() as i64).to_string())?;
@@ -681,7 +726,7 @@ impl Sim {
 
     fn resume_reset(&mut self) -> Result<()> {
         for chip in self.sc.chips.clone() {
-            let dir = self.chip_dir(&chip);
+            let dir = self.attr_dir(&chip);
             for p in &chip.pwms {
                 put(&dir.join(format!("pwm{}_enable", p.channel)), &p.enable.to_string())?;
                 if !p.modes {
@@ -714,7 +759,7 @@ impl Sim {
     fn sensor_path(&self, target: &str) -> Option<PathBuf> {
         let (driver, channel) = target.split_once('/')?;
         let chip = self.sc.chips.iter().find(|c| c.driver == driver)?;
-        Some(self.chip_dir(chip).join(format!("{channel}_input")))
+        Some(self.attr_dir(chip).join(format!("{channel}_input")))
     }
 
     fn firmware_duty(&self, fw: &FirmwareCurve) -> f64 {
@@ -726,7 +771,7 @@ impl Sim {
         // Controls: what each PWM is really doing.
         let mut duty_of: BTreeMap<(usize, u32), f64> = BTreeMap::new();
         for (ci, chip) in self.sc.chips.clone().iter().enumerate() {
-            let dir = self.chip_dir(chip);
+            let dir = self.attr_dir(chip);
             for p in &chip.pwms {
                 let enable_path = dir.join(format!("pwm{}_enable", p.channel));
                 let pwm_path = dir.join(format!("pwm{}", p.channel));
@@ -777,10 +822,11 @@ impl Sim {
                 duty_of.insert((ci, p.channel), duty);
             }
         }
+        self.target_speeds(&mut duty_of)?;
         self.custom_curves(&mut duty_of)?;
         // Motherboard fans.
         for (ci, chip) in self.sc.chips.clone().iter().enumerate() {
-            let dir = self.chip_dir(chip);
+            let dir = self.attr_dir(chip);
             for f in &chip.fans {
                 let duty = duty_of.get(&(ci, f.pwm)).copied().unwrap_or(0.0);
                 let stuck = self.targeted(FaultKind::TachStuck, &format!("{}/fan{}", chip.driver, f.channel)).is_some();
@@ -863,6 +909,38 @@ impl Sim {
         Ok(())
     }
 
+    /// Target speeds: in manual the fan on the target's channel runs at the target, as the duty that gives that speed; otherwise
+    /// at its firmware's duty.
+    fn target_speeds(&mut self, duty_of: &mut BTreeMap<(usize, u32), f64>) -> Result<()> {
+        for (ci, chip) in self.sc.chips.clone().iter().enumerate() {
+            let dir = self.attr_dir(chip);
+            for t in &chip.targets {
+                let n = t.channel;
+                let target_file = dir.join(format!("fan{n}_{}", if t.switch.as_deref() == Some("manual") { "output" } else { "target" }));
+                let target: i64 = get(&target_file).unwrap_or(0);
+                let manual = match t.switch.as_deref() {
+                    Some("enable") => get::<i64>(&dir.join(format!("pwm{n}_enable"))) == Some(1),
+                    Some("manual") => get::<i64>(&dir.join(format!("fan{n}_manual"))) == Some(1),
+                    _ => {
+                        // lenovo_wmi_other keeps the target rounded down to 100 RPM, and 0 is automatic.
+                        if target % 100 != 0 {
+                            put(&target_file, &(target / 100 * 100).to_string())?;
+                        }
+                        target != 0
+                    }
+                };
+                let max_rpm = chip.fans.iter().find(|f| f.channel == n).map_or(1.0, |f| f.max_rpm);
+                let duty = if manual {
+                    (100.0 * (target.max(0) as f64 / max_rpm).powf(1.0 / 0.8)).clamp(0.0, 100.0)
+                } else {
+                    self.firmware_duty(&t.firmware)
+                };
+                duty_of.insert((ci, n), duty);
+            }
+        }
+        Ok(())
+    }
+
     /// Custom fan curves (asus-wmi): an enabled one runs its fan on its points. A point written after the enable, or a platform
     /// profile change, turns it off, as the driver does.
     fn custom_curves(&mut self, duty_of: &mut BTreeMap<(usize, u32), f64>) -> Result<()> {
@@ -871,7 +949,7 @@ impl Sim {
         let changed = self.profile_seen.is_some() && seen != self.profile_seen;
         self.profile_seen = seen;
         for chip in self.sc.chips.clone() {
-            let dir = self.chip_dir(&chip);
+            let dir = self.attr_dir(&chip);
             for c in &chip.customs {
                 let enable = dir.join(format!("pwm{}_enable", c.channel));
                 let files: Vec<(PathBuf, PathBuf)> = (1..=c.points.len())
@@ -933,7 +1011,7 @@ impl Sim {
 
     fn write_sensors(&mut self, dt: f64) -> Result<()> {
         for (ci, chip) in self.sc.chips.clone().iter().enumerate() {
-            let dir = self.chip_dir(chip);
+            let dir = self.attr_dir(chip);
             for t in &chip.temps {
                 let path = dir.join(format!("temp{}_input", t.channel));
                 let target = format!("{}/temp{}", chip.driver, t.channel);

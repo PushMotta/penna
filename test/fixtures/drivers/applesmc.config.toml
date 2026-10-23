@@ -1,0 +1,9 @@
+# A fresh install on the applesmc fixture: Defaults on, three empty profiles, nothing adopted (DESIGN.md §4.7, §7.5).
+version = 1
+profile = "defaults"
+
+[profiles.balanced]
+
+[profiles.quiet]
+
+[profiles.render]

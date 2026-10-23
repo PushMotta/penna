@@ -1092,3 +1092,26 @@ fn an_asus_laptop_s_fans_run_curves_its_firmware_keeps() {
     assert!(!firmware.exists(), "nothing left to put back");
     d.stop();
 }
+
+#[test]
+fn setup_measures_a_lenovo_s_target_speeds() {
+    let controls = laptop_setup("lenovo");
+    assert_eq!(controls.len(), 2, "fan1 and fan2");
+    for p in &controls {
+        assert_eq!(p["tachs"], json!([p["key"].clone()]), "a target speed is set on the fan itself: {p}");
+    }
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("ipc-setup-lenovo/tree/sys/devices/platform/PNP0C14:00/wmi_bus");
+    let target = fs::read_to_string(dir.join("wmi_bus-PNP0C14:00/DC2A8805-3A8C-41BA-A6F7-092E0089CD3B/hwmon/hwmon8/fan1_target")).unwrap();
+    assert_eq!(target.trim(), "0", "Defaults: a target of 0, automatic");
+}
+
+#[test]
+fn setup_measures_a_mac_s_target_speeds_from_7_3_and_before() {
+    for (name, switch) in [("applesmc", "hwmon/hwmon4/pwm1_enable"), ("applesmc-7.2", "fan1_manual")] {
+        let controls = laptop_setup(name);
+        assert_eq!(controls.len(), 2, "{name}");
+        let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("ipc-setup-{name}/tree/sys/devices/platform/applesmc.768"));
+        let v = fs::read_to_string(dir.join(switch)).unwrap();
+        assert_eq!(v.trim(), if name == "applesmc" { "2" } else { "0" }, "{name}: Defaults leaves it automatic");
+    }
+}
