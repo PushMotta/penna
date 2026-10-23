@@ -468,8 +468,8 @@ impl Builder {
             return;
         }
         let id = self.put("automatic".into(), "Automatic".into(), CurveKind::Flat { percent: 0.0 }, None, None);
-        for p in 0..3 {
-            let profile = self.config.profiles.entry(PROFILES[p].to_owned()).or_default();
+        for name in PROFILES {
+            let profile = self.config.profiles.entry(name.to_owned()).or_default();
             for k in &keys {
                 profile.insert(k.clone(), id.clone());
             }
