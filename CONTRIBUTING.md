@@ -43,7 +43,8 @@ header drives which fan, where each fan stops and starts, and what Penna's curve
 
 A capture becomes a fixture under `test/fixtures/drivers/`, and the simulator runs Penna's whole lifecycle on it: discovery,
 setup, saving, Defaults, every way out. A board's header names and roles go into `data/boards/`, one file per board, naming
-your report as the source. No entry is written from memory.
+your report as the source. No entry is written from memory. The board then appears in
+[docs/SUPPORT.md](docs/SUPPORT.md), and once your capture runs in the simulator, its driver is Captured.
 
 ## Code
 
@@ -62,6 +63,11 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 cd plugin && node --test test/model.test.js test/studio.test.js
 ```
+
+The support tables in the README and [docs/SUPPORT.md](docs/SUPPORT.md) are generated from the driver table, the board
+database and `data/chips.toml`, and a test fails when they drift. After changing any of those, write them again with
+`PENNA_BLESS=1 cargo test -p penna-hw --test support_doc`. `tools/support/chips.py` refreshes `data/chips.toml` from a newer
+kernel tree.
 
 The tests never touch real fans: they run against the mock desk, the simulator and captured fixtures. `pennad` refuses the
 real `/sys` unless it runs as root with a configuration, and the tests never run it that way.

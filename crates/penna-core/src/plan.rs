@@ -410,11 +410,13 @@ pub fn emergency_limits(inventory: &Inventory, cpu_model: Option<&str>, sources:
     out
 }
 
-/// AMD's published maximum operating temperatures for a few desktop CPUs.
+/// AMD's published maximum operating temperatures for a few desktop CPUs: a CPU named here has its emergency limit there.
+pub const TJMAX: &[(&str, f64)] =
+    &[("Ryzen 9 5950X", 90.0), ("Ryzen 9 5900X", 90.0), ("Ryzen 7 5800X", 90.0), ("Ryzen 5 5600X", 95.0), ("Ryzen 9 7950X", 95.0)];
+
+/// The emergency limit for a CPU model, from [`TJMAX`].
 pub fn tjmax(model: &str) -> Option<f64> {
-    const TABLE: &[(&str, f64)] =
-        &[("Ryzen 9 5950X", 90.0), ("Ryzen 9 5900X", 90.0), ("Ryzen 7 5800X", 90.0), ("Ryzen 5 5600X", 95.0), ("Ryzen 9 7950X", 95.0)];
-    TABLE.iter().find(|(m, _)| model.contains(m)).map(|(_, t)| *t)
+    TJMAX.iter().find(|(m, _)| model.contains(m)).map(|(_, t)| *t)
 }
 
 #[cfg(test)]

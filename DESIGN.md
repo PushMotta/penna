@@ -216,6 +216,9 @@ The same file names `VRM MOS`, `PCH`, `PCIEX16` and `PCIEX8` temperatures. It al
 
 A fan on a Documented driver works, and Penna says that nobody has verified it yet.
 
+*(As built, 23 Oct 2026.)* `docs/SUPPORT.md` and the README's driver table are generated from this table, the board database
+and `data/chips.toml`, the chips each motherboard driver's documentation lists. A test fails when they drift.
+
 **Captures** are how the tiers grow. `penna capture` needs no root. It records *(as built in M10)*:
 - the hwmon tree, with each file's mode, the channels older drivers keep on the device, and amdgpu's OverDrive directory;
 - the PCI display devices: vendor, device and driver;

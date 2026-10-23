@@ -76,7 +76,7 @@ pub struct Driver {
     /// What people call it: the kernel module, or the out-of-tree project.
     pub name: &'static str,
     /// The hwmon `name` values it registers. A trailing `*` matches a prefix: it87 names itself after the chip (`it8688`).
-    hwmon: &'static [&'static str],
+    pub hwmon: &'static [&'static str],
     pub class: Class,
     /// What the hardware is, for a person: "Motherboard", "ThinkPad".
     pub label: &'static str,

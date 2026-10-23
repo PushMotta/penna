@@ -140,25 +140,44 @@ through NVML. Every way out has been tested on that hardware.
 
 Everything else is built from the kernel's source and documentation and tested in a simulator, on a model of each driver:
 
+<!-- generated: drivers -->
 | Driver | Hardware | Penna can | Tier |
 |---|---|---|---|
-| `it87` | ITE Super I/O (Gigabyte and others) | set a duty | Verified |
-| NVML | NVIDIA GPUs, proprietary driver | set a duty | Verified |
-| `nct6775`, `nct6683`, `f71882fg`, `w83627ehf` | Nuvoton, Fintek and Winbond Super I/O | set a duty | Documented |
-| `amdgpu` | AMD GPUs; RDNA4 through its OverDrive curve | set a duty, or write the curve | Documented |
-| `nouveau` | NVIDIA GPUs, open driver | set a duty | Documented |
-| `thinkpad_acpi` | ThinkPads | pick one of 8 levels, under a watchdog | Documented |
-| `dell-smm-hwmon` | Dell laptops | pick one of 3 levels | Documented |
-| `asus-wmi` | ASUS laptops | automatic or full speed; write the firmware's curves | Documented |
-| `hp-wmi` | HP laptops | automatic or full speed | Documented |
-| `lenovo-wmi-other`, `applesmc` | Lenovo laptops, Intel Macs | set a target speed | Documented |
-| `cros_ec_hwmon`, `gpd-fan`, `acer-wmi` | Framework, GPD, Acer | set a duty | Documented |
-| `alienware-wmi`, Legion | Alienware, Lenovo Legion | read only | Documented |
+| NVML | NVIDIA GPUs, NVIDIA's own driver (520 or newer) | set a duty | Verified |
+| `it87` | Motherboards (Super I/O chips) | set a duty | Verified |
+| `nct6775`, `nct6683`, `f71882fg`, `w83627ehf` | Motherboards (Super I/O chips) | set a duty | Documented |
+| `amdgpu` | AMD GPU | set a duty, or write its OverDrive curve where `pwm1` is read-only (RDNA4) | Documented |
+| `nouveau` | NVIDIA GPU (nouveau) | set a duty | Documented |
+| `gpd-fan` | GPD handheld | set a duty | Documented |
+| `cros_ec_hwmon` | Embedded controller | set a duty | Documented |
+| `acer-wmi` | Acer laptop | set a duty | Documented |
+| `thinkpad_acpi` | ThinkPad | pick one of 8 levels, under the firmware's watchdog | Documented |
+| `dell-smm-hwmon` | Dell laptop | pick one of 3 levels | Documented |
+| `asus-wmi` | ASUS laptop | automatic or full speed; a duty where the channel has one | Documented |
+| `asus-wmi custom fan curves` | ASUS fan curves | write the firmware's 8-point curve | Documented |
+| `hp-wmi` | HP laptop | automatic or full speed | Documented |
+| `alienware-wmi` | Alienware | read only | Documented |
+| `lenovo-wmi-other` | Lenovo laptop | set a target speed | Documented |
+| `applesmc` | Mac | set a target speed | Documented |
+| `legion-laptop` | Lenovo Legion | read only | Documented |
+| others | System76, Surface, Intel GPUs (`i915`, `xe`), MSI laptops | read only | Documented |
+<!-- end: drivers -->
 
 On a laptop whose fans Penna can't drive, its profiles switch the power profile instead, through power-profiles-daemon.
 
 *Documented* means nobody has run Penna on that hardware yet. If you have one of these machines, a [machine
 report](CONTRIBUTING.md#a-machine-report) is the most useful thing you can send.
+
+### Will it work on my machine?
+
+Penna supports a machine through its fan chip's driver, not board by board. **[docs/SUPPORT.md](docs/SUPPORT.md)** has the
+details:
+- every chip each motherboard driver handles;
+- the boards Penna knows by name;
+- the sensors it reads;
+- the systems it runs on: Linux with systemd, Omarchy for the bar plugin, and NVIDIA's driver 520 or newer for GPU fans.
+
+Once Penna is installed, `penna doctor` checks a machine without root and names what's missing.
 
 ## Install
 

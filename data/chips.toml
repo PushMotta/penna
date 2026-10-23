@@ -1,0 +1,31 @@
+# The fan chips each motherboard driver knows (docs/SUPPORT.md). Written by tools/support/chips.py, not by hand.
+
+[[driver]]
+name = "it87"
+source = "Linux 7.4 (734bef548), Documentation/hwmon/it87.rst"
+chips = ["IT8603E/IT8623E", "IT8620E", "IT8628E", "IT8689E", "IT8705F", "IT8712F", "IT8716F/IT8726F", "IT8718F", "IT8720F", "IT8721F/IT8758E", "IT8728F", "IT8732F", "IT8771E", "IT8772E", "IT8781F", "IT8782F", "IT8783E/F", "IT8786E", "IT8790E", "IT8792E/IT8795E", "IT87952E", "SiS950 [clone of IT8705F]"]
+
+[[driver]]
+name = "nct6775"
+source = "Linux 7.4 (734bef548), Documentation/hwmon/nct6775.rst"
+chips = ["Nuvoton NCT6102D/NCT6104D/NCT6106D", "Nuvoton NCT5572D/NCT6771F/NCT6772F/NCT6775F/W83677HG-I", "Nuvoton NCT5573D/NCT5577D/NCT6776D/NCT6776F", "Nuvoton NCT5532D/NCT6779D", "Nuvoton NCT6791D", "Nuvoton NCT6792D", "Nuvoton NCT6793D", "Nuvoton NCT6795D", "Nuvoton NCT6796D", "Nuvoton NCT6797D", "Nuvoton NCT6798D", "Nuvoton NCT5585D (compatible to NCT6798D)", "Nuvoton NCT6796D-S/NCT6799D-R"]
+
+[[driver]]
+name = "nct6683"
+source = "Linux 7.4 (734bef548), Documentation/hwmon/nct6683.rst"
+chips = ["Nuvoton NCT6683D/NCT6686D/NCT6687D"]
+
+[[driver]]
+name = "f71882fg"
+source = "Linux 7.4 (734bef548), Documentation/hwmon/f71882fg.rst"
+chips = ["Fintek F71808E", "Fintek F71808A", "Fintek F71858FG", "Fintek F71862FG and F71863FG", "Fintek F71869F and F71869E", "Fintek F71869A", "Fintek F71882FG and F71883FG", "Fintek F71889FG", "Fintek F71889ED", "Fintek F71889A", "Fintek F8000", "Fintek F81801U", "Fintek F81865F"]
+
+[[driver]]
+name = "w83627ehf"
+source = "Linux 7.4 (734bef548), Documentation/hwmon/w83627ehf.rst"
+chips = ["Winbond W83627EHF/EHG (ISA access ONLY)", "Winbond W83627DHG", "Winbond W83627DHG-P", "Winbond W83627UHG", "Winbond W83667HG", "Winbond W83667HG-B", "Nuvoton NCT6775F/W83667HG-I", "Nuvoton NCT6776F"]
+
+[[driver]]
+name = "it87-dkms-git"
+source = "github.com/frankcrawford/it87 at bd7a566, README"
+chips = ["IT8603E", "IT8606E", "IT8607E", "IT8613E", "IT8620E", "IT8622E", "IT8623E", "IT8625E", "IT8628E", "IT8528E", "IT8655E", "IT8665E", "IT8686E", "IT8688E", "IT8689E", "IT8696E", "IT8698E", "IT8705F", "IT8712F", "IT8716F", "IT8718F", "IT8720F", "IT8721F", "IT8726F", "IT8728F", "IT8732F", "IT8736F", "IT8738E", "IT8758E", "IT8771E", "IT8772E", "IT8781F", "IT8782F", "IT8783E/F", "IT8786E", "IT8790E", "IT8792E", "IT87952E", "Sis950"]
