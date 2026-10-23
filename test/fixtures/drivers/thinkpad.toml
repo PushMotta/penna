@@ -1,0 +1,60 @@
+# A ThinkPad, as thinkpad_acpi documents it (DESIGN.md §3.5, Documentation/admin-guide/laptops/thinkpad-acpi.rst): one `pwm1`
+# with 8 levels, 0 (off) to 7, that runs both fans; a write `v` is level `v >> 5`, and the level reads back as level × 255 / 7.
+# Writes count only with `pwm1_enable` 1; 2 is the embedded controller's automatic mode, which stops the fans when cool. Loaded
+# with `fan_control=1`, so `pwm1` is writable. A Documented fixture: no real ThinkPad has run Penna yet. The CPU is an AMD
+# Ryzen 7 PRO 6850U, as in a T14 Gen 3 AMD.
+name = "thinkpad"
+cpu_model = "AMD Ryzen 7 PRO 6850U with Radeon Graphics"
+ambient = 24.0
+seed = 14
+config = "thinkpad.config.toml"
+seconds = 600
+fresh = true
+
+[load]
+points = [{ at = 0, cpu = 0.02, gpu = 0.0 }]
+
+[[body]]
+id = "cpu"
+load = "cpu"
+capacity = 18.0
+idle_watts = 4.0
+load_watts = 28.0
+passive = 0.12
+airflow = 0.9
+fan = [{ id = "fan1", weight = 1.0 }, { id = "fan2", weight = 1.0 }]
+
+[[chip]]
+driver = "k10temp"
+path = "devices/pci0000:00/0000:00:18.3"
+hwmon = 2
+temp = [{ channel = 1, label = "Tctl", body = "cpu", noise = 0.3, spikes = 4.0 }]
+
+[[chip]]
+driver = "thinkpad"
+path = "devices/platform/thinkpad_hwmon"
+hwmon = 5
+temp = [{ channel = 1, body = "cpu", offset = -4.0, noise = 0.2 }, { channel = 2, body = "cpu", offset = -12.0, noise = 0.2 }]
+
+# The embedded controller's own curve: off below 45 °C, then up through the levels.
+[[chip.pwm]]
+channel = 1
+enable = 2
+levels = 8
+firmware = { body = "cpu", points = [[44, 0], [45, 14.3], [60, 42.9], [75, 71.4], [85, 100]] }
+
+[[chip.fan]]
+channel = 1
+id = "fan1"
+pwm = 1
+max_rpm = 5200
+stop = 12
+start = 12
+
+[[chip.fan]]
+channel = 2
+id = "fan2"
+pwm = 1
+max_rpm = 4800
+stop = 12
+start = 12

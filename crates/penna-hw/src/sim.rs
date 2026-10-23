@@ -183,6 +183,10 @@ pub struct PwmSpec {
     pub enable: i64,
     /// What the firmware does with it in automatic mode: a curve on a body's temperature.
     pub firmware: FirmwareCurve,
+    /// A stepped control (§3.5): `pwmN` written `v` runs level `v × levels / 256` (a ThinkPad's `v >> 5`), and reads back
+    /// `level × 255 / (levels − 1)`. Its firmware runs levels too.
+    #[serde(default)]
+    pub levels: Option<u32>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -488,7 +492,19 @@ impl Sim {
                     continue;
                 }
                 let stop = fans.iter().map(|f| f.stop).reduce(f64::max);
-                let calibration = calibration_steps(stop.unwrap_or(0.0))
+                let steps = match p.levels {
+                    // A stepped control is measured at each level that turns its fans (§5.4).
+                    Some(n) => (0..n)
+                        .map(|l| penna_core::model::level_duty(n, l))
+                        .filter(|d| *d > 0.0 && *d >= stop.unwrap_or(0.0) - 1e-9)
+                        .collect(),
+                    None => calibration_steps(stop.unwrap_or(0.0)),
+                };
+                let stop = match p.levels {
+                    Some(_) => steps.first().copied(),
+                    None => stop,
+                };
+                let calibration = steps
                     .into_iter()
                     .map(|d| {
                         let rpm = fans.iter().map(|f| f.max_rpm * (d / 100.0).powf(0.8)).sum::<f64>() / fans.len() as f64;
@@ -635,13 +651,25 @@ impl Sim {
                     put(&enable_path, &f.value.unwrap_or(2).to_string())?;
                 }
                 let enable: i64 = get(&enable_path).unwrap_or(p.enable);
-                let duty = match enable {
-                    0 => 100.0,
-                    1 => get::<i64>(&pwm_path).map_or(100.0, |r| r.clamp(0, 255) as f64 * 100.0 / 255.0),
-                    _ => {
+                let duty = match (enable, p.levels) {
+                    (0, _) => 100.0,
+                    (1, None) => get::<i64>(&pwm_path).map_or(100.0, |r| r.clamp(0, 255) as f64 * 100.0 / 255.0),
+                    (1, Some(n)) => {
+                        // The level a write stands for, read back as the driver reads it.
+                        let v = get::<i64>(&pwm_path).unwrap_or(255).clamp(0, 255);
+                        let level = (v as u64 * n as u64 / 256) as u32;
+                        put(&pwm_path, &level_raw(level, n).to_string())?;
+                        penna_core::model::level_duty(n, level)
+                    }
+                    (_, None) => {
                         let d = self.firmware_duty(&p.firmware);
                         put(&pwm_path, &raw(d).to_string())?;
                         d
+                    }
+                    (_, Some(n)) => {
+                        let level = penna_core::model::level_of(n, self.firmware_duty(&p.firmware));
+                        put(&pwm_path, &level_raw(level, n).to_string())?;
+                        penna_core::model::level_duty(n, level)
                     }
                 };
                 duty_of.insert((ci, p.channel), duty);
@@ -814,6 +842,11 @@ impl Sim {
         let (u, v) = (self.uniform().max(1e-12), self.uniform());
         (-2.0 * u.ln()).sqrt() * (std::f64::consts::TAU * v).cos()
     }
+}
+
+/// What a stepped control's `pwmN` reads for a level.
+fn level_raw(level: u32, levels: u32) -> i64 {
+    (level as f64 * 255.0 / (levels - 1).max(1) as f64).round() as i64
 }
 
 fn raw(duty: f64) -> i64 {

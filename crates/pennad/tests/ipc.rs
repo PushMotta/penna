@@ -875,3 +875,55 @@ fn setup_stops_with_its_connection() {
     assert!(!dir.join("tree/var/lib/penna/measured.toml").exists(), "a stopped run saves nothing");
     d.stop();
 }
+
+/// A ThinkPad from a fresh install (§3.5, §5): one stepped `pwm1` that runs both fans, paired by its driver, measured level by
+/// level, and given a laptop curve that the loop rounds up to a level. Its embedded controller stops the fans when cool, so they
+/// may stop too. Every write is a level's own value, and Defaults gives the fan back to the controller.
+#[test]
+fn setup_measures_a_thinkpad_level_by_level() {
+    let dir = fresh("setup-thinkpad");
+    let scenario = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/fixtures/drivers/thinkpad.toml");
+    let d = Daemon::start_scenario(&dir, scenario.to_str().unwrap(), "tree", &["--speed", "50"]);
+    let tp = "hwmon/thinkpad/thinkpad_hwmon";
+    let file = |f: &str| fs::read_to_string(dir.join(format!("tree/sys/devices/platform/thinkpad_hwmon/hwmon/hwmon5/{f}"))).unwrap().trim().to_owned();
+    let mut c = d.connect();
+    c.line();
+    assert_eq!(c.call(json!({"op": "subscribe"}))["ok"], true);
+    let r = c.call(json!({"op": "setup.start"}));
+    assert!(r["result"]["text"].as_str().unwrap().starts_with("Setup started: 1 fan control."), "{r}");
+    let t = c.tick_where(3000, "review", |t| t["setup"]["step"] == "review");
+    let s = &t["setup"];
+    assert!(s["stopped"].is_null(), "{s}");
+    let p = &s["controls"][0];
+    assert_eq!(p["write"], "ok", "a level reads back as itself: {p}");
+    assert_eq!(p["tachs"], json!([format!("{tp}/fan1"), format!("{tp}/fan2")]), "pwm1 runs both fans, as its driver says: {p}");
+    assert_eq!(p["rise"], Value::Null, "so pairing never ran it");
+    let sug = &p["suggestion"];
+    assert_eq!((sug["role"].as_str(), sug["may_stop"].as_bool()), (Some("laptop"), Some(true)), "the controller stopped it idle: {sug}");
+    let table: Vec<f64> = p["table"].as_array().unwrap().iter().map(|x| x[0].as_f64().unwrap()).collect();
+    let levels: Vec<f64> = (1..=7).map(|l| (l as f64 * 100.0 / 7.0 * 10.0).round() / 10.0).collect();
+    assert_eq!(table.iter().map(|d| (d * 10.0).round() / 10.0).collect::<Vec<_>>(), levels, "measured at each level: {p}");
+    assert!(p["stop"].as_f64().is_some_and(|s| (s - 100.0 / 7.0).abs() < 0.1), "level 1 turns it: {p}");
+
+    // Back with the controller once measured, and the proposal is a laptop curve per profile.
+    c.tick_where(20, "given back", |t| t["controls"].as_array().unwrap().iter().all(|c| c["state"] != "measuring"));
+    assert_eq!(file("pwm1_enable"), "2");
+    let curves: Vec<&str> = s["proposed"]["curves"].as_array().unwrap().iter().map(|c| c.as_str().unwrap()).collect();
+    assert_eq!(curves, ["laptop-quiet", "laptop-balanced", "laptop-render"], "{curves:?}");
+
+    // Saved, Balanced runs the fans on the laptop curve, written as levels.
+    assert_eq!(c.call(json!({"op": "draft.save"}))["ok"], true);
+    let t = c.tick_where(30, "the fan on its curve", |t| t["controls"][0]["state"] == "curve");
+    assert_eq!(t["controls"][0]["curve"], "laptop-balanced");
+    c.tick_where(60, "a written level", |_| file("pwm1_enable") == "1");
+    let v: i64 = file("pwm1").parse().unwrap();
+    assert!((0..8).any(|l| ((l as f64 * 255.0 / 7.0).round() as i64) == v), "{v} is a level's own value");
+    let duty = c.tick_where(5, "a tick", |_| true)["controls"][0]["duty"].as_f64().unwrap();
+    assert!((0..8).any(|l| ((l as f64 * 100.0 / 7.0) - duty).abs() < 0.06), "the tick shows the level's duty: {duty}");
+
+    // Defaults: back to the embedded controller.
+    assert_eq!(c.call(json!({"op": "profile.set", "name": "defaults"}))["ok"], true);
+    c.tick_where(30, "given back", |t| t["controls"][0]["state"] == "firmware");
+    assert_eq!(file("pwm1_enable"), "2");
+    d.stop();
+}
