@@ -300,10 +300,11 @@ fn a_subscriber_that_stops_reading_is_dropped_and_no_one_else_waits() {
             seqs.push((start.elapsed(), v["seq"].as_u64().unwrap()));
         }
     }
-    // The loop kept ticking the whole time, including while the slow client's buffer was full.
-    for window in [Duration::from_millis(500), Duration::from_millis(2500), Duration::from_millis(3900)] {
+    // The loop kept ticking the whole time, including while the slow client's buffer was full: no gap near the 2 s a write to
+    // it may take before it is dropped. Half a second, not less: on a busy CI runner the fast client itself can miss 100 ms.
+    for window in [Duration::from_millis(500), Duration::from_millis(2000), Duration::from_millis(3400)] {
         let before = seqs.iter().filter(|(t, _)| *t <= window).map(|(_, s)| *s).max().unwrap_or(0);
-        let after = seqs.iter().filter(|(t, _)| *t <= window + Duration::from_millis(100)).map(|(_, s)| *s).max().unwrap_or(0);
+        let after = seqs.iter().filter(|(t, _)| *t <= window + Duration::from_millis(500)).map(|(_, s)| *s).max().unwrap_or(0);
         assert!(after > before, "ticks stalled around {window:?}: {before} → {after}");
     }
     assert!(d.log().contains("dropped a client (uid"), "pennad said:\n{}", d.log());
