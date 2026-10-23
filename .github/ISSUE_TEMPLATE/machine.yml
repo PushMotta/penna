@@ -1,0 +1,54 @@
+name: Machine report
+description: Tell Penna about a machine it hasn't seen, with a capture attached
+labels: [machine]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you. A machine report is how a driver goes from *Documented* to *Captured*, and a board gets its headers named (see CONTRIBUTING.md).
+
+        Run `penna capture` in a terminal. It needs no root, changes nothing, and makes `penna-capture-<machine>-<date>.tar.gz` in the current directory. It holds the hwmon tree, the DMI fields that name the machine and its firmware, the platform profile, the fan modules' parameters, `penna doctor`'s findings, and setup's measurements if you ran setup. It leaves out serial numbers, UUIDs and asset tags. Unpack it and look before you attach it.
+  - type: input
+    id: machine
+    attributes:
+      label: Machine
+      description: Vendor and model, as you'd say it.
+      placeholder: Lenovo ThinkPad T14 Gen 5 (AMD)
+    validations:
+      required: true
+  - type: textarea
+    id: capture
+    attributes:
+      label: Capture
+      description: Drag the `.tar.gz` here.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of penna doctor
+      description: Paste everything it prints.
+      render: text
+    validations:
+      required: true
+  - type: dropdown
+    id: setup
+    attributes:
+      label: Did you run setup?
+      options:
+        - "Yes, to the end"
+        - "Yes, but I stopped it or it stopped"
+        - "No"
+    validations:
+      required: true
+  - type: textarea
+    id: fans
+    attributes:
+      label: What the fans did
+      description: Which fans Penna found and drove, and anything it got wrong. A fan that didn't come back to its BIOS or driver after Defaults, a stop or a reboot matters most.
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: "`penna --version`, and your distribution."
+      placeholder: penna 0.10.0, Arch Linux

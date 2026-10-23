@@ -1,0 +1,19 @@
+pkgbase = penna
+	pkgdesc = Fan control for Linux, made to be understood: a daemon that always hands fans back, a CLI, and an Omarchy plugin
+	pkgver = 0.10.0
+	pkgrel = 1
+	url = https://github.com/PushMotta/penna
+	install = penna.install
+	arch = x86_64
+	license = MIT
+	makedepends = cargo
+	depends = gcc-libs
+	depends = glibc
+	depends = systemd
+	optdepends = nvidia-utils: NVIDIA GPU fans
+	optdepends = it87-dkms-git: motherboard fans on boards with ITE Super I/O chips the stock it87 does not know
+	optdepends = power-profiles-daemon: the power profile as the fan lever on laptops whose fans Penna cannot drive
+	source = penna-0.10.0.tar.gz::https://github.com/PushMotta/penna/archive/refs/tags/v0.10.0.tar.gz
+	sha256sums = SKIP
+
+pkgname = penna

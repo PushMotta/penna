@@ -1,0 +1,25 @@
+post_install() {
+  cat <<'EOF'
+Penna is installed. To let it manage your fans:
+  sudo systemctl enable --now pennad          # first start writes /etc/penna/config.toml; nothing is adopted yet
+  sudo usermod -aG penna "$USER"              # change fans from the popup and the studio (applies at once)
+  penna doctor                                # what Penna can and can't reach on this machine
+The Omarchy plugin, from git or as the copy this package holds, which always matches pennad:
+  omarchy plugin add https://github.com/PushMotta/omarchy-penna.git --enable
+  ln -s /usr/share/penna/plugin ~/.config/omarchy/plugins/io.github.pushmotta.penna
+It starts in Defaults: the BIOS and drivers keep running every fan. Choose "Set up fans…" from the bar glyph, or run
+penna setup, to measure them and get curves.
+EOF
+}
+
+post_upgrade() {
+  # Restarting hands every fan back (ExecStopPost) and the new pennad takes them again.
+  systemctl daemon-reload
+  systemctl try-restart pennad.service
+}
+
+pre_remove() {
+  # Defaults first (§6.7), then stopping hands every fan back to its firmware or driver before the files go.
+  penna reset >/dev/null 2>&1 || true
+  systemctl disable --now pennad.service 2>/dev/null || true
+}

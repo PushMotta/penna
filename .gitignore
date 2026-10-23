@@ -2,3 +2,7 @@
 /packaging/*.pkg.tar.zst
 /packaging/src/
 /packaging/pkg/
+/packaging/aur/src/
+/packaging/aur/pkg/
+/packaging/aur/*.tar.gz
+/packaging/aur/*.pkg.tar.zst

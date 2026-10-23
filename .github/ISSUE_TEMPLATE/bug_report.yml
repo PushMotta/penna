@@ -1,0 +1,34 @@
+name: Bug report
+description: Something in Penna doesn't work as it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If a fan didn't come back to its BIOS or driver, run `penna reset` (as root it works without pennad) and say so below. That is the bug Penna treats as most serious.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you saw, and where (the bar popup, the studio, the command line, setup).
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of penna doctor and penna --version
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: journal
+    attributes:
+      label: pennad's log
+      description: "`journalctl -u pennad -b --no-pager | tail -n 100`"
+      render: text

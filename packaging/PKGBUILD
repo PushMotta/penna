@@ -1,30 +1,39 @@
 # Maintainer: Pedro Motta
 #
-# Builds the package from this checkout: `cd packaging && makepkg -f`. An AUR release would fetch a tagged tarball instead.
+# Builds the package from this checkout, uncommitted changes included: `cd packaging && makepkg -f`. The AUR's is aur/PKGBUILD,
+# which builds a tagged release; its build(), check() and package() must stay the same as these.
 pkgname=penna
-pkgver=0.9.0
+pkgver=0.10.0
 pkgrel=1
-pkgdesc="Fan control that belongs to the shell: a daemon that always hands fans back, a CLI, and an Omarchy plugin"
+pkgdesc="Fan control for Linux, made to be understood: a daemon that always hands fans back, a CLI, and an Omarchy plugin"
 arch=('x86_64')
-url="https://github.com/pushmotta/penna"
+url="https://github.com/PushMotta/penna"
 license=('MIT')
 depends=('gcc-libs' 'glibc' 'systemd')
 makedepends=('cargo')
 optdepends=('nvidia-utils: NVIDIA GPU fans'
             'it87-dkms-git: motherboard fans on boards with ITE Super I/O chips the stock it87 does not know'
-            'python: tools/nvml-state.py')
+            'power-profiles-daemon: the power profile as the fan lever on laptops whose fans Penna cannot drive')
 install=penna.install
 
 _root() { cd "$startdir/.."; }
 
+prepare() {
+  _root
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
 build() {
   _root
-  cargo build --release --locked
+  export RUSTUP_TOOLCHAIN=stable CARGO_TARGET_DIR=target
+  cargo build --release --frozen
 }
 
 check() {
   _root
-  cargo test --workspace --locked
+  export RUSTUP_TOOLCHAIN=stable CARGO_TARGET_DIR=target
+  cargo test --workspace --frozen
 }
 
 package() {
@@ -34,10 +43,10 @@ package() {
   install -Dm644 packaging/pennad.service "$pkgdir/usr/lib/systemd/system/pennad.service"
   install -Dm644 packaging/penna.sysusers "$pkgdir/usr/lib/sysusers.d/penna.conf"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/penna/LICENSE"
-  install -Dm644 DESIGN.md README.md -t "$pkgdir/usr/share/doc/penna/"
+  install -Dm644 DESIGN.md README.md CONTRIBUTING.md -t "$pkgdir/usr/share/doc/penna/"
   # The board database (DESIGN.md §3.6).
   install -Dm644 data/boards/*.toml -t "$pkgdir/usr/share/penna/boards/"
-  # The Omarchy plugin, to symlink into ~/.config/omarchy/plugins/io.github.pushmotta.penna.
+  # The Omarchy plugin, the same release as pennad, to link into ~/.config/omarchy/plugins/io.github.pushmotta.penna.
   install -d "$pkgdir/usr/share/penna/plugin"
   cp -r --no-preserve=ownership plugin/manifest.json plugin/*.qml plugin/Model.js plugin/components "$pkgdir/usr/share/penna/plugin/"
 }

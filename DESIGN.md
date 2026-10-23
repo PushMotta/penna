@@ -1,8 +1,8 @@
 # Penna — design specification
 
-Draft 3 · 21 October 2026 · status: decisions approved (§11), UI quality bar added (§8.6), M0–M6, M8 and M9 (in the simulator) done, design review 01 approved (milestone D, §11.1), design review 03 approved (milestone D2, §11.3). Penna 0.8.3 runs as a service on this desk, and since setup's generated curves were saved there, from the studio, it runs every fan on Balanced (M8). Draft 3 widens Penna from this desk to any workstation or laptop, with automatic setup, generated curves and a Defaults profile: design review 02 (§11.2) was approved the same day. M5 was done on 22 Oct 2026: Penna drives every fan on this desk, and it87 is Verified.
+Draft 3 · 21 October 2026 · status: decisions approved (§11), UI quality bar added (§8.6), M0–M9 done (M9 in the simulator), M10 prepared, design review 01 approved (milestone D, §11.1), design review 03 approved (milestone D2, §11.3). Penna 0.8.3 runs as a service on this desk, and since setup's generated curves were saved there, from the studio, it runs every fan on Balanced (M8). Draft 3 widens Penna from this desk to any workstation or laptop, with automatic setup, generated curves and a Defaults profile: design review 02 (§11.2) was approved the same day. M5 was done on 22 Oct 2026: Penna drives every fan on this desk, and it87 is Verified.
 
-Companion: design review 01 — mockups in real theme tokens, live motion prototypes, and eight calls before QML — is published as an artifact (https://claude.ai/artifact/DmFftUzWVBd11NNBv4e8aK). Its source is `design/penna-design-review.html`.
+Companion: design review 01 — mockups in real theme tokens, live motion prototypes, and eight calls before QML — is `design/penna-design-review.html`, a page to open in a browser.
 
 Draft 1 called it `fanctl`; that name is taken in the AUR (§11, decision 1).
 
@@ -216,14 +216,18 @@ The same file names `VRM MOS`, `PCH`, `PCIEX16` and `PCIEX8` temperatures. It al
 
 A fan on a Documented driver works, and Penna says that nobody has verified it yet.
 
-**Captures** are how the tiers grow. `penna capture` needs no root. It records:
-- the DMI board fields;
-- the kernel version;
-- the hwmon tree;
-- the platform profile;
-- the fan modules and their parameters.
+**Captures** are how the tiers grow. `penna capture` needs no root. It records *(as built in M10)*:
+- the hwmon tree, with each file's mode, the channels older drivers keep on the device, and amdgpu's OverDrive directory;
+- the PCI display devices: vendor, device and driver;
+- the DMI fields that name the machine and its firmware;
+- the platform profile and its choices;
+- each fan driver's module and its parameters, and the files the driver table reads beside the channels (ThinkPad's
+  `fan_control` and its watchdog);
+- from the live machine, `capture.toml` (Penna's version, the date, the kernel), `doctor.json`, and setup's `measured.toml`
+  with each GPU UUID replaced by `GPU-0`, `GPU-1`, ….
 
-It records no serial numbers. A capture, plus the results of a setup run, is what a new board entry is made from. Penna never uploads anything; sending a capture is the user's act.
+It records no serial number, `product_uuid` or asset tag. With no directory named, it packs a tarball to attach to a machine
+report, an issue form on the repository (CONTRIBUTING.md). A capture, plus the results of a setup run, is what a new board entry is made from. Penna never uploads anything; sending a capture is the user's act.
 
 ## 4. Control model
 
@@ -785,6 +789,8 @@ failsafe = 100
   - contested or faulted fans.
 
   It exits 1 when something needs attention.
+- **Published from M10 on** through the AUR, from a tagged tarball (`packaging/aur/`, §10 M10). `packaging/PKGBUILD` still
+  builds this checkout, for this desk.
 - **Installed on this desk on 21 Oct 2026** with `tools/install-desk.sh`. `pennad` runs as an enabled service using about 22 MB. Both 3090 fans are on the driver's curve at idle, as M4 showed. The desk's user changes profiles without root.
 
 ## 8. Surfaces
@@ -1067,7 +1073,7 @@ Milestones, each ending in something visible:
 
   Moved on: the write test (§5.1) to M7, where setup's procedures run in the loop, with pairing written to `measured.toml`. `firmware.json` arrives with the first kind whose state outlives a reboot (M9); `penna reset` already restores everything there is today. The installed service is still 0.6.0, which leaves the motherboard's fans to the BIOS.
 - **M6** — Packaging, README, first release. **Done 21 Oct 2026**, ahead of M5 (motherboard fans need the it87 decision, §13): 0.6.0 is packaged, installed and running as a service on this desk, with 136 Rust tests and 17 plugin logic tests (§7.6, as built). Still to do for a public release: publish the repository and the plugin as its own repo (§11, decision 9), and switch the PKGBUILD to a tagged tarball (now M10).
-- **D2** *(draft 3)* — Visual review of the new UI: the setup view, the Defaults pill, and kind, tier and drift on fan cards. Mockups in real theme tokens across the four review themes, before their QML. **Approved 22 Oct 2026** (§11.3): design review 03, published as an artifact (https://claude.ai/artifact/5Vq9APfnNHVnuNiY9mKevm), source `design/penna-design-review-03.html`. It mocks the three on this desk's measured fans, with a live simulated setup run, and asked for ten calls (its section G).
+- **D2** *(draft 3)* — Visual review of the new UI: the setup view, the Defaults pill, and kind, tier and drift on fan cards. Mockups in real theme tokens across the four review themes, before their QML. **Approved 22 Oct 2026** (§11.3): design review 03, `design/penna-design-review-03.html`. It mocks the three on this desk's measured fans, with a live simulated setup run, and asked for ten calls (its section G).
 - **M7** — **Setup** (§5.1–5.4, §5.6): write test, pairing, roles with *Identify*, calibration and drift, in the studio and `penna setup`. Run on this desk and on every simulated driver. With D2 (§11.3): the start screen, the setup view and `fan-clock`, roles with reasons and names, the chipset and pump-header exceptions, the Defaults popup with tachs in the tick, and device headings with tiers on the cards.
 
   **In progress since 22 Oct 2026.** Built and tested against a mock of this desk (161 Rust tests, 24 plugin logic tests):
@@ -1128,7 +1134,7 @@ Milestones, each ending in something visible:
   - **To M8:** step 3 of §5.4, a monotonic table, isn't built. SYS_FAN4's top shows why it matters, and M8 is the first to read a table backwards, from RPM to duty.
   - **A role's reason quotes pairing's RPM:** the highest in 6 s at 100 %, before calibration. A slow fan reads low there: SYS_FAN5_PUMP's says 1,460 RPM, where it turns 1,819. A slow pump could be suggested as a case fan. That is safe, since a fan on a pump header stays at 50 % or more until confirmed (§5.3), but the suggestion should use the calibrated top once there is one.
 
-  Still to do: the simulated drivers when M9 adds them.
+  **Done 23 Oct 2026**, when M9 ran setup on every simulated driver, start to save.
 - **M8** — **Generated curves** (§5.5): per role and profile from setup's measurements, the CPU load check, and the review step.
 
   **Done 23 Oct 2026** with the eighth run on this desk, from the studio, start to save (below). Built and tested on the mock desk and against this desk's own measurements, now a fixture (`test/fixtures/measured/x570-desk.toml`).
@@ -1209,6 +1215,33 @@ Milestones, each ending in something visible:
 - **M10** — **Public release:**
   - the repositories, the plugin as its own repo, and a tagged tarball for the PKGBUILD and the AUR;
   - how to contribute a capture.
+
+  **Prepared 23 Oct 2026, as 0.10.0** (plugin 0.7.0). Publishing is `tools/release.sh publish`, once the repositories are public,
+  then `tools/release.sh aur` with the maintainer's AUR key:
+  - **README** for someone who has never seen Penna: its promises, the support table by driver and tier, install from the
+    AUR, removal, the CLI. **CONTRIBUTING.md** says how to send a machine report and a change. Issue forms for machine reports
+    and bugs.
+  - **`penna capture`** now records what §3.6 lists, which until now it didn't: only the hwmon tree and the PCI display devices
+    were kept. With no directory it makes `penna-capture-<machine>-<date>.tar.gz` and names the issue form to attach it to.
+  - **The plugin's repository**, `omarchy-penna`, is `git subtree split --prefix=plugin`, pushed at each release, so its main
+    is always the latest release and `omarchy plugin update` never runs ahead of the package. `plugin/` gained a README, the
+    licence, its own CI and the marketplace submission text (`plugin/docs/`). The package still ships the plugin under
+    `/usr/share/penna/plugin`, always the same release as `pennad`, for those who would rather link it.
+  - **The AUR package** (`packaging/aur/`) builds the tag's tarball: `prepare()` fetches the crates, `build()` and `check()`
+    run `--frozen`. `packaging/PKGBUILD` builds the checkout with the same steps, and the release check compares them. Built
+    from a `git archive` tarball, in a 168-character directory inside another git repository, as an AUR helper builds it,
+    every test passed.
+  - **CI** on GitHub Actions, with actions pinned to commit SHAs and a read-only token: format, clippy, the Rust tests and
+    the plugin's model tests.
+  - **Fixed on the way:**
+    - A fresh clone failed `a_capture_of_a_capture_reads_the_same`. Git keeps no empty directory, so a captured driver link
+      dangled, and a capture skipped it. A capture now keeps a link whose target is gone.
+    - The daemon tests' sockets passed the 108 bytes a Unix socket address holds when built deep in an AUR helper's cache.
+      Their directories move to the system's temporary directory when the path would be too long.
+    - `--version` took the hash of whatever git repository surrounded the build, such as an AUR helper's clone of the
+      package. It now takes only this checkout's.
+
+  Not yet: screenshots for the README and the marketplace preview, and the marketplace submission itself.
 
 ## 11. Decisions (approved 21 Oct 2026)
 

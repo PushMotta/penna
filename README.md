@@ -1,90 +1,116 @@
 # Penna
 
-Fan control for Linux, made to be understood. The design is in [DESIGN.md](DESIGN.md). Penna drives NVIDIA fans (M4) and every
-hwmon fan of a kind it knows (M5: DESIGN.md §3.5), runs as a service (M6), and is meant for any workstation or
-laptop: it builds on the kernel's own drivers and says plainly what a machine can't do.
+Fan control for Linux, made to be understood.
+
+Penna is a daemon (`pennad`), a command line (`penna`) and a shell plugin for [Omarchy](https://omarchy.org). It names every
+fan for what it cools, shows its RPM beside what it was asked for, and says plainly what a machine can't do. It drives fans
+only through the kernel's own drivers, hwmon and NVIDIA's NVML, and never touches a chip from userspace.
+
+- **Every fan goes back.** Before Penna changes a fan it writes down how to put it back. A clean stop, a crash, `kill -9`, a
+  hung loop caught by systemd's watchdog, and removing the package all return each fan to its BIOS or driver. *Defaults*, the
+  first profile, does the same whenever you choose it.
+- **Setup measures, then proposes.** One automatic run of about five minutes writes to every fan, finds which header drives
+  which tach, and suggests each fan's role: CPU cooler, pump, chipset, case or GPU. It measures where each fan stops and starts
+  and how fast it spins. Then it proposes Quiet, Balanced and Render curves for you to review. Nothing is kept until you press
+  *Save*.
+- **Plain words.** Each fan says what kind of control it has (a duty, fixed levels, a target speed, a curve the firmware runs,
+  or only automatic and full speed), and how well Penna knows its driver.
+
+The design, and the reasoning behind every rule, is in [DESIGN.md](DESIGN.md).
+
+## Status
+
+This is the first public release, 0.10. Penna runs every day on the desk it was built on: a Gigabyte X570 AORUS PRO, whose
+ITE IT8688E and IT8792E chips run seven fans through the [it87 fork](https://github.com/frankcrawford/it87), plus an RTX 3090
+through NVML. Every way out has been tested on that hardware.
+
+Everything else is built from the kernel's source and documentation and tested in a simulator, on a model of each driver:
+
+| Driver | Hardware | Penna can | Tier |
+|---|---|---|---|
+| `it87` | ITE Super I/O (Gigabyte and others) | set a duty | Verified |
+| NVML | NVIDIA GPUs, proprietary driver | set a duty | Verified |
+| `nct6775`, `nct6683`, `f71882fg`, `w83627ehf` | Nuvoton, Fintek and Winbond Super I/O | set a duty | Documented |
+| `amdgpu` | AMD GPUs; RDNA4 through its OverDrive curve | set a duty, or write the curve | Documented |
+| `nouveau` | NVIDIA GPUs, open driver | set a duty | Documented |
+| `thinkpad_acpi` | ThinkPads | pick one of 8 levels, under a watchdog | Documented |
+| `dell-smm-hwmon` | Dell laptops | pick one of 3 levels | Documented |
+| `asus-wmi` | ASUS laptops | automatic or full speed; write the firmware's curves | Documented |
+| `hp-wmi` | HP laptops | automatic or full speed | Documented |
+| `lenovo-wmi-other`, `applesmc` | Lenovo laptops, Intel Macs | set a target speed | Documented |
+| `cros_ec_hwmon`, `gpd-fan`, `acer-wmi` | Framework, GPD, Acer | set a duty | Documented |
+| `alienware-wmi`, Legion | Alienware, Lenovo Legion | read only | Documented |
+
+On a laptop whose fans Penna can't drive, its profiles switch the power profile instead, through power-profiles-daemon.
+
+*Documented* means nobody has run Penna on that hardware yet. If you have one of these machines, a [machine
+report](CONTRIBUTING.md#a-machine-report) is the most useful thing you can send.
+
+## Install
+
+On Arch Linux and Omarchy, from the AUR:
 
 ```
-cargo run -p pennad -- --mock render-burst --forever   # the mock desk, listening on $XDG_RUNTIME_DIR/penna/penna.sock
-cargo run -p pennad -- --mock faults --speed 10        # every fault Penna must survive, ten times faster
-
-cargo run -p penna -- watch                            # live table: from pennad when it answers, else the real machine, read-only
-cargo run -p penna -- state [--json]                   # what pennad is doing now
-cargo run -p penna -- profile quiet                    # switch profile, and keep it
-cargo run -p penna -- profile defaults                 # every fan back to its BIOS or driver, and kept there
-cargo run -p penna -- reset                            # the same; without pennad (as root) it restores held.json itself
-cargo run -p penna -- set "CPU cooler" 70 --for 30s    # hold a fan (or `all`); `auto` puts it back on its curve
-cargo run -p penna -- full-speed on|off
-cargo run -p penna -- events                           # takes, hand-backs, failsafes, emergencies, as they happen
-cargo run -p penna -- waybar [--follow]                # one JSON line for a Waybar custom module
-
-cargo run -p penna -- check test/fixtures/scenarios/mock-desk.config.toml
-cargo run -p penna -- restore --from <held.json>       # put every fan back without the daemon (ExecStopPost)
-cargo run -p penna -- capture <dir>                    # read-only snapshot of /sys/class/hwmon for fixtures
+yay -S penna                                  # or paru -S penna
+sudo systemctl enable --now pennad            # the first start adopts nothing: every fan stays with its firmware
+sudo usermod -aG penna "$USER"                # change fans without root; applies at once
+omarchy plugin add https://github.com/PushMotta/omarchy-penna.git --enable
+penna doctor                                  # what stands between this machine and Penna running its fans
 ```
 
-`socat - UNIX-CONNECT:$XDG_RUNTIME_DIR/penna/penna.sock` speaks the protocol by hand: type `{"id":1,"op":"subscribe"}`.
+Then click the fan glyph in the bar and choose *Set up fans…*, or run `penna setup` in a terminal.
 
-## The Omarchy plugin
+`penna doctor` names anything missing, with one thing to do about it and its risk. The usual one on Gigabyte boards is that the
+stock `it87` doesn't know the chip: the fork, `it87-dkms-git`, does. Penna recommends it but never depends on it.
 
-`plugin/` is the shell plugin: the bar glyph, the popup, and the service that holds the one socket to `pennad`. To run it
-against the mock desk:
+To build from this repository instead: `cd packaging && makepkg -si`.
 
-```
-ln -s ~/Projects/penna/plugin ~/.config/omarchy/plugins/io.github.pushmotta.penna
-omarchy plugin enable io.github.pushmotta.penna
-cargo run -p pennad -- --mock render-burst --forever
-penna open                                                   # open the studio (or click the glyph, then Curves…)
-node --test plugin/test/model.test.js plugin/test/studio.test.js
-```
+### Removing it
 
-`tools/frame-timing/run.sh` is the §8.6 frame-timing test. With `pennad --mock … --forever` running, it shows the popup's
-rows and then the studio on the second screen for about a minute: 5 s of popup, 30 s of studio, a 10 s scripted drag. It
-doesn't take the keyboard. It prints frame pacing per phase and the render thread's own timings, and exits non-zero when a
-budget is missed.
+`sudo pacman -R penna` stops `pennad` first, which hands every fan back. `penna reset` puts every fan back at any time. As
+root it works without the daemon. Remove the plugin with `omarchy plugin remove io.github.pushmotta.penna`.
 
-With the plugin symlinked, the shell doesn't notice edits inside it. It also keeps a plugin's scripts in memory across its own
-plugin reload. So after editing, restart the shell with `omarchy-restart-shell`. `omarchy plugin disable
-io.github.pushmotta.penna` takes the widget off the bar.
+## Using it
 
-## Installing (M6)
+The **bar glyph** shows the fans' state at a glance. Click it for the **popup**: profiles, temperatures, every fan with its
+RPM, and *Full speed*. *Curves…* opens the **studio**: one card per fan, the curve editor, and setup.
+
+The **command line** does everything the shell does:
 
 ```
-cd packaging && makepkg -f --nodeps     # --nodeps when cargo comes from rustup rather than pacman
-pkexec pacman -U penna-0.6.0-*-x86_64.pkg.tar.zst
-sudo systemctl enable --now pennad      # the first start writes /etc/penna/config.toml, adopting nothing
-sudo usermod -aG penna "$USER"          # change fans from the popup and the studio; applies at once
-penna doctor                            # what Penna can and can't reach on this machine
+penna watch                    # live table of temperatures and fans
+penna profile quiet            # switch profile, and keep it
+penna profile defaults         # every fan back to its BIOS or driver, and kept there
+penna set "CPU cooler" 70 --for 30s
+penna full-speed on|off
+penna identify "SYS_FAN1"      # 100 % for 3 s, to find a fan by ear
+penna setup                    # measure every fan and propose curves
+penna events                   # takes, hand-backs, failsafes and emergencies, as they happen
+penna waybar --follow          # a Waybar custom module, outside Omarchy
+penna capture                  # a machine report's tarball; read-only, no root
 ```
 
-On this desk, `pkexec tools/install-desk.sh` does all of that, and installs the RTX 3090 config the M4 hardware test used.
-`pkexec pacman -R penna` stops `pennad` first, which hands every fan back.
+## How it keeps fans safe
 
-The package holds `/usr/bin/pennad`, `/usr/bin/penna`, the systemd unit (`packaging/pennad.service`: `Type=notify`,
-watchdog, `ExecStopPost=penna restore`, `Restart=on-failure`, hardened but allowed `/sys` and `/dev/nvidia*`), the `penna`
-group (`sysusers.d`), and the plugin under `/usr/share/penna/plugin`.
+`pennad` runs as root under systemd, with a hardened unit and a 5 s watchdog. Surfaces talk to it over a local socket,
+`/run/penna/penna.sock`, and only members of the `penna` group may change anything. Before its first write to a fan it records
+how to put that fan back in `/run/penna/held.json`. The unit's `ExecStopPost` runs `penna restore` from that file, so the fans
+go back however `pennad` ends. A sensor that stops reading sends its fans to 100 %. A CPU or GPU past its emergency limit
+sends every fan Penna runs to 100 % until it has cooled 5 °C below the limit. The details are DESIGN.md §6.
 
-## Real hardware (M4: NVIDIA fans, M5: motherboard fans)
-
-Production `pennad` runs as root and controls NVIDIA fans and every hwmon fan of a kind it drives. New hwmon devices are found
-while it runs, so a driver loaded later adds its fans without a restart.
+## Development
 
 ```
-sudo ./target/debug/pennad --config test/fixtures/desk-3090.config.toml   # this desk's RTX 3090
-python3 -I tools/nvml-state.py                                            # what NVML says about every fan, no root
-pkexec tools/m4-hardware-test.sh                                          # every way out hands the fans back (§9.4)
-pkexec tools/m5-hardware-test.sh                                          # the same for every it87 channel, plus contests and pairing
-pkexec tools/m5-hardware-test.sh pairing                                  # which header each control drives, alone
-PENNA_BOARDS=data/boards cargo run -p penna -- doctor                     # with this checkout's board database
+cargo run -p pennad -- --mock render-burst --forever        # a simulated desk, unprivileged
+cargo run -p pennad -- --mock faults --speed 10             # every fault Penna must survive, ten times faster
+cargo run -p pennad -- --mock test/fixtures/drivers/thinkpad.toml --forever   # any driver's simulated machine
+cargo run -p penna -- watch                                 # talks to whichever pennad answers
+cargo test --workspace
+cd plugin && node --test test/model.test.js test/studio.test.js
 ```
 
-The hardware test runs `pennad` as a transient systemd service, holds the fans at 45 %, and ends the daemon six ways:
-stop, `kill -9`, a whole-unit kill with restart, panic, a watchdog-caught hang, and idle. After each, it checks through NVML
-that both fans are back on the driver's curve. `pkexec` asks for the password through the shell's polkit dialog, which also
-works from tools that have no terminal.
+The tests never touch real fans. [CONTRIBUTING.md](CONTRIBUTING.md) says how to send a machine report or a change.
 
-## Tests
+## License
 
-`cargo test --workspace` runs the control loop on simulated time (including property tests), the real hwmon backend against
-`test/fixtures/desk-2026-10-21` and against the simulator's tree, `pennad` itself through `kill -9`, SIGTERM and a panic, and a
-client against the daemon's socket, including one that stops reading.
+MIT. See [LICENSE](LICENSE).
