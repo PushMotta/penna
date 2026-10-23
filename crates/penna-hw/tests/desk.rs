@@ -167,3 +167,63 @@ fn the_starter_for_this_desk_curves_the_3090_and_tctl_and_adopts_nothing() {
     let plan = Plan::new(read, &inventory, &Measured::default(), Some("AMD Ryzen 9 5950X 16-Core Processor")).expect("it fits the desk");
     assert!(plan.config.profiles.values().all(|p| p.is_empty()), "the firmware keeps every fan");
 }
+
+/// A small laptop-shaped tree: a ThinkPad's fan on its platform device, with the module parameter that allows writes, its
+/// watchdog, DMI with a serial number, and a platform profile.
+fn laptop_tree(root: &Path) {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let _ = std::fs::remove_dir_all(root);
+    let write = |rel: &str, text: &str| {
+        let p = root.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    };
+    let dev = "devices/platform/thinkpad_hwmon";
+    write(&format!("{dev}/hwmon/hwmon5/name"), "thinkpad\n");
+    write(&format!("{dev}/hwmon/hwmon5/temp1_input"), "45000\n");
+    write(&format!("{dev}/fan1_input"), "2900\n");
+    write(&format!("{dev}/pwm1"), "128\n");
+    write(&format!("{dev}/pwm1_enable"), "2\n");
+    write(&format!("{dev}/driver_override"), "(null)\n");
+    std::fs::set_permissions(root.join(format!("{dev}/pwm1")), std::fs::Permissions::from_mode(0o444)).unwrap();
+    std::fs::create_dir_all(root.join("bus/platform/drivers/thinkpad_hwmon")).unwrap();
+    write("bus/platform/drivers/thinkpad_hwmon/fan_watchdog", "0\n");
+    write("module/thinkpad_acpi/parameters/fan_control", "N\n");
+    write("module/thinkpad_acpi/parameters/experimental", "0\n");
+    symlink("../../../../module/thinkpad_acpi", root.join("bus/platform/drivers/thinkpad_hwmon/module")).unwrap();
+    symlink("../../../bus/platform/drivers/thinkpad_hwmon", root.join(format!("{dev}/driver"))).unwrap();
+    symlink("../../../thinkpad_hwmon", root.join(format!("{dev}/hwmon/hwmon5/device"))).unwrap();
+    std::fs::create_dir_all(root.join("class/hwmon")).unwrap();
+    symlink(format!("../../{dev}/hwmon/hwmon5"), root.join("class/hwmon/hwmon5")).unwrap();
+    write("class/dmi/id/sys_vendor", "LENOVO\n");
+    write("class/dmi/id/product_version", "ThinkPad T14 Gen 5\n");
+    write("class/dmi/id/product_serial", "PF0SECRET\n");
+    write("class/dmi/id/product_uuid", "00000000-0000-0000-0000-000000000000\n");
+    write("firmware/acpi/platform_profile", "balanced\n");
+    write("firmware/acpi/platform_profile_choices", "low-power balanced performance\n");
+}
+
+#[test]
+fn a_capture_keeps_what_a_board_entry_needs_and_no_serial() {
+    use std::os::unix::fs::PermissionsExt;
+    let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("laptop-capture");
+    let (tree, dest) = (base.join("sys"), base.join("capture"));
+    laptop_tree(&tree);
+    let _ = std::fs::remove_dir_all(&dest);
+    let report = capture::capture(&tree, &dest).unwrap();
+    assert_eq!(report.modules, ["thinkpad_acpi"]);
+    let read = |rel: &str| std::fs::read_to_string(dest.join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}"));
+    assert_eq!(read("class/dmi/id/product_version"), "ThinkPad T14 Gen 5\n");
+    assert!(!dest.join("class/dmi/id/product_serial").exists() && !dest.join("class/dmi/id/product_uuid").exists());
+    assert_eq!(read("firmware/acpi/platform_profile_choices"), "low-power balanced performance\n");
+    assert_eq!(read("module/thinkpad_acpi/parameters/fan_control"), "N\n");
+    assert_eq!(read("bus/platform/drivers/thinkpad_hwmon/fan_watchdog"), "0\n");
+    let dev = "devices/platform/thinkpad_hwmon";
+    assert_eq!(read(&format!("{dev}/fan1_input")), "2900\n", "channels on the device are kept");
+    assert!(!dest.join(format!("{dev}/driver_override")).exists(), "and nothing else of the device");
+    let mode = std::fs::metadata(dest.join(format!("{dev}/pwm1"))).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o444, "a read-only pwm stays read-only");
+    let _ = std::fs::remove_dir_all(base.join("again"));
+    let again = capture::capture(&dest, &base.join("again")).unwrap();
+    assert_eq!((again.chips, again.files, again.modules), (report.chips, report.files, report.modules));
+}

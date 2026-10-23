@@ -2,6 +2,7 @@
 //!
 //! Commands that change fans talk to `pennad` over its socket (DESIGN.md §7.3, [`client`]). `watch` uses the daemon when one
 //! answers and otherwise reads the hardware directly, as M0 did; `restore`, `check` and `capture` never need the daemon.
+mod capture;
 mod client;
 mod doctor;
 mod render;
@@ -106,8 +107,11 @@ enum Command {
         #[arg(long)]
         sensor: Option<String>,
     },
-    /// Snapshot /sys/class/hwmon and the PCI display devices into DIR, read-only, for test fixtures.
-    Capture { dir: PathBuf },
+    /// Snapshot this machine for a machine report: read-only, no root, no serial numbers
+    ///
+    /// The hwmon tree, the PCI display devices, the DMI fields, the platform profile, the fan modules' parameters, the doctor's
+    /// findings and setup's measurements. With no DIR, packs them into a tarball to attach to a report (CONTRIBUTING.md).
+    Capture { dir: Option<PathBuf> },
     /// Put every fan in held.json back exactly as Penna found it, and what firmware.json holds of changes that outlive a reboot
     /// (the power profile). Works without the daemon: it is the unit's ExecStopPost.
     Restore {
@@ -237,20 +241,7 @@ fn run(cli: Cli) -> Result<()> {
             }
             Ok(())
         }
-        Command::Capture { dir } => {
-            let report = penna_hw::capture::capture(&opts.sysfs_root, &dir).with_context(|| format!("capturing into {}", dir.display()))?;
-            println!(
-                "Captured {} hwmon chips, {} PCI display devices, {} files into {}",
-                report.chips,
-                report.pci_devices,
-                report.files,
-                dir.display()
-            );
-            for s in &report.skipped {
-                println!("  skipped {s}");
-            }
-            Ok(())
-        }
+        Command::Capture { dir } => capture::run(&opts.sysfs_root, dir),
     }
 }
 
