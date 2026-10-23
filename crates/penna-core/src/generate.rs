@@ -271,9 +271,10 @@ impl Builder {
         Some(Src { key, a, device: String::new() })
     }
 
-    /// Each GPU's temperature: an NVIDIA GPU's own, and an AMD (or nouveau) GPU's `edge`, the one closest to what NVML reports.
-    /// Its limit is NVML's maximum or the sensor's critical temperature, and its target NVML's acoustic threshold or the limit
-    /// less 10 °C.
+    /// Each GPU's temperature. An NVIDIA GPU's own, with NVML's maximum as its limit and its acoustic threshold as its target, or
+    /// the limit less 10 °C. An AMD (or nouveau) GPU's `junction`, the hotspot amdgpu's own OverDrive curve runs on, else its
+    /// first: its critical temperature as the limit, and the limit less 20 °C as the target, a starting point that no load check
+    /// holds to account (§5.5).
     fn gpu_anchors(&mut self, inventory: &Inventory, measured: &Measured) -> Vec<Src> {
         let mut out = Vec::new();
         let is_gpu = |d: &&crate::Device| match d.source {
@@ -283,7 +284,7 @@ impl Builder {
         for d in inventory.devices.iter().filter(is_gpu) {
             let sensor = match d.source {
                 Source::Nvml => d.sensors.iter().find(|s| s.key.channel() == "temp"),
-                Source::Hwmon => d.sensors.iter().find(|s| s.label == "edge").or_else(|| d.sensors.first()),
+                Source::Hwmon => d.sensors.iter().find(|s| s.label == "junction").or_else(|| d.sensors.first()),
             };
             let Some(s) = sensor else { continue };
             let limit = s
@@ -292,7 +293,8 @@ impl Builder {
                 .find(|l| l.kind == LimitKind::GpuMax)
                 .or_else(|| s.limits.iter().find(|l| l.kind == LimitKind::Crit))
                 .map_or(DEFAULT_EMERGENCY, |l| l.celsius);
-            let target = s.limits.iter().find(|l| l.kind == LimitKind::Acoustic).map_or(limit - 10.0, |l| l.celsius);
+            let below = if d.source == Source::Nvml { 10.0 } else { 20.0 };
+            let target = s.limits.iter().find(|l| l.kind == LimitKind::Acoustic).map_or(limit - below, |l| l.celsius);
             let Some(&idle) = measured.idle.get(&s.key) else { continue };
             let a = Anchors { idle: idle.round(), target: Some(target), limit: Some(limit) };
             self.anchors.insert(s.key.clone(), a);

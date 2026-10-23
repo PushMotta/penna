@@ -1,0 +1,67 @@
+# A Dell laptop, as dell-smm-hwmon documents it (DESIGN.md §3.5; drivers/hwmon/dell-smm-hwmon.c at v7.3): two fans, each with
+# 3 states, off, low and high, written as `pwmN` 0, 128 and 255, and a `pwmN_enable` of its own (since 6.18, on a model off
+# the whitelist with fan_max below 3): 2 is the BIOS's automatic mode, 1 manual. While the BIOS runs a fan, reading its `pwmN`
+# returns ENODATA. A Documented fixture. The CPU is an Intel Core i7-1365U, as in a Latitude.
+name = "dell"
+cpu_model = "13th Gen Intel(R) Core(TM) i7-1365U"
+ambient = 24.0
+seed = 5
+config = "dell.config.toml"
+seconds = 600
+fresh = true
+
+[load]
+points = [{ at = 0, cpu = 0.03, gpu = 0.0 }]
+
+[[body]]
+id = "cpu"
+load = "cpu"
+capacity = 16.0
+idle_watts = 4.0
+load_watts = 30.0
+passive = 0.15
+airflow = 1.0
+fan = [{ id = "fan1", weight = 1.0 }, { id = "fan2", weight = 0.5 }]
+
+[[chip]]
+driver = "coretemp"
+path = "devices/platform/coretemp.0"
+hwmon = 3
+temp = [{ channel = 1, label = "Package id 0", body = "cpu", noise = 0.4, spikes = 5.0, crit = 100.0 }]
+
+[[chip]]
+driver = "dell_smm"
+path = "devices/platform/dell_smm_hwmon"
+hwmon = 6
+temp = [{ channel = 1, label = "CPU", body = "cpu", offset = -3.0, noise = 0.3 }, { channel = 2, label = "Ambient", body = "cpu", offset = -15.0 }]
+
+# The BIOS: off while cool, then low, then high.
+[[chip.pwm]]
+channel = 1
+enable = 2
+levels = 3
+unreadable_in_auto = true
+firmware = { body = "cpu", points = [[49, 0], [50, 50], [70, 50], [71, 100]] }
+
+[[chip.pwm]]
+channel = 2
+enable = 2
+levels = 3
+unreadable_in_auto = true
+firmware = { body = "cpu", points = [[59, 0], [60, 50], [75, 50], [76, 100]] }
+
+[[chip.fan]]
+channel = 1
+id = "fan1"
+pwm = 1
+max_rpm = 4900
+stop = 30
+start = 30
+
+[[chip.fan]]
+channel = 2
+id = "fan2"
+pwm = 2
+max_rpm = 4600
+stop = 30
+start = 30

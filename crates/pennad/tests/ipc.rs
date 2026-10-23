@@ -964,3 +964,89 @@ fn a_laptop_whose_only_lever_is_the_power_profile() {
     assert_eq!(profile(), "balanced", "a clean stop puts it back");
     assert!(!firmware.exists());
 }
+
+/// An AMD graphics card from a fresh install (§3.5, §5): its pwm1 is paired with its fan by the driver, measured, and suggested as
+/// a GPU fan that may stop; its proposed curves follow the junction temperature, and go to 0 % below their floor, as its own
+/// curve stops the fan at idle.
+#[test]
+fn setup_measures_an_amd_graphics_card() {
+    let dir = fresh("setup-amdgpu");
+    let scenario = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/fixtures/drivers/amdgpu.toml");
+    let d = Daemon::start_scenario(&dir, scenario.to_str().unwrap(), "tree", &["--speed", "50"]);
+    let gpu = "hwmon/amdgpu/0000:03:00.0";
+    let mut c = d.connect();
+    c.line();
+    assert_eq!(c.call(json!({"op": "subscribe"}))["ok"], true);
+    let t = c.tick_where(10, "the card", |t| t["controls"].as_array().is_some() && t["firmware"].as_array().is_some_and(|f| !f.is_empty()));
+    assert_eq!(t["firmware"][0]["key"], format!("{gpu}/pwm1"));
+    assert_eq!(c.call(json!({"op": "setup.start"}))["ok"], true);
+    let t = c.tick_where(3000, "review", |t| t["setup"]["step"] == "review");
+    let s = &t["setup"];
+    assert!(s["stopped"].is_null(), "{s}");
+    let p = &s["controls"][0];
+    assert_eq!((p["write"].as_str(), p["tachs"].clone()), (Some("ok"), json!([format!("{gpu}/fan1")])), "{p}");
+    assert_eq!(p["suggestion"]["role"], "gpu");
+    assert!(p["stop"].as_f64().is_some_and(|s| (10.0..=25.0).contains(&s)), "{p}");
+    let curves: Vec<&str> = s["proposed"]["curves"].as_array().unwrap().iter().map(|c| c.as_str().unwrap()).collect();
+    assert_eq!(curves, ["gpu-quiet", "gpu-balanced", "gpu-render"]);
+    let a = &s["proposed"]["anchors"][format!("{gpu}/temp2")];
+    assert_eq!((a["limit"].as_f64(), a["target"].as_f64()), (Some(110.0), Some(90.0)), "the junction, 20 °C under its limit: {a}");
+    assert_eq!(c.call(json!({"op": "draft.save"}))["ok"], true);
+    let t =
+        c.tick_where(30, "the fan on its curve", |t| t["controls"][0]["curve"] == "gpu-balanced" && t["controls"][0]["state"] == "curve");
+    assert_eq!(t["controls"][0]["class"], "gpu");
+    d.stop();
+}
+
+/// Setup on a laptop fixture from a fresh install, to the proposed curves saved and running, then Defaults: what every laptop
+/// driver's Documented fixture is held to (§9.5). Returns the review's controls.
+fn laptop_setup(name: &str) -> Vec<Value> {
+    let dir = fresh(&format!("setup-{name}"));
+    let scenario = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../../test/fixtures/drivers/{name}.toml"));
+    let d = Daemon::start_scenario(&dir, scenario.to_str().unwrap(), "tree", &["--speed", "50"]);
+    let mut c = d.connect();
+    c.line();
+    assert_eq!(c.call(json!({"op": "subscribe"}))["ok"], true);
+    assert_eq!(c.call(json!({"op": "setup.start"}))["ok"], true);
+    let t = c.tick_where(3000, "review", |t| t["setup"]["step"] == "review");
+    let s = t["setup"].clone();
+    assert!(s["stopped"].is_null(), "{name}: {s}");
+    let controls = s["controls"].as_array().unwrap().clone();
+    for p in &controls {
+        assert_eq!(p["write"], "ok", "{name}: {p}");
+        assert_eq!(p["suggestion"]["role"], "laptop", "{name}: {p}");
+        assert!(p["table"].as_array().is_some_and(|t| t.len() >= 2), "{name}: measured: {p}");
+    }
+    c.tick_where(30, "given back", |t| t["controls"].as_array().unwrap().iter().all(|c| c["state"] != "measuring"));
+    assert_eq!(c.call(json!({"op": "draft.save"}))["ok"], true);
+    let n = controls.len();
+    let on_curve = |t: &Value| t["controls"].as_array().unwrap().iter().filter(|c| c["state"] == "curve").count();
+    let t = c.tick_where(30, "every fan on its curve", |t| on_curve(t) == n);
+    assert!(
+        t["controls"].as_array().unwrap().iter().all(|c| c["curve"] == "laptop-balanced" && c["class"] == "laptop"),
+        "{}",
+        t["controls"]
+    );
+    assert_eq!(c.call(json!({"op": "profile.set", "name": "defaults"}))["ok"], true);
+    c.tick_where(30, "given back", |t| t["controls"].as_array().unwrap().iter().all(|c| c["state"] == "firmware"));
+    d.stop();
+    controls
+}
+
+#[test]
+fn setup_measures_a_dell_s_three_levels() {
+    let controls = laptop_setup("dell");
+    assert_eq!(controls.len(), 2, "two fans, each with an enable of its own");
+    for p in &controls {
+        let table: Vec<f64> = p["table"].as_array().unwrap().iter().map(|x| x[0].as_f64().unwrap()).collect();
+        assert_eq!(table, [50.0, 100.0], "low and high: {p}");
+        assert_eq!(p["suggestion"]["may_stop"], true, "the BIOS stops it when cool: {p}");
+    }
+}
+
+#[test]
+fn setup_measures_a_framework_laptop() {
+    let controls = laptop_setup("framework");
+    assert_eq!(controls.len(), 1);
+    assert!(controls[0]["stop"].as_f64().is_some_and(|s| s <= 20.0), "{}", controls[0]);
+}

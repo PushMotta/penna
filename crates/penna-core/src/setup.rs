@@ -192,6 +192,8 @@ impl Target {
         };
         let tachs = match (device.source, class) {
             (Source::Nvml, _) => vec![control.key.clone()],
+            // A target speed is set on the fan itself, and its key is the fan's (`lenovo_wmi_other`, applesmc).
+            (Source::Hwmon, _) if matches!(control.kind, ControlKind::Speed { .. }) => vec![control.key.clone()],
             (Source::Hwmon, Class::Laptop | Class::Gpu) if device.controls.len() == 1 => {
                 device.tachs.iter().map(|t| t.key.clone()).collect()
             }

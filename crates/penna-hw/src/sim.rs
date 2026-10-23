@@ -205,6 +205,10 @@ pub struct PwmSpec {
     /// long, the firmware takes the fan back, as a ThinkPad's `fan_watchdog` does (thinkpad_acpi.c, `fan_watchdog_fire`).
     #[serde(default)]
     pub watchdog: Option<String>,
+    /// `pwmN` can't be read while the firmware runs the fan, as `dell_smm`'s returns `ENODATA`: here it is write-only until
+    /// `pwmN_enable` is 1.
+    #[serde(default)]
+    pub unreadable_in_auto: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -686,6 +690,10 @@ impl Sim {
                     self.watchdog(ci, p.channel, &self.root.join(w), &pwm_path, &enable_path)?;
                 }
                 let enable: i64 = get(&enable_path).unwrap_or(p.enable);
+                if p.unreadable_in_auto {
+                    let mode = if enable == 1 { 0o644 } else { 0o200 };
+                    fs::set_permissions(&pwm_path, fs::Permissions::from_mode(mode))?;
+                }
                 let duty = match (enable, p.levels) {
                     (0, _) => 100.0,
                     (1, None) => get::<i64>(&pwm_path).map_or(100.0, |r| r.clamp(0, 255) as f64 * 100.0 / 255.0),

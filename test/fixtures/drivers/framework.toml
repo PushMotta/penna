@@ -1,0 +1,48 @@
+# A Framework Laptop 13, as cros_ec_hwmon documents it (DESIGN.md §3.5; drivers/hwmon/cros_ec_hwmon.c at v7.3): `pwm1` 0–255,
+# sent to the embedded controller as a percent and read back from it, `pwm1_enable` 1 manual or 2 automatic, `fan1_input`.
+# A Documented fixture. The CPU is an AMD Ryzen 7 7840U.
+name = "framework"
+cpu_model = "AMD Ryzen 7 7840U w/ Radeon 780M Graphics"
+ambient = 24.0
+seed = 13
+config = "framework.config.toml"
+seconds = 600
+fresh = true
+
+[load]
+points = [{ at = 0, cpu = 0.03, gpu = 0.0 }]
+
+[[body]]
+id = "cpu"
+load = "cpu"
+capacity = 14.0
+idle_watts = 4.0
+load_watts = 28.0
+passive = 0.12
+airflow = 1.1
+fan = [{ id = "fan1", weight = 1.0 }]
+
+[[chip]]
+driver = "k10temp"
+path = "devices/pci0000:00/0000:00:18.3"
+hwmon = 2
+temp = [{ channel = 1, label = "Tctl", body = "cpu", noise = 0.3, spikes = 4.0 }]
+
+[[chip]]
+driver = "cros_ec"
+path = "devices/platform/cros_ec_lpcs.0/cros-ec-dev.1.auto/cros-ec-hwmon.0"
+hwmon = 7
+temp = [{ channel = 1, label = "cpu@4c", body = "cpu", offset = -6.0, noise = 0.2 }]
+
+[[chip.pwm]]
+channel = 1
+enable = 2
+firmware = { body = "cpu", points = [[44, 0], [45, 20], [70, 60], [85, 100]] }
+
+[[chip.fan]]
+channel = 1
+id = "fan1"
+pwm = 1
+max_rpm = 5400
+stop = 12
+start = 16

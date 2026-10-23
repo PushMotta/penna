@@ -1,0 +1,63 @@
+# A desk whose only fan Penna can set is an AMD graphics card's, as amdgpu documents it up to RDNA3 (DESIGN.md §3.5;
+# drivers/gpu/drm/amd/pm/amdgpu_pm.c and swsmu/smu13 at v7.3; Documentation/gpu/amdgpu/thermal.rst): `pwm1` 0–255 with
+# `pwm1_enable` 2 automatic and 1 manual, `fan1_input`, and three temperatures, `edge`, `junction` and `mem`. The critical
+# temperatures are the simulator's, of the kind such a card reports. A Documented fixture.
+name = "amdgpu"
+cpu_model = "AMD Ryzen 7 7700X 8-Core Processor"
+ambient = 24.0
+seed = 33
+config = "amdgpu.config.toml"
+seconds = 600
+fresh = true
+
+[load]
+points = [{ at = 0, cpu = 0.03, gpu = 0.02 }]
+
+[[body]]
+id = "cpu"
+load = "cpu"
+capacity = 40.0
+idle_watts = 20.0
+load_watts = 140.0
+passive = 0.9
+airflow = 0.5
+
+[[body]]
+id = "gpu"
+load = "gpu"
+capacity = 60.0
+idle_watts = 18.0
+load_watts = 300.0
+passive = 0.9
+airflow = 6.0
+fan = [{ id = "gpu-fan", weight = 1.0 }]
+
+[[chip]]
+driver = "k10temp"
+path = "devices/pci0000:00/0000:00:18.3"
+hwmon = 2
+temp = [{ channel = 1, label = "Tctl", body = "cpu", noise = 0.4, spikes = 6.0 }]
+
+[[chip]]
+driver = "amdgpu"
+path = "devices/pci0000:00/0000:00:01.1/0000:03:00.0"
+hwmon = 4
+temp = [
+  { channel = 1, label = "edge", body = "gpu", noise = 0.2, crit = 100.0 },
+  { channel = 2, label = "junction", body = "gpu", offset = 12.0, noise = 0.4, crit = 110.0 },
+  { channel = 3, label = "mem", body = "gpu", offset = 6.0, noise = 0.2, crit = 105.0 },
+]
+
+# Its own curve: off at idle (zero RPM), then up with the junction.
+[[chip.pwm]]
+channel = 1
+enable = 2
+firmware = { body = "gpu", points = [[50, 0], [55, 20], [80, 60], [95, 100]] }
+
+[[chip.fan]]
+channel = 1
+id = "gpu-fan"
+pwm = 1
+max_rpm = 3300
+stop = 15
+start = 20
