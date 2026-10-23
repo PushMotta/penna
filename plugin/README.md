@@ -4,19 +4,29 @@ The shell side of [Penna](https://github.com/PushMotta/penna), fan control for L
 a popup, and a studio for curves and setup. Every fan is named for what it cools, with its RPM beside what it was asked for,
 and anything that goes wrong is said in a sentence.
 
-![The studio on Balanced: every fan named for its header, the CPU fan's generated curve with its stall line, and five minutes of every sensor](docs/media/studio.png)
+![The studio: the CPU fan's curve dragged and saved, with its stall line, its RPM scale and five minutes of every sensor](https://raw.githubusercontent.com/PushMotta/penna/main/docs/media/studio.gif)
 
-<img src="docs/media/popup.png" alt="The popup: profiles, temperatures, and every fan with its role, RPM and duty" width="380">
+<img src="https://raw.githubusercontent.com/PushMotta/penna/main/docs/media/popup.gif" alt="The popup switching profiles, then Full speed on and off" width="397" align="right">
+
+The **popup** is for every day: the profiles, the temperatures the curves follow, and every fan with its role, RPM and duty.
+*Defaults* hands every fan back to its BIOS or driver; *Full speed* puts them all at 100 % until you turn it off.
+
+The **studio** is for curves: one card per fan, the editor with the fan's own stall line and RPM scale, and *Set up fans…*,
+which measures every fan and proposes Quiet, Balanced and Render curves. Penna's README shows
+[every part](https://github.com/PushMotta/penna#what-it-looks-like), setup and the themes included.
+<br clear="right">
 
 The plugin draws; it changes nothing by itself. The fans are run by `pennad`, Penna's daemon, which the `penna` package
 installs as a system service. Without it the glyph says that Penna isn't running, and the fans stay with their firmware.
 
 ## Install
 
-The daemon first, from the AUR, then the plugin:
+The daemon first, from the package on Penna's latest release, then the plugin:
 
 ```
-yay -S penna                                  # or paru -S penna
+curl -LO https://github.com/PushMotta/penna/releases/download/v0.10.2/penna-0.10.2-1-x86_64.pkg.tar.zst
+curl -sL https://github.com/PushMotta/penna/releases/download/v0.10.2/SHA256SUMS | sha256sum -c
+sudo pacman -U penna-0.10.2-1-x86_64.pkg.tar.zst
 sudo systemctl enable --now pennad            # the first start adopts nothing: every fan stays with its firmware
 sudo usermod -aG penna "$USER"                # change fans from the popup and the studio; applies at once
 omarchy plugin add https://github.com/PushMotta/omarchy-penna.git --enable

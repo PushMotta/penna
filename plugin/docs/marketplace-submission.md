@@ -20,9 +20,9 @@ Penna is fan control for Linux, made to be understood. This plugin is its shell 
 state, a popup with profiles, temperatures and every fan's RPM, and a studio for curves and setup. Three kinds in one plugin:
 bar-widget (popup), overlay (studio), service.
 
-The fans are run by `pennad`, a system service from the separate `penna` package (AUR, MIT,
-https://github.com/PushMotta/penna). The plugin depends on it and says so on the glyph when it isn't running. It never installs,
-starts or elevates anything itself. The daemon drives fans only through the kernel's hwmon drivers and NVIDIA's NVML, and it
+The fans are run by `pennad`, a system service from the separate `penna` package (MIT, https://github.com/PushMotta/penna),
+installed with pacman from the package each release carries. The plugin depends on it and says so on the glyph when it isn't
+running. It never installs, starts or elevates anything itself. The daemon drives fans only through the kernel's hwmon drivers and NVIDIA's NVML, and it
 puts every fan back to its BIOS or driver on every way out, including a crash and removing the package.
 
 What the plugin touches:
@@ -33,7 +33,8 @@ What the plugin touches:
   themselves (`sudo systemctl start pennad`, `sudo usermod -aG penna $USER`).
 
 Nothing is downloaded at install or at runtime. The repository is generated from `plugin/` in the main repository at each
-release. It holds the plugin, its tests (`node --test`, for Model.js), this text, README and LICENSE. It holds no agent or
+release. It holds the plugin, its tests (`node --test`, for Model.js), this text, the README, the licence and
+`preview.png`. It holds no agent or
 session handoff material. The workflow's actions are pinned to full commit SHAs, and it declares `permissions: contents: read`.
 
 ### Submission checklist

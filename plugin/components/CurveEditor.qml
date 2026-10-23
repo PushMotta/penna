@@ -118,7 +118,8 @@ Item {
                                     && (kind === "flat" || (live.smoothed !== null && live.smoothed !== undefined))
 
   function feed() {
-    if (!hasMarker) {
+    // `live` itself, too: onLiveChanged can run before hasMarker's binding has caught up with a live that went null.
+    if (!live || !hasMarker) {
       primed = false
       return
     }
