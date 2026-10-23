@@ -321,7 +321,7 @@
   <div class="cols">
     <div>
       <h3>Signing</h3>
-      <p>SmartScreen warns about unsigned downloads, and since 2024 no certificate skips that: reputation builds over time. Microsoft's Artifact Signing, about $9.99 a month, is open to organisations in the EU but to individuals only in the US and Canada. So it would sign as PUSH, not as you. The SignPath Foundation signs open-source projects free, under strict conditions and under its own name. <a href="https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/code-signing-options">Options</a></p>
+      <p>SmartScreen warns about unsigned downloads, and since 2024 no certificate skips that: reputation builds over time. Microsoft's Artifact Signing, about $9.99 a month, is open to individuals only in the US and Canada, so it isn't open to you. A code-signing certificate issued to you as an individual by a certificate authority is. The SignPath Foundation signs open-source projects free, under strict conditions and under its own name. <a href="https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/code-signing-options">Options</a></p>
     </div>
     <div>
       <h3>Installing</h3>
@@ -346,14 +346,14 @@
 <section class="decisions">
   <div class="eyebrow">G · Decisions</div>
   <h2>Six calls before any code</h2>
-  <p class="lede">Nothing is built yet. What you choose here goes into DESIGN.md as §11.4, with a Windows section beside §3 and §7.</p>
+  <p class="lede">Nothing is built yet. Parked on 23 October 2026: the Linux version is finished first. What you choose here will go into DESIGN.md as §11.4, with a Windows section beside §3 and §7.</p>
   <ol>
     <li><strong>Windows starts with GPU fans and the power mode:</strong> NVIDIA through NVML, AMD through ADLX, laptops through Windows' power mode and, by vendor, their WMI. Motherboard fans stay with the BIOS for now. <span class="rec">Recommended: all of it goes through the vendors' own drivers, so §11.2's first call holds unchanged, and NVIDIA can be tested on the 2060 in win-ci.</span></li>
     <li><strong>Motherboard fans come later through PawnIO and Penna's own chip code, or not at all.</strong> Not through a LibreHardwareMonitor sidecar. <span class="rec">Recommended: only Penna's own code can write each register's original to <code>held.json</code> before changing it, which is what hands fans back after a crash. This changes §11.2's first call for Windows: a signed driver that reaches only the fan chip's own ports, and never one on Microsoft's blocklist. The doctor would name the same ACPI risk it names for it87. The chip code would be ported from LibreHardwareMonitor's as its own MPL-2.0 crate, which keeps the rest MIT. Porting Linux's drivers instead would make the Windows build GPL-2.0.</span></li>
     <li><strong>One workspace.</strong> Windows backends and the service sit beside Linux's in the same crates, behind <code>cfg(windows)</code>. <span class="rec">Recommended: one loop, one protocol, one set of tests, and a fix lands on both.</span></li>
     <li><strong>The app is Qt Quick,</strong> reusing the plugin's components and Model.js, with the glyph in the tray. <span class="rec">Recommended: the most reuse and the same look, and the same app for Linux desktops outside Omarchy. Tauri is the alternative if a smaller download matters more than reuse.</span></li>
     <li><strong>Trust:</strong> members of a local Penna group may change fans; anyone signed in may watch. The installer adds the user who installs it. <span class="rec">Recommended: the same rule as Linux's <code>penna</code> group (§7.4).</span></li>
-    <li><strong>Signing as PUSH through Artifact Signing.</strong> Until then, beta builds go out unsigned, with SmartScreen's warning. <span class="rec">Recommended: the only route that puts your own name on the certificate, since Microsoft doesn't sign for individuals in Portugal. SignPath is the free alternative, under its name.</span></li>
+    <li><strong>Signing in your own name,</strong> with a certificate issued to you as an individual. Until then, beta builds go out unsigned, with SmartScreen's warning. <span class="rec">Recommended: Penna is your project, and Microsoft's Artifact Signing doesn't sign for individuals in Portugal. SignPath is the free alternative, under its own name.</span></li>
   </ol>
 </section>
 
