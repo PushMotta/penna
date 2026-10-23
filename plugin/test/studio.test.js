@@ -132,3 +132,10 @@ test("the review says what confirming does with the proposed curves", () => {
   assert.equal(M.proposalText({ proposed: { refused: "Another window has unsaved changes." } }, {}), "Another window has unsaved changes.")
   assert.equal(M.proposalText({}, {}), "")
 })
+
+test("a studio whose monitor drops out goes back to it, else to the focused one", () => {
+  assert.equal(M.screenIndex(["DP-2", "DP-1"], "DP-1", "DP-2"), 1, "the one it opened on, back again")
+  assert.equal(M.screenIndex(["DP-2"], "DP-1", "DP-2"), 0, "gone: the focused one")
+  assert.equal(M.screenIndex(["DP-2", "HDMI-A-1"], "DP-1", ""), 0, "no focus: the first")
+  assert.equal(M.screenIndex([], "DP-1", "DP-1"), -1)
+})

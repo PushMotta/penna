@@ -699,6 +699,15 @@ function proposalText(s, tick) {
   return head + "Nothing runs them until you save, which switches to Balanced."
 }
 
+// Where the studio goes among `names`, the screens there are now: the one it opened on, else the focused one, else the first;
+// -1 with none. A monitor that drops out and comes back keeps its name but not its screen object (§8.3).
+function screenIndex(names, wanted, focused) {
+  var i = names.indexOf(wanted)
+  if (i < 0) i = names.indexOf(focused)
+  if (i < 0 && names.length) i = 0
+  return i
+}
+
 function writeBlockedReason(connected, canWrite) {
   if (!connected || canWrite) return ""
   return "Changing fans needs the penna group: sudo usermod -aG penna $USER (it applies at once)."
@@ -720,6 +729,6 @@ if (typeof module !== "undefined") {
     inspector: inspector, limitsLine: limitsLine, curveOptions: curveOptions, handlesOf: handlesOf, curveWith: curveWith,
     moveHandle: moveHandle, pathOf: pathOf, shadeOf: shadeOf, nvmlFloor: nvmlFloor, profileTabs: profileTabs,
     viewProfile: viewProfile, generatedDraft: generatedDraft, isGenerated: isGenerated, draftLine: draftLine, saveLabel: saveLabel,
-    anchorMarks: anchorMarks, loadView: loadView, proposalText: proposalText
+    anchorMarks: anchorMarks, loadView: loadView, proposalText: proposalText, screenIndex: screenIndex
   }
 }

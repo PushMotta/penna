@@ -217,10 +217,8 @@ Item {
     try { payload = JSON.parse(payloadJson || "{}") || ({}) } catch (e) { payload = ({}) }
     setupScreen = payload.setup === true
     setupDismissed = false
-    var wanted = Hyprland.focusedMonitor ? String(Hyprland.focusedMonitor.name) : ""
-    var chosen = null
-    for (var i = 0; i < Quickshell.screens.length; i++) if (Quickshell.screens[i].name === wanted) chosen = Quickshell.screens[i]
-    targetScreen = screenOverride || chosen || (Quickshell.screens.length ? Quickshell.screens[0] : null)
+    screenName = focusedName()
+    targetScreen = screenOverride || pickScreen()
     if (!selectedKey || !find(liveControls, "key", selectedKey)) selectedKey = liveControls.length ? String(liveControls[0].key) : ""
     syncKeys()
     focusArea = "controls"
@@ -434,6 +432,15 @@ Item {
 
   StudioClient { id: client }
 
+  function focusedName() { return Hyprland.focusedMonitor ? String(Hyprland.focusedMonitor.name) : "" }
+
+  function pickScreen() {
+    var names = []
+    for (var i = 0; i < Quickshell.screens.length; i++) names.push(String(Quickshell.screens[i].name))
+    var at = Model.screenIndex(names, screenName, focusedName())
+    return at < 0 ? null : Quickshell.screens[at]
+  }
+
   readonly property string hints: setupShown ? (setupRunning ? "Setup belongs to this window: closing it stops setup and hands every fan back."
                                               : setupScreen && setupLive === null ? "c load check · h/l action · ↵ choose · esc close"
                                               : "h/l action · ↵ choose · esc close")
@@ -442,9 +449,42 @@ Item {
                                 : "h/l action · ↵ choose · ⇥ controls · esc close"
 
   // ---------------------------------------------------------- window
+  // A monitor that drops out takes the studio's surface with it, while the studio stays open and its connection keeps setup and
+  // the draft: when the screens change, the studio goes back to the screen it opened on, or the focused one, and is mapped there
+  // afresh (§8.3).
+  property string screenName: ""
+  property bool remapping: false
+
+  Connections {
+    target: Quickshell
+    function onScreensChanged() { if (root.opened && !root.screenOverride) screenSettle.restart() }
+  }
+
+  // A monitor that blinks goes and comes back within a second: the screens settle, then the studio moves once.
+  Timer {
+    id: screenSettle
+    interval: 250
+    onTriggered: {
+      var next = root.pickScreen()
+      if (next !== null && next === root.targetScreen) return
+      root.targetScreen = next
+      root.remapping = true
+    }
+  }
+
+  // Unmapped for a beat, so the compositor makes a new surface rather than keeping none.
+  Timer {
+    interval: 50
+    running: root.remapping
+    onTriggered: {
+      root.remapping = false
+      Qt.callLater(function() { keyScope.forceActiveFocus() })
+    }
+  }
+
   PanelWindow {
     id: window
-    visible: root.opened || card.opacity > 0
+    visible: (root.opened || card.opacity > 0) && !root.remapping
     screen: root.targetScreen
     anchors { top: true; bottom: true; left: true; right: true }
     color: "transparent"
