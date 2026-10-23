@@ -21,14 +21,10 @@ installs as a system service. Without it the glyph says that Penna isn't running
 
 ## Install
 
-The daemon first, from the package on Penna's latest release, then the plugin:
+The daemon first: [install Penna](https://github.com/PushMotta/penna#install) from the package on its latest release, start
+`pennad`, and join the `penna` group, as its README says. Then the plugin:
 
 ```
-curl -LO https://github.com/PushMotta/penna/releases/download/v0.10.2/penna-0.10.2-1-x86_64.pkg.tar.zst
-curl -sL https://github.com/PushMotta/penna/releases/download/v0.10.2/SHA256SUMS | sha256sum -c
-sudo pacman -U penna-0.10.2-1-x86_64.pkg.tar.zst
-sudo systemctl enable --now pennad            # the first start adopts nothing: every fan stays with its firmware
-sudo usermod -aG penna "$USER"                # change fans from the popup and the studio; applies at once
 omarchy plugin add https://github.com/PushMotta/omarchy-penna.git --enable
 ```
 
@@ -60,8 +56,10 @@ The plugin connects to `pennad`'s socket, `/run/penna/penna.sock` (or `$PENNA_SO
 
 ```
 omarchy plugin remove io.github.pushmotta.penna
-sudo pacman -R penna                          # stops pennad first, which hands every fan back
 ```
+
+To remove the daemon too, see [Removing it](https://github.com/PushMotta/penna#removing-it) in Penna's README: removing its
+package stops `pennad` first, which hands every fan back.
 
 ## Developing
 

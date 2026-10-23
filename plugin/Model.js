@@ -768,7 +768,9 @@ function screenIndex(names, wanted, focused) {
 
 function writeBlockedReason(connected, canWrite) {
   if (!connected || canWrite) return ""
-  return "Changing fans needs the penna group: sudo usermod -aG penna $USER (it applies at once)."
+  // pennad's own sentence names the command, and the surfaces show it first (Service.writeWhy); this is for a daemon that
+  // gives none.
+  return "Changing fans needs membership of the penna group: penna doctor says how to join, and it applies at once."
 }
 
 if (typeof module !== "undefined") {

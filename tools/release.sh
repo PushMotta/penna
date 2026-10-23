@@ -38,9 +38,7 @@ check() {
     || fail "the two PKGBUILDs build differently: their prepare(), build(), check() and package() must match"
   (cd packaging/aur && makepkg --printsrcinfo | diff -q - .SRCINFO >/dev/null) || fail "packaging/aur/.SRCINFO is stale"
   grep -q "^## $version " CHANGELOG.md || fail "CHANGELOG.md has no section for $version"
-  for f in README.md plugin/README.md; do
-    grep -q "v$version/penna-$version-1-x86_64.pkg.tar.zst" "$f" || fail "$f doesn't install penna-$version"
-  done
+  grep -q "v$version/penna-$version-1-x86_64.pkg.tar.zst" README.md || fail "README.md doesn't install penna-$version"
   if command -v omarchy >/dev/null; then omarchy plugin validate plugin >/dev/null || fail "the plugin doesn't validate"; fi
   step "Tests"
   cargo fmt --check

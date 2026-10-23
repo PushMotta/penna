@@ -1272,6 +1272,13 @@ Milestones, each ending in something visible:
     shows a ThinkPad and the studio in six themes. `media.sh` crops the stills and cuts the GIFs. The media lives in
     `docs/media`, outside `plugin/`, so `omarchy plugin add` doesn't clone it.
 
+  - **0.10.3, for the marketplace.** Candela's submissions were held twice: for actions on mutable tags with no
+    `permissions`, then for an agent handoff file in the installable tree. Every version also waited for a maintainer to
+    accept capabilities the security baseline found in plain text. The baseline treats each line of the root README,
+    `.js` and `.qml` as a command: `sudo`, `systemctl` and `pacman` there each need review. Penna's plugin had all three,
+    in its README's daemon commands and in two messages. The README now links to Penna's, and the messages point to
+    `penna doctor`, so by the baseline's published rules the plugin passes with nothing to review.
+
   Not yet: the AUR, until it takes new accounts again, and the marketplace submission (`plugin/docs/`).
 
 ## 11. Decisions (approved 21 Oct 2026)

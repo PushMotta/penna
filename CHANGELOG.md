@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.3 (23 Oct 2026)
+
+- **Plugin 0.7.2, for the Omarchy marketplace:** its README links to Penna's for installing and removing the daemon, and the
+  popup points to `penna doctor` when `pennad` isn't running or the user can't change fans. The plugin's own tree now holds
+  no `sudo`, `systemctl` or package-manager commands, which the marketplace's security baseline asks a maintainer to review.
+
 ## 0.10.2 (23 Oct 2026)
 
 - **Install from the release.** New AUR accounts are paused, so each release now carries a package built from its own source

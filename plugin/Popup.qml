@@ -468,7 +468,7 @@ Panel {
           visible: text !== ""
           text: !root.connected && root.service && root.service.mismatch !== "" ? root.service.mismatch
                 : !root.connected
-                ? "The fans are back on firmware control. Start Penna with sudo systemctl start pennad"
+                ? "The fans are back on firmware control. Penna isn't running: penna doctor says how to start it"
                   + (root.service && root.service.lastMock ? ", or pennad --mock render-burst --forever while developing." : ".")
                 : root.flash !== "" ? root.flash : (root.service && root.service.writeWhy !== "" ? root.service.writeWhy : Model.writeBlockedReason(root.connected, root.canWrite))
           textFormat: Text.PlainText

@@ -165,9 +165,9 @@ report](CONTRIBUTING.md#a-machine-report) is the most useful thing you can send.
 On Arch Linux and Omarchy. Penna isn't in the AUR yet, so each release carries a package built from its own source tarball:
 
 ```
-curl -LO https://github.com/PushMotta/penna/releases/download/v0.10.2/penna-0.10.2-1-x86_64.pkg.tar.zst
-curl -sL https://github.com/PushMotta/penna/releases/download/v0.10.2/SHA256SUMS | sha256sum -c
-sudo pacman -U penna-0.10.2-1-x86_64.pkg.tar.zst
+curl -LO https://github.com/PushMotta/penna/releases/download/v0.10.3/penna-0.10.3-1-x86_64.pkg.tar.zst
+curl -sL https://github.com/PushMotta/penna/releases/download/v0.10.3/SHA256SUMS | sha256sum -c
+sudo pacman -U penna-0.10.3-1-x86_64.pkg.tar.zst
 sudo systemctl enable --now pennad            # the first start adopts nothing: every fan stays with its firmware
 sudo usermod -aG penna "$USER"                # change fans without root; applies at once
 omarchy plugin add https://github.com/PushMotta/omarchy-penna.git --enable
