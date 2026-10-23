@@ -203,7 +203,13 @@ impl Backend for Hwmon {
                 device.tachs.push(TachInfo { key: key.clone(), label });
                 chip.fans.push((key, dir.join(format!("fan{n}_input"))));
             }
-            for n in channels.pwms {
+            // A driver with modes may offer `pwmN_enable` alone: the mode is all there is to set (§3.5).
+            let mut pwms = channels.pwms.clone();
+            if entry.is_some_and(|d| d.offers == Offers::Modes) {
+                pwms.extend(channels.enables.iter().filter(|n| !channels.pwms.contains(n)));
+                pwms.sort();
+            }
+            for n in pwms {
                 let key = Key::hwmon(&name, &location, &format!("pwm{n}"));
                 let (value, enable) = (dir.join(format!("pwm{n}")), dir.join(format!("pwm{n}_enable")));
                 let kind = control_kind(entry, &value, &enable);
@@ -237,6 +243,19 @@ impl Backend for Hwmon {
                 out.rpms.insert(key.clone(), sample);
             }
             for pwm in &chip.pwms {
+                if pwm.kind == ControlKind::Modes {
+                    // Its mode is its reading: full speed or not.
+                    let sample = match read_int_sample(&pwm.enable) {
+                        Sample::Value(v) => {
+                            let raw = u32::from(v == 0);
+                            Sample::Value(ControlReading { percent: 100.0 * raw as f64, raw: Some(raw), mode: ControlMode::from_pwm_enable(v) })
+                        }
+                        Sample::Implausible(v) => Sample::Implausible(v),
+                        Sample::Error(e) => Sample::Error(e),
+                    };
+                    out.controls.insert(pwm.key.clone(), sample);
+                    continue;
+                }
                 let scale = pwm.scale() as i64;
                 let sample = match read_int_sample(&pwm.value) {
                     Sample::Value(v) if (0..=scale).contains(&v) => {
@@ -264,6 +283,8 @@ impl Backend for Hwmon {
             (Err(e), None) => return Err(e),
         };
         let original_pwm = match (read_number(&p.value), p.restore) {
+            // A mode is all a control with modes has: no duty goes back, and no manual mode is asked for on the way.
+            _ if p.kind == ControlKind::Modes => None,
             (Ok(v), _) => Some(v.clamp(0, p.scale() as i64) as u32),
             (Err(_), Some(_)) => None,
             (Err(e), None) => return Err(e),
@@ -282,6 +303,10 @@ impl Backend for Hwmon {
     /// runs what Penna wrote.
     fn take(&mut self, key: &Key) -> Result<f64> {
         let p = self.pwm(key)?;
+        if p.kind == ControlKind::Modes {
+            // Held in the mode it is in: the first write sets one.
+            return Ok(if read_number(&p.enable)? == 0 { 100.0 } else { 0.0 });
+        }
         let v = read_number(&p.value).map_or(p.scale() as i64, |v| v.clamp(0, p.scale() as i64));
         let raw = p.raw_of(v);
         write_number(&p.enable, 1)?;
@@ -294,12 +319,19 @@ impl Backend for Hwmon {
 
     fn write(&mut self, key: &Key, raw: u32) -> Result<Readback> {
         let p = self.pwm(key)?;
+        if p.kind == ControlKind::Modes {
+            write_number(&p.enable, if raw >= 1 { 0 } else { AUTOMATIC })?;
+            return readback(p);
+        }
         write_number(&p.value, p.file_of(raw))?;
         readback(p)
     }
 
     fn reassert(&mut self, key: &Key, raw: u32) -> Result<Readback> {
         let p = self.pwm(key)?;
+        if p.kind == ControlKind::Modes {
+            return self.write(key, raw);
+        }
         write_number(&p.enable, 1)?;
         write_number(&p.value, p.file_of(raw))?;
         readback(p)
@@ -329,9 +361,9 @@ fn control_kind(entry: Option<&Driver>, value: &Path, enable: &Path) -> ControlK
         Offers::Levels { steps } if settable && steps >= 2 => {
             ControlKind::Levels { steps, refresh: entry.is_some_and(|d| d.watchdog.is_some()) }
         }
-        Offers::Duty { .. } | Offers::Levels { .. } | Offers::ReadOnly => ControlKind::ReadOnly,
+        Offers::Modes if writable(enable) => ControlKind::Modes,
+        Offers::Duty { .. } | Offers::Levels { .. } | Offers::Modes | Offers::ReadOnly => ControlKind::ReadOnly,
         Offers::FirmwareCurve { points } => ControlKind::FirmwareCurve { points },
-        Offers::Modes => ControlKind::Modes,
     }
 }
 
@@ -340,7 +372,14 @@ fn writable(path: &Path) -> bool {
     fs::metadata(path).is_ok_and(|m| m.permissions().mode() & 0o222 != 0)
 }
 
+/// The `pwmN_enable` of a control with modes when it isn't at full speed: the firmware's automatic mode (`hp`, `asus`, §3.5).
+const AUTOMATIC: i64 = 2;
+
 fn readback(p: &Pwm) -> Result<Readback> {
+    if p.kind == ControlKind::Modes {
+        let v = read_number(&p.enable)?;
+        return Ok(Readback { raw: Some(u32::from(v == 0)), mode: ControlMode::from_pwm_enable(v) });
+    }
     let raw = read_number(&p.value).ok().map(|v| p.raw_of(v));
     let mode = read_number(&p.enable).map_or(ControlMode::Unknown, ControlMode::from_pwm_enable);
     Ok(Readback { raw, mode })
@@ -384,6 +423,7 @@ struct Channels {
     temps: Vec<u32>,
     fans: Vec<u32>,
     pwms: Vec<u32>,
+    enables: Vec<u32>,
 }
 
 fn channels(dir: &Path) -> Channels {
@@ -399,11 +439,14 @@ fn channels(dir: &Path) -> Channels {
             ch.fans.push(n);
         } else if let Some(n) = index("pwm", "") {
             ch.pwms.push(n);
+        } else if let Some(n) = index("pwm", "_enable") {
+            ch.enables.push(n);
         }
     }
     ch.temps.sort();
     ch.fans.sort();
     ch.pwms.sort();
+    ch.enables.sort();
     ch
 }
 

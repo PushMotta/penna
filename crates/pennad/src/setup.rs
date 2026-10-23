@@ -33,7 +33,7 @@ pub fn input(inventory: &Inventory, board: Option<&Board>, only: Option<&[Key]>)
         .devices
         .iter()
         .flat_map(|d| d.controls.iter().map(move |c| (d, c)))
-        .filter(|(_, c)| c.kind.drivable() && only.is_none_or(|o| o.contains(&c.key)))
+        .filter(|(_, c)| c.kind.measurable() && only.is_none_or(|o| o.contains(&c.key)))
         .map(|(d, c)| Target::of(d, c))
         .collect();
     let tachs = inventory

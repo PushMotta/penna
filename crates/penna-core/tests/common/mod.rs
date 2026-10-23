@@ -125,6 +125,23 @@ may_stop = true
 "nvml/GPU-1/fan0" = "case"
 "#;
 
+/// The same desk with its motherboard header swapped for a laptop fan with modes: automatic or full speed (§3.5), on the
+/// `quiet` curve, a Flat 35 %.
+pub fn with_modes() -> Rig {
+    let mut inv = inventory();
+    for c in inv.devices.iter_mut().flat_map(|d| &mut d.controls).filter(|c| c.key == pwm()) {
+        c.kind = ControlKind::Modes;
+    }
+    let cfg = Config::parse(&CONFIG.replace("\"hwmon/it87/it87.2608/pwm1\" = \"cpu\"", "\"hwmon/it87/it87.2608/pwm1\" = \"quiet\""))
+        .expect("test config parses");
+    let plan = Plan::new(cfg, &inv, &Measured::default(), Some("AMD Ryzen 9 5950X 16-Core Processor")).expect("test config plans");
+    let mut rig = Rig::new(plan);
+    let h = rig.hw.get_mut(&pwm()).expect("the header");
+    h.kind = ControlKind::Modes;
+    h.raw = 0;
+    rig
+}
+
 /// The same desk with its motherboard header swapped for a stepped control: a ThinkPad's 8 levels, written every tick when
 /// `refresh`, as its watchdog needs (§3.5).
 pub fn stepped(refresh: bool, measured: &Measured) -> Rig {
@@ -223,9 +240,10 @@ impl Rig {
                 let percent = match h.kind {
                     ControlKind::Duty { scale } => h.raw as f64 * 100.0 / scale as f64,
                     ControlKind::Levels { steps, .. } => penna_core::model::level_duty(steps, h.raw),
+                    ControlKind::Modes => 100.0 * h.raw as f64,
                     _ => h.raw as f64,
                 };
-                let raw = matches!(h.kind, ControlKind::Duty { .. } | ControlKind::Levels { .. }).then_some(h.raw);
+                let raw = matches!(h.kind, ControlKind::Duty { .. } | ControlKind::Levels { .. } | ControlKind::Modes).then_some(h.raw);
                 Sample::Value(ControlReading { percent, raw, mode: h.mode })
             };
             r.controls.insert(k.clone(), sample);

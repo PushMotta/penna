@@ -81,6 +81,8 @@ impl ControlPlan {
         match self.kind {
             Some(ControlKind::Nvml { min, max }) => (duty.round() as i64).clamp(min as i64, max as i64) as u32,
             Some(ControlKind::Levels { steps, .. }) => crate::model::level_of(steps, duty),
+            // Full speed only at 100 %; anything less is its firmware's automatic mode.
+            Some(ControlKind::Modes) => u32::from(duty >= 99.95),
             _ => {
                 let scale = self.scale() as f64;
                 (duty * scale / 100.0 - 1e-9).ceil().clamp(0.0, scale) as u32
@@ -94,6 +96,7 @@ impl ControlPlan {
             Some(ControlKind::Duty { scale }) => scale,
             Some(ControlKind::Nvml { max, .. }) => max,
             Some(ControlKind::Levels { steps, .. }) => steps.saturating_sub(1),
+            Some(ControlKind::Modes) => 1,
             _ => 255,
         }
     }
@@ -102,6 +105,7 @@ impl ControlPlan {
     pub fn given(&self, duty: f64) -> f64 {
         match self.kind {
             Some(ControlKind::Levels { steps, .. }) => crate::model::level_duty(steps, self.raw(duty)),
+            Some(ControlKind::Modes) => 100.0 * self.raw(duty) as f64,
             _ => duty,
         }
     }
@@ -250,12 +254,15 @@ pub fn control_plan(cfg: &config::ControlConfig, present: Option<(ControlKind, &
         // A level is a speed its firmware was built to hold, so there is no margin to keep: the lowest that turns the fan, or
         // the first level above off until calibration has found it.
         Some(ControlKind::Levels { steps, .. }) => cfg.min.max(stop.unwrap_or_else(|| crate::model::level_duty(steps, 1))),
+        // Automatic below full speed: the firmware keeps it turning, and there is no duty to hold a floor with.
+        Some(ControlKind::Modes) => 0.0,
         _ if cfg.may_stop => cfg.min.max(stop.unwrap_or(0.0)),
         // Measured down to its lowest without stopping is calibration enough: a pump, or a header that races below it.
         _ => cfg.min.max(stop.map_or(lowest.unwrap_or(UNCALIBRATED_FLOOR), |s| s + STOP_MARGIN)),
     }
     .max(lowest.unwrap_or(0.0));
-    if kind.is_some() && !matches!(kind, Some(ControlKind::Nvml { .. } | ControlKind::Levels { .. })) && cfg.may_stop && stop.is_none() {
+    if kind.is_some() && !matches!(kind, Some(ControlKind::Nvml { .. } | ControlKind::Levels { .. } | ControlKind::Modes)) && cfg.may_stop && stop.is_none()
+    {
         problems.push(Problem { at: at.clone(), message: "may_stop needs a calibrated stop duty (penna calibrate)".into() });
     }
     if let Some(ControlKind::Nvml { max, .. }) = kind

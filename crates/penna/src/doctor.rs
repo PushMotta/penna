@@ -365,7 +365,7 @@ pub fn findings(f: &Facts) -> Vec<Finding> {
         let plural = |n: usize| if n == 1 { "" } else { "s" };
         if d.drivable == 0 {
             let why = d.why.as_deref().map(|w| format!(" {w}")).unwrap_or_default();
-            push(&mut out, area, Status::Info, format!("{name} is bound; Penna can't drive its fans yet.{why}"), None);
+            push(&mut out, area, Status::Info, format!("{name} is bound; Penna can't drive its fans.{why}"), None);
             continue;
         }
         let tier = match d.tier {
@@ -594,12 +594,12 @@ mod tests {
         let mut f = facts();
         f.portable = true;
         f.fan_drivers = vec![FanDriver {
-            driver: "asus".into(),
+            driver: "legion_hwmon".into(),
             model: None,
             class: Class::Laptop,
             controls: 1,
             drivable: 0,
-            why: penna_core::ControlKind::Modes.undrivable_reason(),
+            why: penna_core::ControlKind::ReadOnly.undrivable_reason(),
             tier: Tier::Documented,
         }];
         let all = findings(&f);
@@ -607,7 +607,7 @@ mod tests {
         let laptop = by_area(&all, "laptop")[0];
         assert_eq!(laptop.status, Status::Info);
         assert!(
-            laptop.text.starts_with("asus is bound; Penna can't drive its fans yet. This fan only switches between its firmware's modes"),
+            laptop.text == "legion_hwmon is bound; Penna can't drive its fans. Its driver offers no control Penna can use.",
             "{}",
             laptop.text
         );

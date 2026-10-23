@@ -621,12 +621,15 @@ fn step_control(
     if let (false, Some(raw)) = (cs.handback || cs.force_reassert, cs.written) {
         let scale = c.scale();
         // it87 and nct6775 read a manual channel at 100 % back as "no control" (§3.5): that is what was written.
-        let mode_ok = reading.mode == ControlMode::Manual || (reading.mode == ControlMode::Full && raw >= scale);
+        // A control with modes reads back which mode it is in as its raw value: there is no manual mode to check.
+        let mode_ok = matches!(kind, ControlKind::Modes)
+            || reading.mode == ControlMode::Manual
+            || (reading.mode == ControlMode::Full && raw >= scale);
         let value_ok = match kind {
             // NVML percent is not duty (§0): only the policy says who is in charge.
             ControlKind::Nvml { .. } => true,
-            // A level reads back as itself, or something else is choosing it.
-            ControlKind::Levels { .. } => reading.raw == Some(raw),
+            // A level or a mode reads back as itself, or something else is choosing it.
+            ControlKind::Levels { .. } | ControlKind::Modes => reading.raw == Some(raw),
             _ => {
                 let tolerance = (scale as f64 * READBACK_TOLERANCE).round().max(1.0) as u32;
                 reading.raw.is_some_and(|r| r.abs_diff(raw) <= tolerance)
@@ -648,6 +651,7 @@ fn step_control(
                 let read = match (kind, reading.raw) {
                     (ControlKind::Duty { scale }, Some(r)) => format!("read back {:.0} %", r as f64 * 100.0 / scale as f64),
                     (ControlKind::Levels { .. }, Some(r)) => format!("read back level {r}"),
+                    (ControlKind::Modes, Some(r)) => format!("read back {}", if r == 1 { "full speed" } else { "automatic" }),
                     _ => format!("read back {:.0} %", reading.percent),
                 };
                 cs.reason = Some(format!(

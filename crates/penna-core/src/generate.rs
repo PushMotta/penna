@@ -137,6 +137,7 @@ pub fn generate(base: &Config, inventory: &Inventory, measured: &Measured, cpu_m
             Role::Laptop => g.laptop(&fans, cpu.as_ref(), &gpus),
         }
     }
+    g.modes(inventory);
     Generated { config: g.config, curves: g.curves, anchors: g.anchors, notes: g.notes }
 }
 
@@ -455,6 +456,23 @@ impl Builder {
                 self.put(id.clone(), label, CurveKind::Mix { op: MixOp::Max, curves: ids }, None, None);
             }
             self.assign(fans, p, &id);
+        }
+    }
+
+    /// A fan with modes runs its firmware's automatic mode in every profile, held by Penna so that Full speed and emergencies
+    /// reach it (§3.5): a Flat 0 % curve, which it takes as automatic.
+    fn modes(&mut self, inventory: &Inventory) {
+        let keys: Vec<Key> =
+            inventory.devices.iter().flat_map(|d| &d.controls).filter(|c| c.kind == ControlKind::Modes).map(|c| c.key.clone()).collect();
+        if keys.is_empty() {
+            return;
+        }
+        let id = self.put("automatic".into(), "Automatic".into(), CurveKind::Flat { percent: 0.0 }, None, None);
+        for p in 0..3 {
+            let profile = self.config.profiles.entry(PROFILES[p].to_owned()).or_default();
+            for k in &keys {
+                profile.insert(k.clone(), id.clone());
+            }
         }
     }
 

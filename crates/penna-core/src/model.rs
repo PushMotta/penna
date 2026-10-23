@@ -98,8 +98,8 @@ pub struct ControlInfo {
     pub kind: ControlKind,
 }
 
-/// What a control accepts (DESIGN.md §3.5). Penna drives `Duty` and `Nvml` from M5, `Levels` from M9; the others are listed for
-/// what they are.
+/// What a control accepts (DESIGN.md §3.5). Penna drives `Duty` and `Nvml` from M5, `Levels` and `Modes` from M9; the others are
+/// listed for what they are.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", tag = "type")]
 pub enum ControlKind {
@@ -119,7 +119,8 @@ pub enum ControlKind {
     Speed { min: u32, max: u32 },
     /// Points the firmware runs by itself.
     FirmwareCurve { points: u32 },
-    /// Automatic, full speed, or a vendor's named modes.
+    /// Its firmware's automatic mode, or full speed (§3.5). Its raw value is 1 for full speed, 0 for automatic: Penna holds it in
+    /// automatic, and Full speed and emergencies switch it to full.
     Modes,
     /// Nothing Penna can write: the driver offers no control, or not one Penna will use.
     ReadOnly,
@@ -128,6 +129,12 @@ pub enum ControlKind {
 impl ControlKind {
     /// Whether this Penna drives it.
     pub fn drivable(self) -> bool {
+        matches!(self, ControlKind::Duty { .. } | ControlKind::Nvml { .. } | ControlKind::Levels { .. } | ControlKind::Modes)
+    }
+
+    /// Whether setup can measure it: a duty or a level gives a speed to read (§5.4). A control with modes has only its firmware's
+    /// speeds and full speed.
+    pub fn measurable(self) -> bool {
         matches!(self, ControlKind::Duty { .. } | ControlKind::Nvml { .. } | ControlKind::Levels { .. })
     }
 
@@ -147,10 +154,9 @@ impl ControlKind {
     pub fn undrivable_reason(self) -> Option<String> {
         let later = "Penna drives these from M9 (DESIGN.md §3.5)";
         match self {
-            ControlKind::Duty { .. } | ControlKind::Nvml { .. } | ControlKind::Levels { .. } => None,
+            ControlKind::Duty { .. } | ControlKind::Nvml { .. } | ControlKind::Levels { .. } | ControlKind::Modes => None,
             ControlKind::Speed { .. } => Some(format!("This fan takes a target speed in RPM; {later}.")),
             ControlKind::FirmwareCurve { points } => Some(format!("Its firmware runs a {points}-point curve itself; {later}.")),
-            ControlKind::Modes => Some(format!("This fan only switches between its firmware's modes; {later}.")),
             ControlKind::ReadOnly => Some("Its driver offers no control Penna can use.".to_owned()),
         }
     }

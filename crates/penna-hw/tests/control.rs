@@ -147,20 +147,41 @@ fn held_entries_follow_a_control_to_its_new_path() {
 #[test]
 fn channels_penna_does_not_drive_are_listed_and_never_written() {
     let (sim, mut machine) = desk("kinds", "render-burst");
-    plug(sim.root(), "asus-nb-wmi", 12, "asus", &[(1, 0o644)]);
     plug(sim.root(), "nct6683.2592", 13, "nct6687", &[(1, 0o444)]);
     plug(sim.root(), "thinkpad_hwmon", 14, "thinkpad", &[(1, 0o444)]);
     machine.rediscover();
     let kind = |driver: &str| machine.inventory.devices.iter().find(|d| d.driver == driver).unwrap().controls[0].kind;
-    assert_eq!(kind("asus"), ControlKind::Modes);
     assert_eq!(kind("nct6687"), ControlKind::ReadOnly, "nct6683's pwm is read-only");
     assert_eq!(kind("thinkpad"), ControlKind::ReadOnly, "without fan_control=1 a ThinkPad's pwm is read-only");
-    let asus = Key::hwmon("asus", "asus-nb-wmi", "pwm1");
-    let err = machine.original(&asus).unwrap_err().to_string();
-    assert!(err.contains("firmware's modes"), "{err}");
-    assert!(machine.write(&asus, 255).is_err());
-    let dir = sim.root().join("devices/platform/asus-nb-wmi/hwmon/hwmon12");
+    let nct = Key::hwmon("nct6687", "nct6683.2592", "pwm1");
+    let err = machine.original(&nct).unwrap_err().to_string();
+    assert!(err.contains("no control Penna can use"), "{err}");
+    assert!(machine.write(&nct, 255).is_err());
+    let dir = sim.root().join("devices/platform/nct6683.2592/hwmon/hwmon13");
     assert_eq!(read(&dir.join("pwm1")), "128");
+}
+
+#[test]
+fn a_control_with_modes_is_held_in_automatic_and_switched_to_full_speed() {
+    let (sim, mut machine) = desk("modes", "render-burst");
+    plug(sim.root(), "asus-nb-wmi", 12, "asus", &[(1, 0o644)]);
+    let dir = sim.root().join("devices/platform/asus-nb-wmi/hwmon/hwmon12");
+    // The GPU fan's mode alone, with no duty to set.
+    fs::write(dir.join("pwm2_enable"), "2\n").unwrap();
+    machine.rediscover();
+    let kinds: Vec<_> = machine.inventory.devices.iter().find(|d| d.driver == "asus").unwrap().controls.iter().map(|c| c.kind).collect();
+    assert_eq!(kinds, [ControlKind::Modes, ControlKind::Modes]);
+    let gpu = Key::hwmon("asus", "asus-nb-wmi", "pwm2");
+    let entry = machine.original(&gpu).unwrap();
+    assert!(matches!(&entry, HeldEntry::Hwmon { original_enable: 2, original_pwm: None, .. }), "a mode, and no duty: {entry:?}");
+    assert_eq!(machine.take(&gpu).unwrap(), 0.0, "taken in automatic, and nothing written");
+    assert_eq!(read(&dir.join("pwm2_enable")), "2");
+    assert_eq!(machine.write(&gpu, 1).unwrap().raw, Some(1));
+    assert_eq!(read(&dir.join("pwm2_enable")), "0", "full speed");
+    let r = machine.read();
+    assert_eq!(r.controls[&gpu].value().unwrap().raw, Some(1));
+    assert_eq!(machine.write(&gpu, 0).unwrap().raw, Some(0));
+    assert_eq!(read(&dir.join("pwm2_enable")), "2", "automatic again");
 }
 
 #[test]
