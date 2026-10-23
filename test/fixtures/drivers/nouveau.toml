@@ -1,0 +1,57 @@
+# An NVIDIA graphics card on nouveau, as its hwmon documents it (DESIGN.md §3.5; drivers/gpu/drm/nouveau/nouveau_hwmon.c):
+# `pwm1` is a percent, 0–100, not 0–255, with `pwm1_enable` 1 manual and 2 automatic. A Documented fixture.
+name = "nouveau"
+cpu_model = "AMD Ryzen 5 5600X 6-Core Processor"
+ambient = 24.0
+seed = 41
+config = "nouveau.config.toml"
+seconds = 600
+fresh = true
+
+[load]
+points = [{ at = 0, cpu = 0.03, gpu = 0.02 }]
+
+[[body]]
+id = "cpu"
+load = "cpu"
+capacity = 40.0
+idle_watts = 20.0
+load_watts = 100.0
+passive = 0.9
+airflow = 0.5
+
+[[body]]
+id = "gpu"
+load = "gpu"
+capacity = 50.0
+idle_watts = 12.0
+load_watts = 160.0
+passive = 0.8
+airflow = 4.0
+fan = [{ id = "gpu-fan", weight = 1.0 }]
+
+[[chip]]
+driver = "k10temp"
+path = "devices/pci0000:00/0000:00:18.3"
+hwmon = 2
+temp = [{ channel = 1, label = "Tctl", body = "cpu", noise = 0.4, spikes = 6.0 }]
+
+[[chip]]
+driver = "nouveau"
+path = "devices/pci0000:00/0000:00:03.1/0000:07:00.0"
+hwmon = 4
+temp = [{ channel = 1, body = "gpu", noise = 0.2, crit = 100.0 }]
+
+[[chip.pwm]]
+channel = 1
+enable = 2
+scale = 100
+firmware = { body = "gpu", points = [[40, 30], [70, 60], [90, 100]] }
+
+[[chip.fan]]
+channel = 1
+id = "gpu-fan"
+pwm = 1
+max_rpm = 3000
+stop = 20
+start = 25

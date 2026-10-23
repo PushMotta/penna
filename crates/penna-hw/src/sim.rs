@@ -259,6 +259,16 @@ pub struct PwmSpec {
     /// `pwmN` read-only and no `pwmN_enable`: the fan is set some other way, as RDNA4's is through OverDrive.
     #[serde(default)]
     pub fixed: bool,
+    /// Manual at full scale reads `pwmN_enable` 0, as it87 and nct6775 report it, and a lower duty reads 1 again (§3.5).
+    #[serde(default)]
+    pub full_reads_zero: bool,
+    /// What 100 % is written as: 255, or 100 on nouveau.
+    #[serde(default = "full_scale")]
+    pub scale: i64,
+}
+
+fn full_scale() -> i64 {
+    255
 }
 
 /// A custom fan curve on its own chip, as asus-wmi's `asus_custom_fan_curve` has (drivers/platform/x86/asus-wmi.c at v7.3):
@@ -576,7 +586,7 @@ impl Sim {
                 }
                 if !p.modes {
                     let duty = self.firmware_duty(&p.firmware);
-                    put(&dir.join(format!("pwm{}", p.channel)), &raw(duty).to_string())?;
+                    put(&dir.join(format!("pwm{}", p.channel)), &((duty * p.scale as f64 / 100.0).round() as i64).to_string())?;
                 }
             }
             for t in &chip.targets {
@@ -766,7 +776,8 @@ impl Sim {
             for p in chip.pwms.iter().filter(|p| !p.fixed) {
                 put(&dir.join(format!("pwm{}_enable", p.channel)), &p.enable.to_string())?;
                 if !p.modes {
-                    put(&dir.join(format!("pwm{}", p.channel)), &raw(self.firmware_duty(&p.firmware)).to_string())?;
+                    let duty = self.firmware_duty(&p.firmware);
+                    put(&dir.join(format!("pwm{}", p.channel)), &((duty * p.scale as f64 / 100.0).round() as i64).to_string())?;
                 }
             }
         }
@@ -834,8 +845,18 @@ impl Sim {
                     fs::set_permissions(&pwm_path, fs::Permissions::from_mode(mode))?;
                 }
                 let duty = match (enable, p.levels) {
+                    (0, None) if p.full_reads_zero && get::<i64>(&pwm_path).is_some_and(|r| r < p.scale) => {
+                        put(&enable_path, "1")?;
+                        get::<i64>(&pwm_path).map_or(100.0, |r| r.clamp(0, p.scale) as f64 * 100.0 / p.scale as f64)
+                    }
                     (0, _) => 100.0,
-                    (1, None) => get::<i64>(&pwm_path).map_or(100.0, |r| r.clamp(0, 255) as f64 * 100.0 / 255.0),
+                    (1, None) => {
+                        let r = get::<i64>(&pwm_path).unwrap_or(p.scale).clamp(0, p.scale);
+                        if p.full_reads_zero && r >= p.scale {
+                            put(&enable_path, "0")?;
+                        }
+                        r as f64 * 100.0 / p.scale as f64
+                    }
                     (1, Some(n)) => {
                         // The level a write stands for, read back as the driver reads it. Rewritten only when it reads otherwise,
                         // so the file's time says when someone else wrote it.
@@ -848,7 +869,7 @@ impl Sim {
                     }
                     (_, None) => {
                         let d = self.firmware_duty(&p.firmware);
-                        put(&pwm_path, &raw(d).to_string())?;
+                        put(&pwm_path, &((d.clamp(0.0, 100.0) * p.scale as f64 / 100.0).round() as i64).to_string())?;
                         d
                     }
                     (_, Some(n)) => {

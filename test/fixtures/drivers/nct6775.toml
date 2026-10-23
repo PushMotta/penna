@@ -1,0 +1,78 @@
+# A desktop with a Nuvoton NCT6798D, as nct6775 documents it (DESIGN.md §3.5; drivers/hwmon/nct6775-core.c,
+# Documentation/hwmon/nct6775.rst): `pwmN` 0–255, `pwmN_enable` 1 manual and 5 Smart Fan IV, which is what the BIOS runs and
+# what goes back; a channel held manual at full speed reads `pwmN_enable` 0. No board database entry: headers are named by
+# channel and pairing finds them. A Documented fixture.
+name = "nct6775"
+cpu_model = "AMD Ryzen 7 7800X3D 8-Core Processor"
+ambient = 24.0
+seed = 67
+config = "nct6775.config.toml"
+seconds = 600
+fresh = true
+
+[load]
+points = [{ at = 0, cpu = 0.03, gpu = 0.0 }]
+
+[[body]]
+id = "cpu"
+load = "cpu"
+capacity = 40.0
+idle_watts = 22.0
+load_watts = 120.0
+passive = 0.6
+airflow = 2.4
+fan = [{ id = "cpu-fan", weight = 2.0 }, { id = "sys1", weight = 0.5 }, { id = "sys2", weight = 0.5 }]
+
+[[chip]]
+driver = "k10temp"
+path = "devices/pci0000:00/0000:00:18.3"
+hwmon = 2
+temp = [{ channel = 1, label = "Tctl", body = "cpu", noise = 0.4, spikes = 6.0 }]
+
+[[chip]]
+driver = "nct6798"
+path = "devices/platform/nct6775.656"
+hwmon = 5
+temp = [{ channel = 1, label = "SYSTIN", body = "cpu", offset = -15.0, noise = 0.2 }, { channel = 2, label = "CPUTIN", body = "cpu", offset = -2.0, noise = 0.2 }]
+
+[[chip.pwm]]
+channel = 1
+enable = 5
+full_reads_zero = true
+firmware = { body = "cpu", points = [[40, 30], [70, 60], [85, 100]] }
+
+[[chip.pwm]]
+channel = 2
+enable = 5
+full_reads_zero = true
+firmware = { body = "cpu", points = [[40, 30], [70, 60], [85, 100]] }
+
+[[chip.pwm]]
+channel = 3
+enable = 5
+full_reads_zero = true
+firmware = { body = "cpu", points = [[40, 30], [70, 60], [85, 100]] }
+
+[[chip.fan]]
+channel = 1
+id = "sys1"
+pwm = 1
+max_rpm = 1500
+stop = 20
+start = 25
+
+[[chip.fan]]
+channel = 2
+id = "cpu-fan"
+pwm = 2
+max_rpm = 1800
+stop = 18
+start = 24
+
+[[chip.fan]]
+channel = 3
+id = "sys2"
+pwm = 3
+max_rpm = 1400
+stop = 22
+start = 28

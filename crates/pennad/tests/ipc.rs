@@ -1181,3 +1181,57 @@ fn an_hp_laptop_s_fans_take_full_speed_and_its_profiles_the_power_profile() {
     c.tick_where(30, "as found", |_| profile() == "balanced" && enable() == "2");
     d.stop();
 }
+
+/// Setup on a desktop fixture from a fresh install, saved, then Defaults: every channel goes back to the mode it was found in.
+fn desktop_setup(name: &str, chip: &str, hwmon: u32, enable: &str) -> Vec<Value> {
+    let dir = fresh(&format!("setup-{name}"));
+    let scenario = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../../test/fixtures/drivers/{name}.toml"));
+    let d = Daemon::start_scenario(&dir, scenario.to_str().unwrap(), "tree", &["--speed", "50"]);
+    let mut c = d.connect();
+    c.line();
+    assert_eq!(c.call(json!({"op": "subscribe"}))["ok"], true);
+    assert_eq!(c.call(json!({"op": "setup.start"}))["ok"], true);
+    let t = c.tick_where(4000, "review", |t| t["setup"]["step"] == "review");
+    let s = t["setup"].clone();
+    assert!(s["stopped"].is_null(), "{name}: {s}");
+    let controls = s["controls"].as_array().unwrap().clone();
+    assert_eq!(c.call(json!({"op": "draft.save"}))["ok"], true);
+    let n = controls.iter().filter(|p| p["paired"] == true).count();
+    let on_curve = |t: &Value| t["controls"].as_array().unwrap().iter().filter(|c| c["state"] == "curve").count();
+    let t = c.tick_where(30, "every fan on its curve", |t| on_curve(t) == n);
+    assert!(t["controls"].as_array().unwrap().iter().all(|c| c["state"] != "contested"), "{name}: {}", t["controls"]);
+    // Full speed: a channel held manual at 255 that reads pwm_enable 0 is no contest (§3.5).
+    assert_eq!(c.call(json!({"op": "full_speed", "on": true}))["ok"], true);
+    let t = c.tick_where(10, "full speed", |t| t["full_speed"] == true);
+    c.tick_where(5, "a tick", |_| true);
+    assert!(t["controls"].as_array().unwrap().iter().all(|c| c["state"] != "contested"), "{name}: {}", t["controls"]);
+    assert_eq!(c.call(json!({"op": "full_speed", "on": false}))["ok"], true);
+    assert_eq!(c.call(json!({"op": "profile.set", "name": "defaults"}))["ok"], true);
+    c.tick_where(30, "given back", |t| t["controls"].as_array().unwrap().iter().all(|c| c["state"] == "firmware"));
+    let sys = dir.join(format!("tree/sys/devices/{chip}/hwmon/hwmon{hwmon}"));
+    for p in controls.iter().filter(|p| p["paired"] == true) {
+        let ch = p["key"].as_str().unwrap().rsplit('/').next().unwrap().to_owned();
+        assert_eq!(
+            fs::read_to_string(sys.join(format!("{ch}_enable"))).unwrap().trim(),
+            enable,
+            "{name} {ch}: back to its firmware's mode"
+        );
+    }
+    d.stop();
+    controls
+}
+
+#[test]
+fn setup_measures_an_nct6775_desk_and_puts_smart_fan_iv_back() {
+    let controls = desktop_setup("nct6775", "platform/nct6775.656", 5, "5");
+    let paired: Vec<(String, Value)> = controls.iter().map(|p| (p["key"].as_str().unwrap().to_owned(), p["tachs"].clone())).collect();
+    assert_eq!(paired.len(), 3, "{paired:?}");
+    assert!(controls.iter().all(|p| p["paired"] == true), "pairing finds every header: {controls:?}");
+}
+
+#[test]
+fn setup_measures_a_nouveau_card_on_its_0_to_100_scale() {
+    let controls = desktop_setup("nouveau", "pci0000:00/0000:00:03.1/0000:07:00.0", 4, "2");
+    assert_eq!(controls[0]["write"], "ok", "60 % reads back 60, not 153: {}", controls[0]);
+    assert_eq!(controls[0]["suggestion"]["role"], "gpu");
+}
