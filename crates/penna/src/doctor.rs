@@ -62,6 +62,8 @@ pub struct FanDriver {
     /// Why the others can't be driven.
     pub why: Option<String>,
     pub tier: Tier,
+    /// What its driver needs for writes that a default install may not have: `thinkpad_acpi fan_control=1` (§3.5).
+    pub needs: Option<&'static str>,
 }
 
 pub struct Facts {
@@ -119,6 +121,7 @@ pub fn gather() -> Facts {
                     drivable: d.controls.iter().filter(|c| c.kind.drivable()).count(),
                     why: d.controls.iter().find_map(|c| c.kind.undrivable_reason()),
                     tier: drivers::tier(&d.driver),
+                    needs: drivers::lookup(&d.driver).and_then(|e| e.needs),
                 })
                 .collect();
             let gpus: Vec<(String, usize)> =
@@ -363,6 +366,20 @@ pub fn findings(f: &Facts) -> Vec<Finding> {
         };
         let name = d.model.as_ref().map_or_else(|| d.driver.clone(), |m| format!("{m} ({})", d.driver));
         let plural = |n: usize| if n == 1 { "" } else { "s" };
+        if let (0, Some(option)) = (d.drivable, d.needs) {
+            // The driver is there and could drive them, with a module option it wasn't loaded with.
+            let (module, value) = option.split_once(' ').unwrap_or((option, ""));
+            push(
+                &mut out,
+                area,
+                Status::Attention,
+                format!("{name} is bound, but its fans can't be set: writes need the module option {option}."),
+                Some(format!(
+                    "echo 'options {module} {value}' | sudo tee /etc/modprobe.d/{module}.conf, then reboot (or reload {module}). With it                      the driver takes fan writes from any root program, Penna among them."
+                )),
+            );
+            continue;
+        }
         if d.drivable == 0 {
             let why = d.why.as_deref().map(|w| format!(" {w}")).unwrap_or_default();
             push(&mut out, area, Status::Info, format!("{name} is bound; Penna can't drive its fans.{why}"), None);
@@ -534,6 +551,7 @@ mod tests {
             drivable: 5,
             why: None,
             tier: drivers::tier("it8688"),
+            needs: None,
         }];
         f.board_known = true;
         let mut tick: Tick = serde_json::from_str(include_str!("../../penna-proto/tests/fixtures/tick.json")).unwrap();
@@ -601,6 +619,7 @@ mod tests {
             drivable: 0,
             why: penna_core::ControlKind::ReadOnly.undrivable_reason(),
             tier: Tier::Documented,
+            needs: None,
         }];
         let all = findings(&f);
         assert!(by_area(&all, "motherboard").is_empty(), "{all:?}");
@@ -610,6 +629,33 @@ mod tests {
             laptop.text == "legion_hwmon is bound; Penna can't drive its fans. Its driver offers no control Penna can use.",
             "{}",
             laptop.text
+        );
+    }
+
+    #[test]
+    fn a_thinkpad_loaded_without_fan_control_is_told_the_option() {
+        let mut f = facts();
+        f.portable = true;
+        f.fan_drivers = vec![FanDriver {
+            driver: "thinkpad".into(),
+            model: None,
+            class: Class::Laptop,
+            controls: 1,
+            drivable: 0,
+            why: penna_core::ControlKind::ReadOnly.undrivable_reason(),
+            tier: Tier::Documented,
+            needs: drivers::lookup("thinkpad").and_then(|e| e.needs),
+        }];
+        let all = findings(&f);
+        let laptop = by_area(&all, "laptop")[0];
+        assert_eq!(laptop.status, Status::Attention);
+        assert_eq!(laptop.text, "thinkpad is bound, but its fans can't be set: writes need the module option thinkpad_acpi fan_control=1.");
+        assert!(
+            laptop
+                .todo
+                .as_deref()
+                .unwrap()
+                .starts_with("echo 'options thinkpad_acpi fan_control=1' | sudo tee /etc/modprobe.d/thinkpad_acpi.conf")
         );
     }
 
