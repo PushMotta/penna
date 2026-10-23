@@ -11,8 +11,21 @@ use std::time::{Duration, Instant};
 const CPU: &str = "hwmon/it87/it87.2608/pwm1";
 const SPARE: &str = "hwmon/it87/it87.2608/pwm4";
 
+/// Where test directories go: the target's own tmp directory, unless a socket in it would pass the 108 bytes a Unix socket
+/// address holds, as in a release built deep in an AUR helper's cache. Then a directory of the system's, named for the target.
+fn scratch() -> PathBuf {
+    use std::hash::{Hash, Hasher};
+    let target = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    if target.as_os_str().len() <= 60 {
+        return target.to_path_buf();
+    }
+    let mut h = std::hash::DefaultHasher::new();
+    target.hash(&mut h);
+    std::env::temp_dir().join(format!("penna-{:08x}", h.finish() as u32))
+}
+
 fn fresh(name: &str) -> PathBuf {
-    let d = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("ipc-{name}"));
+    let d = scratch().join(format!("ipc-{name}"));
     let _ = fs::remove_dir_all(&d);
     fs::create_dir_all(&d).unwrap();
     d
@@ -1100,7 +1113,7 @@ fn setup_measures_a_lenovo_s_target_speeds() {
     for p in &controls {
         assert_eq!(p["tachs"], json!([p["key"].clone()]), "a target speed is set on the fan itself: {p}");
     }
-    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("ipc-setup-lenovo/tree/sys/devices/platform/PNP0C14:00/wmi_bus");
+    let dir = scratch().join("ipc-setup-lenovo/tree/sys/devices/platform/PNP0C14:00/wmi_bus");
     let target = fs::read_to_string(dir.join("wmi_bus-PNP0C14:00/DC2A8805-3A8C-41BA-A6F7-092E0089CD3B/hwmon/hwmon8/fan1_target")).unwrap();
     assert_eq!(target.trim(), "0", "Defaults: a target of 0, automatic");
 }
@@ -1110,7 +1123,7 @@ fn setup_measures_a_mac_s_target_speeds_from_7_3_and_before() {
     for (name, switch) in [("applesmc", "hwmon/hwmon4/pwm1_enable"), ("applesmc-7.2", "fan1_manual")] {
         let controls = laptop_setup(name);
         assert_eq!(controls.len(), 2, "{name}");
-        let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("ipc-setup-{name}/tree/sys/devices/platform/applesmc.768"));
+        let dir = scratch().join(format!("ipc-setup-{name}/tree/sys/devices/platform/applesmc.768"));
         let v = fs::read_to_string(dir.join(switch)).unwrap();
         assert_eq!(v.trim(), if name == "applesmc" { "2" } else { "0" }, "{name}: Defaults leaves it automatic");
     }

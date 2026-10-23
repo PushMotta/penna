@@ -26,8 +26,21 @@ fn penna() -> PathBuf {
     bin
 }
 
+/// Where test directories go: the target's own tmp directory, unless a socket in it would pass the 108 bytes a Unix socket
+/// address holds, as in a release built deep in an AUR helper's cache. Then a directory of the system's, named for the target.
+fn scratch() -> PathBuf {
+    use std::hash::{Hash, Hasher};
+    let target = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    if target.as_os_str().len() <= 60 {
+        return target.to_path_buf();
+    }
+    let mut h = std::hash::DefaultHasher::new();
+    target.hash(&mut h);
+    std::env::temp_dir().join(format!("penna-{:08x}", h.finish() as u32))
+}
+
 fn fresh(name: &str) -> PathBuf {
-    let d = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("production-{name}"));
+    let d = scratch().join(format!("production-{name}"));
     let _ = fs::remove_dir_all(&d);
     fs::create_dir_all(&d).unwrap();
     d
