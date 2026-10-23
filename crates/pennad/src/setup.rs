@@ -92,7 +92,8 @@ pub fn start(
         return Err("There is no fan here that Penna can drive: penna doctor says why.".into());
     }
     // The load check (§5.5): on by default, but not on battery, and not when measuring only some fans again.
-    let check = load_check.unwrap_or(only.is_none() && !on_battery());
+    // Nothing measured, nothing for the load check to check: it checks the proposed curves on the fans setup measures.
+    let check = load_check.unwrap_or(only.is_none() && !on_battery()) && !input.targets.is_empty();
     if check {
         input.load_check = cpu_source(inventory, live.cpu_model.as_deref()).map(|(key, limit)| LoadInput { key, limit });
     }

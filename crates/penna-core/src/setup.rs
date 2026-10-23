@@ -1212,6 +1212,11 @@ impl Setup {
             for c in &mut self.ctls {
                 c.demand = None;
             }
+            // The load check needs a fan it is checking: a CPU fan, or a laptop's, that setup measured (§5.5).
+            let cooled = self.ctls.iter().any(|c| c.paired == Some(true) && matches!(c.role(), Some(Role::Cpu | Role::Laptop)));
+            if !cooled {
+                self.input.load_check = None;
+            }
             if self.input.load_check.is_some() {
                 self.enter(Step::LoadCheck);
                 self.load = Some(Load {

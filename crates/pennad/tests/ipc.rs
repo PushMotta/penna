@@ -1115,3 +1115,69 @@ fn setup_measures_a_mac_s_target_speeds_from_7_3_and_before() {
         assert_eq!(v.trim(), if name == "applesmc" { "2" } else { "0" }, "{name}: Defaults leaves it automatic");
     }
 }
+
+/// An RDNA4 card (§3.5): its pwm1 takes no duty, so its fan is OverDrive's 5-point curve. Setup has nothing to measure and runs
+/// for its idle sample; the proposed curve follows the junction, is fitted to 5 points within the OverDrive range, written and
+/// committed. Defaults writes back the curve Penna found.
+#[test]
+fn an_rdna4_card_runs_an_overdrive_curve() {
+    let dir = fresh("rdna4");
+    let scenario = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/fixtures/drivers/amdgpu-rdna4.toml");
+    let d = Daemon::start_scenario(&dir, scenario.to_str().unwrap(), "tree", &["--speed", "50"]);
+    let od = dir.join("tree/sys/devices/pci0000:00/0000:00:01.1/0000:03:00.0/gpu_od/fan_ctrl/fan_curve");
+    let curve = || fs::read_to_string(&od).unwrap();
+    let mut c = d.connect();
+    c.line();
+    let found = curve();
+    assert_eq!(c.call(json!({"op": "subscribe"}))["ok"], true);
+    let r = c.call(json!({"op": "setup.start"}));
+    assert!(r["result"]["text"].as_str().unwrap().starts_with("Setup started: no fan here to measure"), "{r}");
+    let t = c.tick_where(3000, "review", |t| t["setup"]["step"] == "review");
+    let curves: Vec<&str> = t["setup"]["proposed"]["curves"].as_array().unwrap().iter().map(|c| c.as_str().unwrap()).collect();
+    assert_eq!(curves, ["fw-1-quiet", "fw-1-balanced", "fw-1-render"]);
+    assert_eq!(c.call(json!({"op": "draft.save"}))["ok"], true);
+    // Written and committed: the table holds Penna's points and no command waits.
+    let t = c.tick_where(30, "the curve committed", |_| curve().contains("4: 100C 100%") && !curve().trim_end().ends_with('c'));
+    let k = "hwmon/amdgpu/0000:03:00.0/pwm1";
+    let ctl = t["controls"].as_array().unwrap().iter().find(|x| x["key"] == k).cloned().unwrap();
+    assert_eq!(ctl["curve"], "fw-1-balanced", "{ctl}");
+    let now = curve();
+    let points: Vec<&str> = now.lines().skip(1).take(5).collect();
+    assert!(points.iter().all(|l| l.ends_with('%')), "{now}");
+    assert!(now.contains("4: 100C 100%"), "the last point within the hotspot range, at 100 %: {now}");
+    c.tick_where(5, "still Penna's", |t| t["controls"].as_array().unwrap().iter().any(|x| x["key"] == k && x["state"] == "curve"));
+    assert_eq!(c.call(json!({"op": "profile.set", "name": "defaults"}))["ok"], true);
+    // The boot table's first point, 0 °C, is outside OverDrive's range: only `r` puts that back.
+    c.tick_where(30, "the curve found", |_| curve() == found);
+    assert!(!d.log().contains("EMERGENCY"), "no load check without a CPU fan to check: {}", d.log());
+    d.stop();
+}
+
+/// An HP laptop with modes only (§3.5, §4.7): setup measures nothing and proposes Automatic for its fans, so that Full speed and
+/// emergencies reach them; with no fan Penna can give a curve, the power profile is its lever.
+#[test]
+fn an_hp_laptop_s_fans_take_full_speed_and_its_profiles_the_power_profile() {
+    let dir = fresh("hp");
+    let scenario = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/fixtures/drivers/hp.toml");
+    let d = Daemon::start_scenario(&dir, scenario.to_str().unwrap(), "tree", &["--speed", "50"]);
+    let enable = || fs::read_to_string(dir.join("tree/sys/devices/platform/hp-wmi/hwmon/hwmon7/pwm1_enable")).unwrap().trim().to_owned();
+    let profile = || fs::read_to_string(dir.join("tree/sys/firmware/acpi/platform_profile")).unwrap().trim().to_owned();
+    let mut c = d.connect();
+    c.line();
+    assert_eq!(c.call(json!({"op": "subscribe"}))["ok"], true);
+    assert_eq!(c.call(json!({"op": "setup.start"}))["ok"], true);
+    let t = c.tick_where(3000, "review", |t| t["setup"]["step"] == "review");
+    assert_eq!(t["setup"]["proposed"]["curves"], json!(["automatic"]), "{}", t["setup"]["proposed"]);
+    assert_eq!(c.call(json!({"op": "draft.save"}))["ok"], true);
+    c.tick_where(30, "held in automatic", |t| t["controls"].as_array().unwrap().iter().any(|x| x["state"] == "curve"));
+    assert_eq!((enable(), profile()), ("2".to_owned(), "balanced".to_owned()));
+    assert_eq!(c.call(json!({"op": "full_speed", "on": true}))["ok"], true);
+    c.tick_where(10, "full speed", |_| enable() == "0");
+    assert_eq!(c.call(json!({"op": "full_speed", "on": false}))["ok"], true);
+    c.tick_where(30, "automatic again", |_| enable() == "2");
+    assert_eq!(c.call(json!({"op": "profile.set", "name": "quiet"}))["ok"], true);
+    c.tick_where(10, "the quiet power profile", |_| profile() == "low-power");
+    assert_eq!(c.call(json!({"op": "profile.set", "name": "defaults"}))["ok"], true);
+    c.tick_where(30, "as found", |_| profile() == "balanced" && enable() == "2");
+    d.stop();
+}

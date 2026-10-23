@@ -170,6 +170,24 @@ pub struct Chip {
     /// Registered the old way: its attributes are on the device, and its hwmon directory has only `name` (applesmc up to 7.2).
     #[serde(default)]
     pub legacy: bool,
+    /// amdgpu's OverDrive fan curve, on the device's `gpu_od/fan_ctrl/fan_curve`.
+    #[serde(default)]
+    pub od: Option<OdSpec>,
+}
+
+/// amdgpu's OverDrive fan curve (amdgpu_pm.c, smu_v13_0_0_ppt.c at v7.3): read as `OD_FAN_CURVE:`, `i: <°C>C <%>%` per point, and
+/// `OD_RANGE:`; written `i °C %` per point, then `c` to commit, or `r` to go back to the boot table. The committed curve runs the
+/// fan on `pwm`'s channel against the hotspot: the body's temperature plus `offset`.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OdSpec {
+    pub points: Vec<[i64; 2]>,
+    pub temp: [i64; 2],
+    pub speed: [i64; 2],
+    pub body: String,
+    #[serde(default)]
+    pub offset: f64,
+    pub pwm: u32,
 }
 
 /// A target speed in RPM (§3.5): `fanN_target`, with `fanN_min` and `fanN_max`. The fan on the same channel runs it.
@@ -238,6 +256,9 @@ pub struct PwmSpec {
     /// What `pwmN_enable` reads until something writes it, while the firmware runs `enable`: asus-wmi's cache, 0 from kzalloc.
     #[serde(default)]
     pub cache: Option<i64>,
+    /// `pwmN` read-only and no `pwmN_enable`: the fan is set some other way, as RDNA4's is through OverDrive.
+    #[serde(default)]
+    pub fixed: bool,
 }
 
 /// A custom fan curve on its own chip, as asus-wmi's `asus_custom_fan_curve` has (drivers/platform/x86/asus-wmi.c at v7.3):
@@ -430,6 +451,8 @@ pub struct Sim {
     cached: BTreeMap<PathBuf, std::time::SystemTime>,
     /// The platform profile file's time when the custom curves last saw it.
     profile_seen: Option<std::time::SystemTime>,
+    /// Each OverDrive curve file and the curve committed to it.
+    od: BTreeMap<PathBuf, Vec<[i64; 2]>>,
     active: BTreeSet<usize>,
     fired: BTreeSet<usize>,
 }
@@ -461,6 +484,7 @@ impl Sim {
             writes: BTreeMap::new(),
             cached: BTreeMap::new(),
             profile_seen: None,
+            od: BTreeMap::new(),
             active: BTreeSet::new(),
             fired: BTreeSet::new(),
         };
@@ -532,7 +556,19 @@ impl Sim {
                     }
                 }
             }
+            if let Some(od) = &chip.od {
+                let file = self.root.join(&chip.path).join("gpu_od/fan_ctrl/fan_curve");
+                fs::create_dir_all(file.parent().expect("a directory"))?;
+                fs::write(&file, od_text(od, &od.points))?;
+                self.od.insert(file, od.points.clone());
+            }
             for p in &chip.pwms {
+                if p.fixed {
+                    let pwm = dir.join(format!("pwm{}", p.channel));
+                    put(&pwm, &raw(self.firmware_duty(&p.firmware)).to_string())?;
+                    fs::set_permissions(&pwm, fs::Permissions::from_mode(0o444))?;
+                    continue;
+                }
                 let enable = dir.join(format!("pwm{}_enable", p.channel));
                 put(&enable, &p.cache.unwrap_or(p.enable).to_string())?;
                 if p.cache.is_some() {
@@ -727,7 +763,7 @@ impl Sim {
     fn resume_reset(&mut self) -> Result<()> {
         for chip in self.sc.chips.clone() {
             let dir = self.attr_dir(&chip);
-            for p in &chip.pwms {
+            for p in chip.pwms.iter().filter(|p| !p.fixed) {
                 put(&dir.join(format!("pwm{}_enable", p.channel)), &p.enable.to_string())?;
                 if !p.modes {
                     put(&dir.join(format!("pwm{}", p.channel)), &raw(self.firmware_duty(&p.firmware)).to_string())?;
@@ -789,6 +825,10 @@ impl Sim {
                     duty_of.insert((ci, p.channel), duty);
                     continue;
                 }
+                if p.fixed {
+                    duty_of.insert((ci, p.channel), self.firmware_duty(&p.firmware));
+                    continue;
+                }
                 if p.unreadable_in_auto {
                     let mode = if enable == 1 { 0o644 } else { 0o200 };
                     fs::set_permissions(&pwm_path, fs::Permissions::from_mode(mode))?;
@@ -823,6 +863,7 @@ impl Sim {
             }
         }
         self.target_speeds(&mut duty_of)?;
+        self.od_curves(&mut duty_of)?;
         self.custom_curves(&mut duty_of)?;
         // Motherboard fans.
         for (ci, chip) in self.sc.chips.clone().iter().enumerate() {
@@ -937,6 +978,45 @@ impl Sim {
                 };
                 duty_of.insert((ci, n), duty);
             }
+        }
+        Ok(())
+    }
+
+    /// OverDrive curves: the commands written since the last step, then the committed curve on the fan.
+    fn od_curves(&mut self, duty_of: &mut BTreeMap<(usize, u32), f64>) -> Result<()> {
+        for (ci, chip) in self.sc.chips.clone().iter().enumerate() {
+            let Some(od) = &chip.od else { continue };
+            let file = self.root.join(&chip.path).join("gpu_od/fan_ctrl/fan_curve");
+            let mut committed = self.od.get(&file).cloned().unwrap_or_else(|| od.points.clone());
+            let text = fs::read_to_string(&file).unwrap_or_default();
+            let commands: Vec<&str> = text.split("OD_RANGE:").nth(1).map_or(Vec::new(), |r| r.lines().skip(2).collect());
+            if !commands.is_empty() {
+                let mut staged = committed.clone();
+                for c in commands {
+                    let words: Vec<i64> = c.split_whitespace().filter_map(|w| w.parse().ok()).collect();
+                    match (c.trim(), words.as_slice()) {
+                        ("c", _) => committed = staged.clone(),
+                        ("r", _) => {
+                            staged = od.points.clone();
+                            committed = staged.clone();
+                        }
+                        // A point outside the range is refused (EINVAL), and the table keeps what it had.
+                        (_, [i, t, p])
+                            if (0..staged.len() as i64).contains(i)
+                                && (od.temp[0]..=od.temp[1]).contains(t)
+                                && (od.speed[0]..=od.speed[1]).contains(p) =>
+                        {
+                            staged[*i as usize] = [*t, *p];
+                        }
+                        _ => {}
+                    }
+                }
+                fs::write(&file, od_text(od, &committed))?;
+                self.od.insert(file, committed.clone());
+            }
+            let t = self.temps.get(&od.body).copied().unwrap_or(self.sc.ambient) + od.offset;
+            let pts: Vec<[f64; 2]> = committed.iter().map(|p| [p[0] as f64, p[1] as f64]).collect();
+            duty_of.insert((ci, od.pwm), penna_core::control::graph(&pts, t).clamp(0.0, 100.0));
         }
         Ok(())
     }
@@ -1077,6 +1157,19 @@ impl Sim {
         let (u, v) = (self.uniform().max(1e-12), self.uniform());
         (-2.0 * u.ln()).sqrt() * (std::f64::consts::TAU * v).cos()
     }
+}
+
+/// An OverDrive fan curve as amdgpu prints it.
+fn od_text(od: &OdSpec, points: &[[i64; 2]]) -> String {
+    let mut s = "OD_FAN_CURVE:\n".to_owned();
+    for (i, [t, p]) in points.iter().enumerate() {
+        s += &format!("{i}: {t}C {p}%\n");
+    }
+    s += &format!(
+        "OD_RANGE:\nFAN_CURVE(hotspot temp): {}C {}C\nFAN_CURVE(fan speed): {}% {}%\n",
+        od.temp[0], od.temp[1], od.speed[0], od.speed[1]
+    );
+    s
 }
 
 /// What a stepped control's `pwmN` reads for a level.

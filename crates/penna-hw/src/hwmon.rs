@@ -244,6 +244,20 @@ pub(crate) fn od_write(path: &Path, points: &[[i64; 2]]) -> Result<()> {
     f.write_all(b"c\n").map_err(|e| anyhow!("committing {}: {}", path.display(), io_reason(&e)))
 }
 
+/// Puts an OverDrive curve back: the points as found when they are all within its range and the driver takes them; otherwise
+/// `r`, which puts the boot table back and commits it. Returns whether it was the points.
+pub(crate) fn od_restore(path: &Path, points: &[[i64; 2]]) -> Result<bool> {
+    let t = od_read(path)?;
+    let within = |v: i64, r: Option<(i64, i64)>| r.is_none_or(|(a, b)| (a..=b).contains(&v));
+    if points.iter().all(|[c, p]| within(*c, t.temp) && within(*p, t.speed)) && od_write(path, points).is_ok() {
+        return Ok(true);
+    }
+    use std::io::Write;
+    let mut f = fs::OpenOptions::new().append(true).open(path).map_err(|e| anyhow!("opening {}: {}", path.display(), io_reason(&e)))?;
+    f.write_all(b"r\n").map_err(|e| anyhow!("resetting {}: {}", path.display(), io_reason(&e)))?;
+    Ok(false)
+}
+
 impl Backend for Hwmon {
     fn name(&self) -> &'static str {
         "hwmon"

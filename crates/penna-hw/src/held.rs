@@ -164,8 +164,13 @@ pub fn restore(entry: &HeldEntry) -> Result<String> {
             }
         }
         HeldEntry::OdCurve { key, path, original } => {
-            crate::hwmon::od_write(path, original)?;
-            Ok(format!("{key}: its OverDrive curve as found"))
+            // The points as found, when the driver takes them back. A boot table can hold points outside OverDrive's range, which
+            // the driver refuses (EINVAL): `r` puts the boot table back instead.
+            match crate::hwmon::od_restore(path, original) {
+                Ok(true) => Ok(format!("{key}: its OverDrive curve as found")),
+                Ok(false) => Ok(format!("{key}: its OverDrive curve reset to the boot table")),
+                Err(e) => Err(e),
+            }
         }
         HeldEntry::PointCurve { key, enable, original_enable, points } => {
             // The points first: writing one switches the curve off, and the enable then puts it back as it was.

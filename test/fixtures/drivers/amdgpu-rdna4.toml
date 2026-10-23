@@ -1,0 +1,65 @@
+# An AMD graphics card on RDNA4, as amdgpu documents it (DESIGN.md §3.5; drivers/gpu/drm/amd/pm/amdgpu_pm.c and
+# swsmu/smu14/smu_v14_0_2_ppt.c at v7.3): `pwm1` is read-only and `pwm1_enable` hidden, so the fan's one lever is OverDrive's
+# 5-point curve on the hotspot, `gpu_od/fan_ctrl/fan_curve`, with amdgpu.ppfeaturemask's 0x4000 set. Read as OD_FAN_CURVE and
+# OD_RANGE, written `index °C %` then `c`. The ranges are the simulator's, of the kind the card's OverDrive limits give. A
+# Documented fixture.
+name = "amdgpu-rdna4"
+cpu_model = "AMD Ryzen 7 9700X 8-Core Processor"
+ambient = 24.0
+seed = 34
+config = "amdgpu-rdna4.config.toml"
+seconds = 600
+fresh = true
+
+[load]
+points = [{ at = 0, cpu = 0.03, gpu = 0.02 }]
+
+[[body]]
+id = "cpu"
+load = "cpu"
+capacity = 40.0
+idle_watts = 20.0
+load_watts = 120.0
+passive = 0.9
+airflow = 0.5
+
+[[body]]
+id = "gpu"
+load = "gpu"
+capacity = 60.0
+idle_watts = 15.0
+load_watts = 300.0
+passive = 0.9
+airflow = 6.0
+fan = [{ id = "gpu-fan", weight = 1.0 }]
+
+[[chip]]
+driver = "k10temp"
+path = "devices/pci0000:00/0000:00:18.3"
+hwmon = 2
+temp = [{ channel = 1, label = "Tctl", body = "cpu", noise = 0.4, spikes = 6.0 }]
+
+[[chip]]
+driver = "amdgpu"
+path = "devices/pci0000:00/0000:00:01.1/0000:03:00.0"
+hwmon = 4
+temp = [
+  { channel = 1, label = "edge", body = "gpu", noise = 0.2, crit = 100.0 },
+  { channel = 2, label = "junction", body = "gpu", offset = 12.0, noise = 0.4, crit = 110.0 },
+  { channel = 3, label = "mem", body = "gpu", offset = 6.0, noise = 0.2, crit = 105.0 },
+]
+od = { points = [[0, 0], [45, 15], [60, 30], [75, 60], [90, 100]], temp = [25, 100], speed = [15, 100], body = "gpu", offset = 12.0, pwm = 1 }
+
+[[chip.pwm]]
+channel = 1
+enable = 2
+fixed = true
+firmware = { body = "gpu", points = [[50, 0], [55, 20], [80, 60], [95, 100]] }
+
+[[chip.fan]]
+channel = 1
+id = "gpu-fan"
+pwm = 1
+max_rpm = 3300
+stop = 15
+start = 20
