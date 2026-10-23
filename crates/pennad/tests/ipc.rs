@@ -1235,3 +1235,16 @@ fn setup_measures_a_nouveau_card_on_its_0_to_100_scale() {
     assert_eq!(controls[0]["write"], "ok", "60 % reads back 60, not 153: {}", controls[0]);
     assert_eq!(controls[0]["suggestion"]["role"], "gpu");
 }
+
+#[test]
+fn setup_puts_back_each_motherboard_chip_s_own_mode() {
+    desktop_setup("f71882fg", "platform/f71882fg.656", 5, "2");
+    desktop_setup("w83627ehf", "platform/w83627ehf.656", 5, "5");
+}
+
+#[test]
+fn setup_measures_a_gpd_handheld_and_an_acer_laptop() {
+    assert_eq!(laptop_setup("gpd").len(), 1, "the switch to manual runs it at full speed, and Penna's write follows");
+    let acer = laptop_setup("acer");
+    assert!(acer.iter().all(|p| p["write"] == "ok"), "a duty kept as a percent reads back within 2 %: {acer:?}");
+}

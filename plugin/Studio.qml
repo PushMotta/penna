@@ -64,7 +64,7 @@ Item {
   property var chipList: []
   property var anchorList: []
   function syncLists() {
-    var o = Model.curveOptions(body)
+    var o = Model.curveOptions(body, selectedInfo)
     if (JSON.stringify(o) !== JSON.stringify(curveOptionList)) curveOptionList = o
     var c = selectedCurve
     var chips = !c ? []
@@ -80,6 +80,8 @@ Item {
   }
   onBodyChanged: syncLists()
   onSelectedCurveChanged: syncLists()
+  // The curve choices depend on the fan: one whose firmware runs its curve takes fewer (§3.5).
+  onSelectedInfoChanged: syncLists()
 
   // Repeater keys: replaced only when the set of rows changes, so cards and sparklines survive ticks (§8.6). Cards sit under
   // a heading per device, which names its tier once (design review 03, call 10).

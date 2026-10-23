@@ -635,8 +635,15 @@ function shadeOf(curve, handles) {
   return []
 }
 
-function curveOptions(body) {
+// The curves a control can be given. A fan whose firmware runs its curve takes a Graph on a sensor, or a Flat curve: nothing
+// that mixes curves, switches between two, or reads a virtual sensor (§3.5).
+function curveOptions(body, control) {
   var list = body && Array.isArray(body.curves) ? body.curves : []
+  if (control && control.kind === "firmware-curve") {
+    var virtual = {}
+    ;(body.sensors || []).forEach(function(s) { if (s.virtual) virtual[String(s.key)] = true })
+    list = list.filter(function(c) { return c.kind === "flat" || (c.kind === "graph" && !virtual[String(c.source)]) })
+  }
   return list.map(function(c) { return { value: String(c.id), label: String(c.label) } }).concat([{ value: "firmware", label: "Firmware" }])
 }
 

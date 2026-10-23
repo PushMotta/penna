@@ -1,0 +1,62 @@
+# A desktop with a Winbond W83627DHG, as w83627ehf documents it (DESIGN.md §3.5; Documentation/hwmon/w83627ehf.rst):
+# pwmN 0–255, pwmN_enable 1 manual, and 5, SmartFan IV, which the BIOS set at boot and is the only way back to it. A Documented
+# fixture.
+name = "w83627ehf"
+cpu_model = "Intel(R) Core(TM)2 Quad CPU Q9550 @ 2.83GHz"
+ambient = 24.0
+seed = 17
+config = "w83627ehf.config.toml"
+seconds = 600
+fresh = true
+
+[load]
+points = [{ at = 0, cpu = 0.03, gpu = 0.0 }]
+
+[[body]]
+id = "cpu"
+load = "cpu"
+capacity = 30.0
+idle_watts = 12.0
+load_watts = 80.0
+passive = 0.4
+airflow = 2.0
+fan = [{ id = "fan1", weight = 1.0 }, { id = "fan2", weight = 0.5 }]
+
+[[chip]]
+driver = "coretemp"
+path = "devices/platform/coretemp.0"
+hwmon = 2
+temp = [{ channel = 1, label = "Package id 0", body = "cpu", noise = 0.4, spikes = 5.0, crit = 100.0 }]
+
+[[chip]]
+driver = "w83627dhg"
+path = "devices/platform/w83627ehf.656"
+hwmon = 5
+
+[[chip.pwm]]
+channel = 1
+enable = 5
+
+firmware = { body = "cpu", points = [[40, 30], [70, 60], [85, 100]] }
+
+[[chip.pwm]]
+channel = 2
+enable = 5
+
+firmware = { body = "cpu", points = [[40, 30], [70, 60], [85, 100]] }
+
+[[chip.fan]]
+channel = 1
+id = "fan1"
+pwm = 1
+max_rpm = 1800
+stop = 18
+start = 24
+
+[[chip.fan]]
+channel = 2
+id = "fan2"
+pwm = 2
+max_rpm = 1500
+stop = 20
+start = 26

@@ -1,0 +1,47 @@
+# A GPD handheld, as gpd-fan documents it (DESIGN.md §3.5; Documentation/hwmon/gpd-fan.rst): pwm1 0–255 with pwm1_enable
+# 1 manual and 2 automatic; switching to manual runs the fan at full speed first. A Documented fixture.
+name = "gpd"
+cpu_model = "AMD Ryzen 7 7840U w/ Radeon 780M Graphics"
+ambient = 24.0
+seed = 17
+config = "gpd.config.toml"
+seconds = 600
+fresh = true
+
+[load]
+points = [{ at = 0, cpu = 0.03, gpu = 0.0 }]
+
+[[body]]
+id = "cpu"
+load = "cpu"
+capacity = 30.0
+idle_watts = 12.0
+load_watts = 80.0
+passive = 0.4
+airflow = 2.0
+fan = [{ id = "fan1", weight = 1.0 }]
+
+[[chip]]
+driver = "k10temp"
+path = "devices/pci0000:00/0000:00:18.3"
+hwmon = 2
+temp = [{ channel = 1, label = "Tctl", body = "cpu", noise = 0.3, spikes = 4.0 }]
+
+[[chip]]
+driver = "gpdfan"
+path = "devices/platform/gpd_fan"
+hwmon = 6
+
+[[chip.pwm]]
+channel = 1
+enable = 2
+manual_sets_full = true
+firmware = { body = "cpu", points = [[40, 30], [70, 60], [85, 100]] }
+
+[[chip.fan]]
+channel = 1
+id = "fan1"
+pwm = 1
+max_rpm = 1800
+stop = 18
+start = 24

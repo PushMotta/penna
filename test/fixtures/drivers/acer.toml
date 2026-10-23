@@ -1,0 +1,62 @@
+# An Acer laptop with manual fan control, as acer-wmi documents it (DESIGN.md §3.5; drivers/platform/x86/acer-wmi.c, since
+# 6.19 on three models): pwmN 0–255, kept as a whole percent and read back from it, pwmN_enable 0 full, 1 manual, 2 automatic.
+# A Documented fixture.
+name = "acer"
+cpu_model = "13th Gen Intel(R) Core(TM) i7-13700H"
+ambient = 24.0
+seed = 17
+config = "acer.config.toml"
+seconds = 600
+fresh = true
+
+[load]
+points = [{ at = 0, cpu = 0.03, gpu = 0.0 }]
+
+[[body]]
+id = "cpu"
+load = "cpu"
+capacity = 30.0
+idle_watts = 12.0
+load_watts = 80.0
+passive = 0.4
+airflow = 2.0
+fan = [{ id = "fan1", weight = 1.0 }, { id = "fan2", weight = 0.5 }]
+
+[[chip]]
+driver = "coretemp"
+path = "devices/platform/coretemp.0"
+hwmon = 2
+temp = [{ channel = 1, label = "Package id 0", body = "cpu", noise = 0.4, spikes = 5.0, crit = 100.0 }]
+
+[[chip]]
+driver = "acer"
+path = "devices/platform/acer-wmi"
+hwmon = 6
+
+[[chip.pwm]]
+channel = 1
+enable = 2
+percent = true
+firmware = { body = "cpu", points = [[40, 30], [70, 60], [85, 100]] }
+
+[[chip.pwm]]
+channel = 2
+enable = 2
+percent = true
+firmware = { body = "cpu", points = [[40, 30], [70, 60], [85, 100]] }
+
+[[chip.fan]]
+channel = 1
+id = "fan1"
+pwm = 1
+max_rpm = 1800
+stop = 18
+start = 24
+
+[[chip.fan]]
+channel = 2
+id = "fan2"
+pwm = 2
+max_rpm = 1500
+stop = 20
+start = 26

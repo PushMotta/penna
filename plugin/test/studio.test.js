@@ -149,3 +149,16 @@ test("a stepped fan's readout names the level the duty rounds up to", () => {
   assert.equal(M.readout(40, 5, thinkpad), "40 °C → 5 % stopped")
   assert.equal(M.levelOf(3, 51), 2)
 })
+
+test("a fan whose firmware runs its curve is offered only curves the firmware can run", () => {
+  const body = {
+    sensors: [{ key: "hwmon/amdgpu/x/temp2", virtual: false }, { key: "virt/avg", virtual: true }],
+    curves: [
+      { id: "gpu", label: "GPU", kind: "graph", source: "hwmon/amdgpu/x/temp2" },
+      { id: "smooth", label: "Smoothed", kind: "graph", source: "virt/avg" },
+      { id: "case", label: "Case", kind: "mix" },
+      { id: "full", label: "Full", kind: "flat" },
+      { id: "boost", label: "Boost", kind: "trigger" } ] }
+  assert.deepEqual(M.curveOptions(body, { kind: "firmware-curve" }).map(o => o.value), ["gpu", "full", "firmware"])
+  assert.equal(M.curveOptions(body, { kind: "duty" }).length, 6, "any curve for a duty")
+})

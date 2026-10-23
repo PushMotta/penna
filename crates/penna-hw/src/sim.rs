@@ -265,6 +265,12 @@ pub struct PwmSpec {
     /// What 100 % is written as: 255, or 100 on nouveau.
     #[serde(default = "full_scale")]
     pub scale: i64,
+    /// The duty is kept as a whole percent and read back from it, as acer-wmi keeps it.
+    #[serde(default)]
+    pub percent: bool,
+    /// Switching to manual runs the fan at full speed first, as gpd-fan does.
+    #[serde(default)]
+    pub manual_sets_full: bool,
 }
 
 fn full_scale() -> i64 {
@@ -463,6 +469,8 @@ pub struct Sim {
     profile_seen: Option<std::time::SystemTime>,
     /// Each OverDrive curve file and the curve committed to it.
     od: BTreeMap<PathBuf, Vec<[i64; 2]>>,
+    /// Controls in manual mode since the last switch to it.
+    manual: BTreeSet<(usize, u32)>,
     active: BTreeSet<usize>,
     fired: BTreeSet<usize>,
 }
@@ -495,6 +503,7 @@ impl Sim {
             cached: BTreeMap::new(),
             profile_seen: None,
             od: BTreeMap::new(),
+            manual: BTreeSet::new(),
             active: BTreeSet::new(),
             fired: BTreeSet::new(),
         };
@@ -851,7 +860,18 @@ impl Sim {
                     }
                     (0, _) => 100.0,
                     (1, None) => {
-                        let r = get::<i64>(&pwm_path).unwrap_or(p.scale).clamp(0, p.scale);
+                        if p.manual_sets_full && !self.manual.contains(&(ci, p.channel)) {
+                            self.manual.insert((ci, p.channel));
+                            put(&pwm_path, &p.scale.to_string())?;
+                        }
+                        let mut r = get::<i64>(&pwm_path).unwrap_or(p.scale).clamp(0, p.scale);
+                        if p.percent {
+                            let kept = ((r as f64 * 100.0 / 255.0).round() * 255.0 / 100.0).round() as i64;
+                            if kept != r {
+                                put(&pwm_path, &kept.to_string())?;
+                                r = kept;
+                            }
+                        }
                         if p.full_reads_zero && r >= p.scale {
                             put(&enable_path, "0")?;
                         }
@@ -868,6 +888,7 @@ impl Sim {
                         penna_core::model::level_duty(n, level)
                     }
                     (_, None) => {
+                        self.manual.remove(&(ci, p.channel));
                         let d = self.firmware_duty(&p.firmware);
                         put(&pwm_path, &((d.clamp(0.0, 100.0) * p.scale as f64 / 100.0).round() as i64).to_string())?;
                         d
