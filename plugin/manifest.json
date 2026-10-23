@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.pushmotta.penna",
   "name": "Penna",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "author": "Pedro Motta",
   "license": "MIT",
   "description": "Fan control that belongs to the shell: every fan named for what it cools, its RPM beside what it was asked for, and a clear account of anything that goes wrong.",

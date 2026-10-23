@@ -1265,7 +1265,14 @@ Milestones, each ending in something visible:
 
   - **Screenshots** of the real popup and studio, by `tools/screenshots` (§8.6), against the mock desk after setup.
 
-  Not yet: the AUR push, which needs the maintainer's AUR key, and the marketplace submission (`plugin/docs/`).
+  - **0.10.2, the same day.** The AUR had paused new accounts, so each release now carries a package built from its own
+    published tarball, with the installed Penna hidden, and its SHA256SUMS (`tools/release.sh publish`). The README shows
+    every part of Penna in screenshots and GIFs. `tools/screenshots/run.sh` plays a script on one screen, behind a plain
+    backdrop, without taking the keyboard: a fresh install of the x570 mock through setup, the popup and the studio. It also
+    shows a ThinkPad and the studio in six themes. `media.sh` crops the stills and cuts the GIFs. The media lives in
+    `docs/media`, outside `plugin/`, so `omarchy plugin add` doesn't clone it.
+
+  Not yet: the AUR, until it takes new accounts again, and the marketplace submission (`plugin/docs/`).
 
 ## 11. Decisions (approved 21 Oct 2026)
 

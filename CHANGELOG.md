@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.10.2 (23 Oct 2026)
+
+- **Install from the release.** New AUR accounts are paused, so each release now carries a package built from its own source
+  tarball, with its checksum. The README says how to install it with pacman.
+- **The README shows every part of Penna:** the popup, the studio, setup, a fresh install, a laptop, the themes and the command
+  line, in screenshots and GIFs of the real plugin. `tools/screenshots` remakes them.
+- **Plugin 0.7.1:** the curve editor no longer throws when a curve's live reading goes away.
+
 ## 0.10.1 (23 Oct 2026)
 
 - **The package builds on a machine without Penna.** Four daemon tests read the installed board database, so 0.10.0's
