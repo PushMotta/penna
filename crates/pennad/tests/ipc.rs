@@ -1300,3 +1300,21 @@ fn a_dgpu_asleep_leaves_its_fan_on_the_cpu_curve() {
     assert!(ticks.iter().all(|t| fan(t)["state"] == "curve"), "never failsafe while it sleeps");
     d.stop();
 }
+
+/// A loop that can't keep up still answers. At 1000× a mock tick is due every millisecond, so the loop is always behind; it
+/// used to take requests only while ahead of its schedule, and every request waited out the 10 s timeout. A slow CI runner at
+/// 50× found it, and real hardware could, with slow reads on a short tick.
+#[test]
+fn a_loop_behind_its_schedule_still_answers() {
+    let dir = fresh("behind");
+    let d = Daemon::start_scenario(&dir, "render-burst", "tree", &["--speed", "1000"]);
+    let mut c = d.connect();
+    c.line();
+    for name in ["quiet", "balanced"] {
+        let asked = Instant::now();
+        let r = c.call(json!({"op": "profile.set", "name": name}));
+        assert_eq!(r["ok"], true, "{r}");
+        assert!(asked.elapsed() < Duration::from_secs(2), "answered after {:?}", asked.elapsed());
+    }
+    d.stop();
+}

@@ -1230,7 +1230,9 @@ Milestones, each ending in something visible:
   and each tag has its GitHub release. CI on GitHub's runners, free once the repository was public, found what this desk
   couldn't: four daemon tests read the installed board database, so 0.10.0's `check()` would fail on any machine without Penna,
   a first AUR build included. 0.10.1 fixes the tests, and the release check now runs them with `/usr/share/penna`,
-  `/var/lib/penna`, `/etc/penna` and `/run/penna` hidden.
+  `/var/lib/penna`, `/etc/penna` and `/run/penna` hidden. CI also found that `pennad` took requests only while its loop was
+  ahead of schedule: on a slower machine a mock at 50× was always behind, and every request timed out. It now takes them every
+  tick, and a test runs a mock at 1000× to prove it.
   Publishing is `tools/release.sh publish`, then `tools/release.sh aur` with the maintainer's AUR key:
   - **README** for someone who has never seen Penna: its promises, the support table by driver and tier, install from the
     AUR, removal, the CLI. **CONTRIBUTING.md** says how to send a machine report and a change. Issue forms for machine reports

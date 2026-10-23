@@ -585,7 +585,9 @@ fn run(args: Args) -> Result<()> {
             break Ok(());
         }
         let due = start + pace * ticks as u32;
-        while Instant::now() < due && !stop.load(Ordering::SeqCst) {
+        // Requests are taken at least once a tick, then until the next tick is due: a loop behind its schedule (a slow tick, a
+        // fast mock) still answers them, where waiting to be ahead left them to time out.
+        loop {
             // `state` right after a change shows it, without waiting for the next tick: a change is published before its reply
             // goes out, so a client that subscribes on the reply never starts from the tick before it.
             let publish_now = |live: &Live, out: &mut trace::Trace| {
@@ -612,7 +614,11 @@ fn run(args: Args) -> Result<()> {
                 let _ = sd_notify::notify(&[sd_notify::NotifyState::Watchdog]);
                 last_ping = Instant::now();
             }
-            std::thread::sleep((due - Instant::now()).min(REQUEST_POLL));
+            let left = due.saturating_duration_since(Instant::now());
+            if left.is_zero() || stop.load(Ordering::SeqCst) {
+                break;
+            }
+            std::thread::sleep(left.min(REQUEST_POLL));
         }
     };
 

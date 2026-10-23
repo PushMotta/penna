@@ -4,6 +4,9 @@
 
 - **The package builds on a machine without Penna.** Four daemon tests read the installed board database, so 0.10.0's
   `check()` failed wherever Penna wasn't installed yet, as in CI or a first AUR build. The tests now use the checkout's.
+- **pennad answers when its loop falls behind.** Requests were taken only while the loop was ahead of its schedule, so a tick
+  slower than its interval left every change from the popup, the studio or the CLI to time out after 10 s. They are now taken
+  every tick.
 
 ## 0.10.0 (23 Oct 2026)
 
