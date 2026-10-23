@@ -8,7 +8,7 @@ Hardware
 
 ### Tags
 
-Quickshell, System
+Bar, Quickshell, System
 
 ### Suggest a missing tag
 
@@ -21,21 +21,23 @@ state, a popup with profiles, temperatures and every fan's RPM, and a studio for
 bar-widget (popup), overlay (studio), service.
 
 The fans are run by `pennad`, a system service from the separate `penna` package (MIT, https://github.com/PushMotta/penna),
-installed with pacman from the package each release carries. The plugin depends on it and says so on the glyph when it isn't
-running. It never installs, starts or elevates anything itself. The daemon drives fans only through the kernel's hwmon drivers and NVIDIA's NVML, and it
-puts every fan back to its BIOS or driver on every way out, including a crash and removing the package.
+installed with pacman from the package each release carries; the README gives the commands. The plugin depends on it and
+says so when it isn't running. It never installs, starts or elevates anything itself. The daemon drives fans only through
+the kernel's hwmon drivers and NVIDIA's NVML, and it puts every fan back to its BIOS or driver on every way out, a crash and
+removing the package included.
 
 What the plugin touches:
 - It connects to `pennad`'s Unix socket, `/run/penna/penna.sock` (or `$PENNA_SOCKET`). Only members of the `penna` group may
   change fans through it; anyone else gets a read-only view and a sentence saying how to join.
-- It runs `hyprctl getoption animations:enabled -j` once, to follow Hyprland's motion preference.
+- It runs `hyprctl getoption animations:enabled -j` when it starts and after each Hyprland config reload, to follow
+  Hyprland's motion preference.
 - It writes no files, starts no services, and contains no `sudo` or `pkexec`. Two messages tell the user a command to run
   themselves (`sudo systemctl start pennad`, `sudo usermod -aG penna $USER`).
 
 Nothing is downloaded at install or at runtime. The repository is generated from `plugin/` in the main repository at each
-release. It holds the plugin, its tests (`node --test`, for Model.js), this text, the README, the licence and
-`preview.png`. It holds no agent or
-session handoff material. The workflow's actions are pinned to full commit SHAs, and it declares `permissions: contents: read`.
+release. It holds the plugin, its tests (`node --test`, for Model.js), this text, the README, the licence and `preview.png`;
+the README's screenshots and GIFs are linked from the main repository, so they aren't cloned. It holds no agent or session
+handoff material. The workflow's actions are pinned to full commit SHAs, and it declares `permissions: contents: read`.
 
 ### Submission checklist
 
