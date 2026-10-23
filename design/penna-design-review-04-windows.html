@@ -1,0 +1,365 @@
+<title>Penna on Windows</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@600;700;800&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+  /* Layout: review 01's 1240px reading column and page tokens, so the reviews read as one series. A text review: tables and
+     one diagram, no mock frames. */
+  :root {
+    --ground: #ECEEF0;
+    --ground-2: #E1E5E9;
+    --ink: #1A1F25;
+    --ink-2: #5F6873;
+    --rule: #CDD3D9;
+    --page-accent: #2B5873;
+    --note: #C35F26;
+    --note-ink: #FFFFFF;
+    --frame: #D8DDE2;
+    --ok: #3E7A4E;
+    --warn: #A3651A;
+    --stop: #A8433A;
+    --display: "Schibsted Grotesk", "IBM Plex Sans", system-ui, sans-serif;
+    --sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    --mono: "JetBrains Mono", "JetBrainsMono Nerd Font", ui-monospace, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #121518; --ground-2: #1A1E22; --ink: #E3E7EA; --ink-2: #97A0A9; --rule: #283038;
+      --page-accent: #8FBCD6; --note: #E27B3E; --note-ink: #121518; --frame: #1E2328;
+      --ok: #7FBF8E; --warn: #E0A458; --stop: #E3877E; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #121518; --ground-2: #1A1E22; --ink: #E3E7EA; --ink-2: #97A0A9; --rule: #283038;
+    --page-accent: #8FBCD6; --note: #E27B3E; --note-ink: #121518; --frame: #1E2328;
+    --ok: #7FBF8E; --warn: #E0A458; --stop: #E3877E; color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { background: var(--ground); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.5; }
+  body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 30; background: var(--ground); }
+  .wrap { max-width: 1240px; margin: 0 auto; padding-block: 40px 88px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  h1, h2, h3 { font-family: var(--display); letter-spacing: -0.02em; text-wrap: balance; margin: 0; }
+  h1 { font-size: clamp(40px, 7vw, 64px); font-weight: 800; line-height: 1; }
+  h2 { font-size: 26px; font-weight: 700; }
+  h3 { font-size: 16px; font-weight: 700; letter-spacing: -0.01em; }
+  p { margin: 0; max-width: 68ch; }
+  .eyebrow { font-weight: 600; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-2); }
+  .dek { font-size: 19px; line-height: 1.45; max-width: 62ch; margin-top: 16px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 6px 22px; margin-top: 20px; font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .meta b { color: var(--ink); font-weight: 600; }
+  section { margin-top: 60px; padding-top: 28px; border-top: 1px solid var(--rule); }
+  section > .eyebrow { margin-bottom: 6px; }
+  .lede { margin-top: 10px; color: var(--ink-2); font-size: 15px; }
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 28px; margin-top: 18px; }
+  .cols > div { min-width: 0; }
+  .cols h3 { margin-bottom: 6px; }
+  a { color: var(--page-accent); }
+  a:focus-visible { outline: 2px solid var(--note); outline-offset: 2px; }
+  code { font-family: var(--mono); font-size: 0.88em; background: var(--ground-2); padding: 1px 5px; border-radius: 3px; overflow-wrap: anywhere; }
+  .small { font-size: 13px; color: var(--ink-2); }
+
+  table { border-collapse: collapse; width: 100%; font-size: 14px; margin-top: 16px; }
+  th, td { text-align: left; padding: 9px 14px 9px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { font-weight: 600; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-2); }
+  td code { font-size: 12.5px; }
+  .tablewrap { overflow-x: auto; }
+  .tablewrap table { min-width: 820px; }
+  td.fans { font-weight: 600; white-space: nowrap; }
+
+  /* how sure: a stripe and a word, so the state reads without colour too */
+  .sure { display: inline-block; font: 600 11px var(--sans); letter-spacing: 0.06em; text-transform: uppercase; padding: 1px 0 1px 8px; border-left: 3px solid currentColor; white-space: nowrap; }
+  .sure.ok { color: var(--ok); }
+  .sure.warn { color: var(--warn); }
+  .sure.stop { color: var(--stop); }
+  .src { display: block; margin-top: 4px; font-size: 12.5px; color: var(--ink-2); }
+
+  .frame { background: var(--frame); border: 1px solid var(--rule); padding: 22px; margin-top: 20px; overflow-x: auto; }
+  .frame svg { display: block; width: 100%; min-width: 760px; height: auto; color: var(--ink); }
+  .frame-cap { margin-top: 10px; font-size: 13px; color: var(--ink-2); max-width: 90ch; }
+  .dg-box { fill: var(--ground); stroke: var(--rule); stroke-width: 1.2; }
+  .dg-new { fill: var(--ground); stroke: var(--note); stroke-width: 1.6; }
+  .dg-same { fill: var(--ground-2); stroke: var(--page-accent); stroke-width: 1.6; }
+  .dg-later { fill: var(--ground); stroke: var(--ink-2); stroke-width: 1.2; stroke-dasharray: 5 4; }
+  .dg-t { fill: var(--ink); font: 600 13px var(--sans); }
+  .dg-s { fill: var(--ink-2); font: 400 11.5px var(--sans); }
+  .dg-h { fill: var(--ink-2); font: 600 11px var(--sans); letter-spacing: 0.08em; }
+  .dg-line { stroke: var(--ink-2); stroke-width: 1.3; fill: none; }
+  .dg-back { stroke: var(--note); stroke-width: 1.6; fill: none; stroke-dasharray: 6 4; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 12px; font-size: 13px; color: var(--ink-2); }
+  .legend i { display: inline-block; width: 18px; height: 12px; margin-right: 7px; vertical-align: -1px; }
+  .legend .same { background: var(--ground-2); border: 1.6px solid var(--page-accent); }
+  .legend .new { background: var(--ground); border: 1.6px solid var(--note); }
+  .legend .later { background: var(--ground); border: 1.2px dashed var(--ink-2); }
+  .legend .back { border-top: 2px dashed var(--note); height: 0; vertical-align: 3px; }
+
+  .opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; margin-top: 18px; }
+  .opt { border: 1px solid var(--rule); padding: 16px 18px; background: var(--ground); display: grid; gap: 8px; align-content: start; min-width: 0; }
+  .opt.pick { border: 2px solid var(--note); }
+  .opt .tag { font: 600 11px var(--sans); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); }
+  .opt.pick .tag { color: var(--note); }
+  .opt ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 14px; }
+
+  .steps { list-style: none; margin: 18px 0 0; padding: 0; display: grid; gap: 10px; max-width: 92ch; }
+  .steps li { display: grid; grid-template-columns: 54px 1fr; gap: 14px; align-items: baseline; }
+  .steps .w { font: 700 13px var(--mono); color: var(--page-accent); }
+
+  .decisions ol { margin: 16px 0 0; padding-left: 22px; display: grid; gap: 14px; max-width: 86ch; }
+  .decisions li strong { font-weight: 600; }
+  .rec { color: var(--ink-2); }
+  footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid var(--rule); font-size: 13px; color: var(--ink-2); display: grid; gap: 4px; }
+</style>
+
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">Design review 04 · Windows · 23 October 2026 · against DESIGN.md draft 3</div>
+  <h1 style="margin-top:12px">Penna on Windows</h1>
+  <p class="dek">What a Windows version would be: what carries over from Linux, how Windows reaches each kind of fan, how the service keeps the promise that every fan goes back, and six calls before any code.</p>
+  <div class="meta">
+    <span><b>Linux</b> Penna 0.10.0, 222 Rust tests, 33 plugin tests</span>
+    <span><b>Carries over</b> penna-core and penna-proto, about 8,000 lines</span>
+    <span><b>Test bed</b> win-ci, the VM that holds the RTX 2060 SUPER</span>
+    <span><b>Research</b> 23 October 2026, sources linked</span>
+  </div>
+</header>
+
+<section>
+  <div class="cols">
+    <div><h3>What carries over</h3><p>The control loop, setup, generated curves, profiles, configuration and the protocol are plain Rust with no operating system in them: <code>penna-core</code> and <code>penna-proto</code>, and most of the tests. The NVML backend builds on Windows as it is. So does the plugin's logic, <code>Model.js</code>, with its tests.</p></div>
+    <div><h3>What has to be new</h3><p>Everything that meets the OS. hwmon gives way to each vendor's own interface, systemd to the Service Control Manager, the Unix socket to a named pipe, and the <code>penna</code> group to a Windows group. The UI needs a new home too: Quickshell runs only on Linux, under Wayland.</p></div>
+    <div><h3>What Windows already has</h3><p><a href="https://github.com/Rem0o/FanControl.Releases">Fan Control</a>, the app Penna took its card model from: free, closed source, released almost weekly, built on LibreHardwareMonitor. A Windows Penna would add what it doesn't have: open source, a setup run that measures every fan and proposes curves, and fans that go back even when the service dies.</p></div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">A · Shape</div>
+  <h2>One daemon, two operating systems</h2>
+  <p class="lede">The same loop and protocol on both. On Windows, <code>pennad</code> is a service running as LocalSystem, the surfaces reach it over a named pipe, and the way back is held in a file before any fan changes, as on Linux.</p>
+  <div class="frame">
+    <svg viewBox="0 0 1060 430" role="img" aria-labelledby="dgT dgD">
+      <title id="dgT">Penna's architecture on Windows</title>
+      <desc id="dgD">Surfaces on the left talk over a named pipe to the pennad service in the middle, which holds the shared core and four backends, one of them later. On the right, the way back: held.json and penna restore run by the Service Control Manager.</desc>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10Z" fill="currentColor" opacity=".6"/></marker>
+      </defs>
+
+      <text class="dg-h" x="20" y="24">SURFACES</text>
+      <rect class="dg-new" x="20" y="40" width="230" height="74"/>
+      <text class="dg-t" x="36" y="66">Penna app</text>
+      <text class="dg-s" x="36" y="86">tray glyph, popup, studio, setup</text>
+      <text class="dg-s" x="36" y="102">components and Model.js reused</text>
+      <rect class="dg-same" x="20" y="130" width="230" height="58"/>
+      <text class="dg-t" x="36" y="156">penna CLI</text>
+      <text class="dg-s" x="36" y="174">the same commands</text>
+
+      <path class="dg-line" d="M250 112 H318" marker-end="url(#arr)" style="color:var(--ink-2)"/>
+      <text class="dg-s" x="258" y="100">\\.\pipe\penna</text>
+      <text class="dg-s" x="258" y="132">same protocol</text>
+
+      <text class="dg-h" x="320" y="24">PENNAD · WINDOWS SERVICE (LOCALSYSTEM)</text>
+      <rect class="dg-box" x="320" y="40" width="420" height="370" fill-opacity="0"/>
+      <rect class="dg-same" x="340" y="58" width="380" height="74"/>
+      <text class="dg-t" x="356" y="84">penna-core · penna-proto</text>
+      <text class="dg-s" x="356" y="104">loop, setup, generated curves, profiles, config, protocol</text>
+      <text class="dg-s" x="356" y="120">unchanged, with their tests and the simulator</text>
+      <rect class="dg-new" x="340" y="146" width="380" height="46"/>
+      <text class="dg-t" x="356" y="174">Service, pipe, trust, watchdog thread</text>
+
+      <text class="dg-h" x="340" y="218">BACKENDS</text>
+      <rect class="dg-same" x="340" y="228" width="184" height="62"/>
+      <text class="dg-t" x="354" y="252">NVML</text>
+      <text class="dg-s" x="354" y="272">NVIDIA's own driver</text>
+      <rect class="dg-new" x="536" y="228" width="184" height="62"/>
+      <text class="dg-t" x="550" y="252">ADLX</text>
+      <text class="dg-s" x="550" y="272">AMD's own driver</text>
+      <rect class="dg-new" x="340" y="300" width="184" height="62"/>
+      <text class="dg-t" x="354" y="324">Power mode, vendor WMI</text>
+      <text class="dg-s" x="354" y="344">laptops</text>
+      <rect class="dg-later" x="536" y="300" width="184" height="62"/>
+      <text class="dg-t" x="550" y="324">Super I/O via PawnIO</text>
+      <text class="dg-s" x="550" y="344">motherboards, call 2</text>
+      <text class="dg-s" x="340" y="392">Each backend writes how to put a fan back before changing it.</text>
+
+      <path class="dg-back" d="M740 120 H812" marker-end="url(#arr)" style="color:var(--note)"/>
+      <text class="dg-h" x="814" y="24">THE WAY BACK</text>
+      <rect class="dg-new" x="814" y="40" width="226" height="94"/>
+      <text class="dg-t" x="830" y="66">held.json</text>
+      <text class="dg-s" x="830" y="86">C:\ProgramData\Penna</text>
+      <text class="dg-s" x="830" y="102">SYSTEM and Administrators only</text>
+      <text class="dg-s" x="830" y="118">written before the first change</text>
+      <rect class="dg-new" x="814" y="150" width="226" height="110"/>
+      <text class="dg-t" x="830" y="176">penna restore</text>
+      <text class="dg-s" x="830" y="196">run by the SCM's failure action</text>
+      <text class="dg-s" x="830" y="212">after a crash or a hung loop,</text>
+      <text class="dg-s" x="830" y="228">then the SCM restarts pennad</text>
+      <text class="dg-s" x="830" y="244">after 1 s</text>
+      <rect class="dg-new" x="814" y="276" width="226" height="86"/>
+      <text class="dg-t" x="830" y="302">Pre-shutdown</text>
+      <text class="dg-s" x="830" y="322">every fan handed back</text>
+      <text class="dg-s" x="830" y="338">before Windows stops services</text>
+    </svg>
+  </div>
+  <div class="legend">
+    <span><i class="same"></i>the same code as on Linux</span>
+    <span><i class="new"></i>new for Windows</span>
+    <span><i class="later"></i>later, if call 2 says so</span>
+    <span><i class="back"></i>the way back</span>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">B · Hardware</div>
+  <h2>How Windows reaches each kind of fan</h2>
+  <p class="lede">On Linux the kernel's drivers do the chip work, and Penna only writes their files. On Windows, GPUs and laptops have vendor interfaces that play that part. Motherboard fans have none: every tool that drives them brings its own kernel driver and does the chip work itself.</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Fans</th><th>Interface</th><th>What Penna could do</th><th>The way back</th><th>How sure</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="fans">NVIDIA GPU</td>
+          <td>NVML, <code>nvml.dll</code>, installed with the driver (<code>System32</code> on DCH drivers). Fan calls since R515, policy since R520; they need an administrator.</td>
+          <td>A duty per fan, as on Linux. Newer cards won't go below 30 %, and stop only under the driver's own policy.</td>
+          <td>The driver's policy back to automatic, then its default speed. One report says the default speed alone didn't resume the curve.</td>
+          <td><span class="sure warn">likely</span><span class="src">Reported working on a GeForce under Windows 11 as an administrator; not yet seen from a service. <a href="https://docs.nvidia.com/deploy/nvml-api/api/group__nvmlDeviceCommands.html">NVML</a> · <a href="https://github.com/HackTestes/NVML-GPU-Control">NVML-GPU-Control</a></span></td>
+        </tr>
+        <tr>
+          <td class="fans">AMD GPU</td>
+          <td>ADLX, <code>IADLXManualFanTuning</code>. The SDK is under AMD's own licence, so Penna would load it at run time rather than ship it.</td>
+          <td>A curve of speed and temperature points, zero RPM on or off, a minimum speed. No fixed duty: a flat curve stands in.</td>
+          <td>Reset to factory.</td>
+          <td><span class="sure warn">limits</span><span class="src">Works in a service only while someone is signed in, and must start again after each sign-in. <a href="https://gpuopen.com/manuals/adlx/programming-with-adlx/adlx-programming-guide/advanced-configurations/using-adlx-in-a-windows-system-service-application/">ADLX in a service</a></span></td>
+        </tr>
+        <tr>
+          <td class="fans">Any laptop</td>
+          <td>The Windows power mode: Best power efficiency, Balanced, Best performance. The OEM ties fans to it through its firmware, and most do.</td>
+          <td>The power profile as the lever, as on Linux (§4.7), where nothing else can drive the fans.</td>
+          <td>The mode Penna found.</td>
+          <td><span class="sure warn">undocumented</span><span class="src">Reading it is documented. Setting it goes through an undocumented export, <code>PowerSetActiveOverlayScheme</code>. <a href="https://learn.microsoft.com/en-us/windows-hardware/customize/desktop/customize-power-slider">Power slider</a></span></td>
+        </tr>
+        <tr>
+          <td class="fans">Laptop, by vendor</td>
+          <td>Each vendor's WMI: ASUS (ATKACPI), Lenovo (<code>root\WMI</code>), Dell (SMM over WMI), HP (BIOS WMI).</td>
+          <td>Per vendor: modes, the firmware's curves, levels. The same kinds §3.5 names.</td>
+          <td>Per vendor: automatic mode, the factory curve.</td>
+          <td><span class="sure warn">per vendor</span><span class="src">Open tools show each interface: G-Helper and Legion Toolkit (GPL-3.0; Legion Toolkit archived), Dell's WMI plugin and OmenCore (MIT). Only MIT code could come into Penna; the rest teaches the interface.</span></td>
+        </tr>
+        <tr>
+          <td class="fans">Motherboard</td>
+          <td>No Windows driver exposes the Super I/O chip. WinRing0, the old shared driver, is on Microsoft's blocklist and flagged by Defender since 2025. PawnIO replaced it in LibreHardwareMonitor and Fan Control.</td>
+          <td>A duty per channel, with Penna's own code for each chip family: ITE, Nuvoton, Fintek.</td>
+          <td>Each register's value written to <code>held.json</code> before Penna changes it, and put back from there.</td>
+          <td><span class="sure stop">a rule change</span><span class="src">PawnIO is signed through Microsoft's attestation, is not on the blocklist, opens only to administrators, and its LpcIO module reaches only the Super I/O's own ports. <a href="https://github.com/namazso/PawnIO">PawnIO</a> · <a href="https://learn.microsoft.com/en-us/windows/security/application-security/application-control/app-control-for-business/design/microsoft-recommended-driver-block-rules">blocklist</a></span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="small" style="margin-top:12px">LibreHardwareMonitor (MPL-2.0) saves each chip's registers before its first write and restores them when a fan goes back to default or the library closes. A crash restores nothing, because the originals live only in its own process.</p>
+</section>
+
+<section>
+  <div class="eyebrow">C · Safety</div>
+  <h2>Every fan goes back, on Windows too</h2>
+  <p class="lede">§6 carries over almost whole. One piece has no Windows equivalent: a watchdog outside the process that kills a hung loop.</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>On Linux</th><th>On Windows</th></tr></thead>
+      <tbody>
+        <tr><td><code>Type=notify</code> service, as root</td><td>A Windows service as LocalSystem, with the <code>windows-service</code> crate.</td></tr>
+        <tr><td><code>Restart=on-failure</code>, <code>RestartSec=1</code></td><td>The Service Control Manager's recovery: restart after 1 s.</td></tr>
+        <tr><td><code>ExecStopPost=penna restore</code></td><td>The SCM's failure action, which runs <code>penna restore</code>. It fires on a crash, and on a stop with an error once the non-crash flag is set. A clean stop restores by itself, as on Linux.</td></tr>
+        <tr><td><code>WatchdogSec=5</code>, then <code>SIGKILL</code></td><td>A watchdog thread inside <code>pennad</code>: a loop silent for 5 s means restore from <code>held.json</code>, then exit with an error so the SCM restarts it. A hang that stops the whole process is not covered.</td></tr>
+        <tr><td><code>held.json</code> in <code>/run/penna</code></td><td><code>C:\ProgramData\Penna\held.json</code>, readable only by SYSTEM and Administrators. Changes that outlive a reboot, like the power mode, go to <code>firmware.json</code> beside it, as now.</td></tr>
+        <tr><td>Unix socket, peer credentials, the <code>penna</code> group</td><td>A named pipe, <code>\\.\pipe\penna</code>, created first and refusing remote clients. Anyone signed in may watch; members of a local Penna group may change fans. The client's token says who. Tokio has no Unix sockets on Windows, but it has named pipes.</td></tr>
+        <tr><td>systemd stops the unit at shutdown</td><td>The pre-shutdown notice, 10 s by default: every fan back, then stop.</td></tr>
+        <tr><td>Removing the package stops <code>pennad</code></td><td>The uninstaller stops the service, which hands every fan back, then runs <code>penna reset</code>.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">D · The app</div>
+  <h2>A home for the popup and the studio</h2>
+  <p class="lede">The plugin's 14 components, about 2,400 lines, import only QtQuick, the shell's theme tokens and a few of its controls. The popup, studio and service windows, about 1,700 lines, belong to the shell. <code>Model.js</code> and its 33 tests carry over to any of these three.</p>
+  <div class="opts">
+    <div class="opt pick">
+      <span class="tag">Recommended · call 4</span>
+      <h3>A Qt Quick app</h3>
+      <ul>
+        <li>The components run as they are, with a small module that gives them the theme tokens and controls the shell gave them.</li>
+        <li>New windows for the popup and the studio, and the glyph in the tray.</li>
+        <li>Qt's local socket speaks named pipes on Windows and Unix sockets on Linux.</li>
+        <li>The same app serves Linux desktops outside Omarchy, which §10 lists for v2.</li>
+        <li>Cost: a small C++ host, and Qt's runtime shipped with it. MPT already ships Qt on Windows.</li>
+      </ul>
+    </div>
+    <div class="opt">
+      <span class="tag">Alternative</span>
+      <h3>Tauri, on WebView2</h3>
+      <ul>
+        <li>A Rust host and the system's web view: a small download.</li>
+        <li>Model.js runs as it is.</li>
+        <li>Every component drawn again in HTML and canvas, and the motion rules of §8.6 rebuilt.</li>
+      </ul>
+    </div>
+    <div class="opt">
+      <span class="tag">Alternative</span>
+      <h3>egui on wgpu</h3>
+      <ul>
+        <li>Pure Rust, one binary, the option §10 names for v2.</li>
+        <li>Everything drawn again, Model.js included.</li>
+        <li>Immediate mode makes the glide and text easing of §8.6 hard to match.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">E · Shipping</div>
+  <h2>Signing, installing, testing</h2>
+  <div class="cols">
+    <div>
+      <h3>Signing</h3>
+      <p>SmartScreen warns about unsigned downloads, and since 2024 no certificate skips that: reputation builds over time. Microsoft's Artifact Signing, about $9.99 a month, is open to organisations in the EU but to individuals only in the US and Canada. So it would sign as PUSH, not as you. The SignPath Foundation signs open-source projects free, under strict conditions and under its own name. <a href="https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/code-signing-options">Options</a></p>
+    </div>
+    <div>
+      <h3>Installing</h3>
+      <p>An installer that sets up the service, its recovery actions, the Penna group and the app, and adds the installing user to the group. winget takes a silent installer and doesn't require a signature. PawnIO, if call 2 brings it in, installs on its own (<code>winget install namazso.PawnIO</code>) and may want a reboot.</p>
+    </div>
+    <div>
+      <h3>Testing</h3>
+      <p>The simulator carries over for everything in <code>penna-core</code>. win-ci holds the RTX 2060 SUPER through passthrough, so the M4 exit-path test can run on a real GeForce under Windows there, and win-ci can be the Windows CI runner. Nothing here has an AMD GPU or a laptop, and a VM never sees the board's Super I/O chip. Those start Documented, as M9 did.</p>
+    </div>
+  </div>
+
+  <h3 style="margin-top:40px">An order to build it in</h3>
+  <ol class="steps">
+    <li><span class="w">W0</span><span>The workspace builds on Windows, CI runs on win-ci, and <code>penna watch</code> reads NVML directly.</span></li>
+    <li><span class="w">W1</span><span>The service, the pipe and NVML control, with every exit path tested on the 2060: Windows's M4.</span></li>
+    <li><span class="w">W2</span><span>The Qt Quick app: tray glyph, popup, studio, setup.</span></li>
+    <li><span class="w">W3</span><span>ADLX, the power mode and the vendors' WMI, Documented and simulated as in M9. Then the installer and signing: a first Windows release.</span></li>
+    <li><span class="w">W4</span><span>Motherboard fans through PawnIO, if call 2 says so, starting with ITE and Nuvoton.</span></li>
+  </ol>
+</section>
+
+<section class="decisions">
+  <div class="eyebrow">G · Decisions</div>
+  <h2>Six calls before any code</h2>
+  <p class="lede">Nothing is built yet. What you choose here goes into DESIGN.md as §11.4, with a Windows section beside §3 and §7.</p>
+  <ol>
+    <li><strong>Windows starts with GPU fans and the power mode:</strong> NVIDIA through NVML, AMD through ADLX, laptops through Windows' power mode and, by vendor, their WMI. Motherboard fans stay with the BIOS for now. <span class="rec">Recommended: all of it goes through the vendors' own drivers, so §11.2's first call holds unchanged, and NVIDIA can be tested on the 2060 in win-ci.</span></li>
+    <li><strong>Motherboard fans come later through PawnIO and Penna's own chip code, or not at all.</strong> Not through a LibreHardwareMonitor sidecar. <span class="rec">Recommended: only Penna's own code can write each register's original to <code>held.json</code> before changing it, which is what hands fans back after a crash. This changes §11.2's first call for Windows: a signed driver that reaches only the fan chip's own ports, and never one on Microsoft's blocklist. The doctor would name the same ACPI risk it names for it87. The chip code would be ported from LibreHardwareMonitor's as its own MPL-2.0 crate, which keeps the rest MIT. Porting Linux's drivers instead would make the Windows build GPL-2.0.</span></li>
+    <li><strong>One workspace.</strong> Windows backends and the service sit beside Linux's in the same crates, behind <code>cfg(windows)</code>. <span class="rec">Recommended: one loop, one protocol, one set of tests, and a fix lands on both.</span></li>
+    <li><strong>The app is Qt Quick,</strong> reusing the plugin's components and Model.js, with the glyph in the tray. <span class="rec">Recommended: the most reuse and the same look, and the same app for Linux desktops outside Omarchy. Tauri is the alternative if a smaller download matters more than reuse.</span></li>
+    <li><strong>Trust:</strong> members of a local Penna group may change fans; anyone signed in may watch. The installer adds the user who installs it. <span class="rec">Recommended: the same rule as Linux's <code>penna</code> group (§7.4).</span></li>
+    <li><strong>Signing as PUSH through Artifact Signing.</strong> Until then, beta builds go out unsigned, with SmartScreen's warning. <span class="rec">Recommended: the only route that puts your own name on the certificate, since Microsoft doesn't sign for individuals in Portugal. SignPath is the free alternative, under its name.</span></li>
+  </ol>
+</section>
+
+<footer>
+  <span>Source: <code>~/Projects/penna/design/penna-design-review-04-windows.html</code> · Spec: <code>~/Projects/penna/DESIGN.md</code>, draft 3 · Reviews 01 and 03 in <code>design/</code></span>
+  <span>Hardware facts come from vendor documentation, the projects' own repositories and Microsoft's pages, read on 23 October 2026. "Likely" means a working report from others, not a test here. Line counts are from this repository at 0.10.0.</span>
+</footer>
+
+</div>
