@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.10.4 (23 Oct 2026)
 
 From a second machine, an Intel N100 mini PC whose firmware runs its fan through ACPI:
 - **`penna doctor`** names a machine past its firmware's placeholders ("To be filled by O.E.M."). It also says plainly when a
