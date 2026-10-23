@@ -616,6 +616,10 @@ impl Setup {
                     self.stop(format!("{} failed to read: {e}.", g.label));
                     return;
                 }
+                // A GPU asleep makes no heat; it is read again when it wakes (§4.2).
+                Some(Sample::Asleep) => {
+                    self.guards.insert(g.key.clone(), None);
+                }
                 None => {
                     self.guards.insert(g.key.clone(), None);
                     self.stop(format!("{} was not read.", g.label));
@@ -1488,6 +1492,7 @@ fn readback(kind: ControlKind, reading: Option<&Sample<ControlReading>>, duty: f
         Some(Sample::Value(r)) => r,
         Some(Sample::Error(e)) => return Check::Unread(e.clone()),
         Some(Sample::Implausible(v)) => return Check::Unread(format!("read {v}")),
+        Some(Sample::Asleep) => return Check::Unread("asleep".to_owned()),
         None => return Check::Unread("not read".to_owned()),
     };
     match kind {

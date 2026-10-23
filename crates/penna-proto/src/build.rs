@@ -6,7 +6,7 @@ use crate::{
     VERSION,
 };
 use penna_core::config::{ControlConfig, CurveKind, DEFAULTS, Measured, words};
-use penna_core::control::{LoopState, State};
+use penna_core::control::{LoopState, SourceValue, State};
 use penna_core::drivers::{self, Tier};
 use penna_core::plan::Plan;
 use penna_core::{ControlKind, Inventory, Key, LimitKind, Readings, Sample, Source};
@@ -70,7 +70,7 @@ pub fn tick(cx: &Context) -> Tick {
         .map(|(k, limit)| EmergencyTick {
             sensor: k.clone(),
             label: label_of(k),
-            celsius: st.sources.get(k).and_then(|r| r.as_ref().ok()).copied().map(r2),
+            celsius: st.sources.get(k).and_then(SourceValue::celsius).map(r2),
             limit: *limit,
             release: limit - penna_core::control::EMERGENCY_RELEASE,
         })
@@ -365,8 +365,10 @@ fn sensors(cx: &Context) -> Vec<SensorTick> {
                 Some(Sample::Value(v)) => (Some(r2(*v)), None),
                 Some(Sample::Implausible(v)) => (None, Some(format!("read {v}, which is not a temperature"))),
                 Some(Sample::Error(e)) => (None, Some(e.clone())),
+                Some(Sample::Asleep) => (None, None),
                 None => (None, Some("not read".to_owned())),
             };
+            let asleep = matches!(cx.readings.temps.get(&s.key), Some(Sample::Asleep));
             let own = [LimitKind::Crit, LimitKind::GpuMax, LimitKind::Max]
                 .iter()
                 .find_map(|kind| s.limits.iter().find(|l| l.kind == *kind).map(|l| l.celsius));
@@ -382,6 +384,7 @@ fn sensors(cx: &Context) -> Vec<SensorTick> {
                 is_virtual: false,
                 below_ambient: s.below_ambient,
                 error,
+                asleep,
             });
         }
     }
@@ -391,10 +394,12 @@ fn sensors(cx: &Context) -> Vec<SensorTick> {
         let top = top.unwrap_or(SCALE_TOP);
         tops.insert(key.clone(), top);
         let (celsius, error) = match cx.state.sources.get(key) {
-            Some(Ok(v)) => (Some(r2(*v)), None),
-            Some(Err(e)) => (None, Some(e.clone())),
+            Some(SourceValue::Celsius(v)) => (Some(r2(*v)), None),
+            Some(SourceValue::Asleep) => (None, None),
+            Some(SourceValue::Failed(e)) => (None, Some(e.clone())),
             None => (None, Some("not read yet".to_owned())),
         };
+        let asleep = matches!(cx.state.sources.get(key), Some(SourceValue::Asleep));
         let v = plan.config.virtual_sensor(key);
         out.push(SensorTick {
             key: key.clone(),
@@ -406,6 +411,7 @@ fn sensors(cx: &Context) -> Vec<SensorTick> {
             is_virtual: true,
             below_ambient: false,
             error,
+            asleep,
         });
     }
     out

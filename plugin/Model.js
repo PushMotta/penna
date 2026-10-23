@@ -393,7 +393,7 @@ function tempRows(tick) {
     var name = shortName(s)
     var label = String(s.label)
     return { key: k, name: name, detail: s.virtual || label.toLowerCase() === name.toLowerCase() ? "" : label,
-             celsius: s.celsius, error: s.error || "", lo: scale(s)[0], hi: scale(s)[1] }
+             celsius: s.celsius, error: s.error || "", asleep: s.asleep === true, lo: scale(s)[0], hi: scale(s)[1] }
   })
 }
 

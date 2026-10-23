@@ -10,6 +10,8 @@ Item {
   property var values: []
   property real celsius: NaN
   property bool failed: false
+  // Its device is asleep (§4.2): no number, and nothing wrong.
+  property bool asleep: false
   property real lo: 20
   property real hi: 100
   property color foreground: Color.foreground
@@ -63,13 +65,14 @@ Item {
     anchors.verticalCenter: parent.verticalCenter
     width: Style.space(56)
     horizontalAlignment: Text.AlignRight
-    value: root.failed ? NaN : root.celsius
+    value: root.failed || root.asleep ? NaN : root.celsius
+    placeholder: root.asleep ? "asleep" : "—"
     step: 1
     suffix: " °C"
     tickMs: root.tickMs
     live: root.live
     reducedMotion: root.reducedMotion
-    color: root.failed ? root.urgent : root.foreground
+    color: root.failed ? root.urgent : root.asleep ? root.dim : root.foreground
     font.family: root.fontFamily
     font.pixelSize: Style.font.body
   }

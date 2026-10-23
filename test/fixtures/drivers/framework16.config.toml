@@ -1,0 +1,27 @@
+# The Framework 16 fixture's configuration: one fan on the hotter of the CPU's and the dGPU's curves, given by hand. The dGPU
+# sleeps most of the time; its curve then rests at its first point, so the fan follows the CPU (DESIGN.md §4.2).
+version = 1
+profile = "balanced"
+
+[[curve]]
+id = "cpu"
+graph = { source = "hwmon/k10temp/0000:00:18.3/temp1", points = [[50, 25], [70, 45], [85, 100]] }
+
+[[curve]]
+id = "dgpu"
+graph = { source = "hwmon/amdgpu/0000:03:00.0/temp1", points = [[50, 0], [65, 60], [80, 100]] }
+
+[[curve]]
+id = "laptop"
+mix = { op = "max", curves = ["cpu", "dgpu"] }
+
+[[control]]
+key = "hwmon/cros_ec/cros-ec-hwmon.0/pwm1"
+label = "Fan"
+
+[profiles.balanced]
+"hwmon/cros_ec/cros-ec-hwmon.0/pwm1" = "laptop"
+
+[profiles.quiet]
+
+[profiles.render]

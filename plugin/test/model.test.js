@@ -237,3 +237,13 @@ test("a pennad that doesn't fit this plugin is named, with what to update", () =
   assert.equal(M.olderThan("0.9.0", "0.10.0"), true)
   assert.equal(M.olderThan("", "0.9.0"), true, "an unreadable version is older")
 })
+
+test("a temperature row says its device is asleep", () => {
+  const tick = {
+    sensors: [{ key: "hwmon/amdgpu/0000:03:00.0/temp1", label: "edge", device: "AMD GPU", celsius: null, asleep: true, scale: [20, 100] },
+              { key: "hwmon/k10temp/0000:00:18.3/temp1", label: "Tctl", device: "AMD CPU", celsius: 41.2, scale: [20, 100] }],
+    curves: [{ id: "dgpu", source: "hwmon/amdgpu/0000:03:00.0/temp1" }, { id: "cpu", source: "hwmon/k10temp/0000:00:18.3/temp1" }],
+  }
+  const rows = M.tempRows(tick)
+  assert.deepEqual(rows.map(r => [r.asleep, r.error, r.celsius]), [[true, "", null], [false, "", 41.2]])
+})

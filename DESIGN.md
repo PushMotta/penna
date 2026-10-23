@@ -249,6 +249,15 @@ source  ─► curve ─► response ─► limits ─► output map ─► writ
 - A **sensor**.
 - A **virtual sensor**: `max`, `min` or `average` of sensors, or a `time-average` over N seconds of one sensor.
 
+**A device asleep** *(approved 23 Oct 2026)*. A hybrid laptop's dGPU is runtime-suspended most of the time, and amdgpu refuses
+every hwmon read while it is (EPERM) rather than wake it. A sensor whose read fails while its device's `power/runtime_status` says
+`suspended` is asleep, not failed: it makes no heat.
+- A Graph curve on it rests at its first point, its lowest, and starts afresh when the device wakes. A Trigger is idle.
+- A virtual sensor leaves it out; with every input asleep, the virtual sensor is asleep too. A failed input still fails it.
+- An emergency doesn't end because its sensor fell asleep: only a reading 5 °C below the limit ends it.
+- The tick marks the sensor `asleep`, and the surfaces say "asleep" where the number goes.
+- Any other failed read is still a failed source (§6.3).
+
 ### 4.3 Curve types (v1)
 
 | Type | Parameters | Notes |
@@ -456,7 +465,7 @@ Before a control leaves `firmware`, the daemon writes its key and **original mod
 
 ### 6.3 Inside a tick
 
-- **A failed source.** A source read fails, or returns something that is not a plausible temperature → that control goes to `failsafe` (default 100 %) on the same tick. Every source is read every tick, so there is no older value to fall back on. *(Draft 2 said "older than 3 s", which could never happen.)*
+- **A failed source.** A source read fails, or returns something that is not a plausible temperature → that control goes to `failsafe` (default 100 %) on the same tick. A device asleep is not a failed source (§4.2). Every source is read every tick, so there is no older value to fall back on. *(Draft 2 said "older than 3 s", which could never happen.)*
 - **An emergency.** A watched sensor at or above its **emergency limit** → every adopted control goes to `emergency` (100 %) until that sensor falls 5 °C below the limit. The watched sensors are:
   - sensors with a plausible limit of their own: hwmon `temp_crit`, or the NVML GPU max (93 °C here);
   - every CPU sensor, at TjMax from a small table (90 °C for the 5950X; k10temp gives no limit);
@@ -680,6 +689,7 @@ A `setup` event carries the step, the control being measured, live readings ("Ra
    "emergency":[{"sensor":"hwmon/k10temp/0000:00:18.3/temp1","label":"CPU · Tctl","celsius":94.5,"limit":90,"release":85}],
    "sensors":[{"key":"hwmon/k10temp/0000:00:18.3/temp1","label":"Tctl","device":"CPU","celsius":62.1,
                "scale":[20,95],"limits":[…],"virtual":false,"below_ambient":false,"error":null}],
+               // "asleep":true, with no celsius and no error, for a device asleep (§4.2; additive, 0.10.0)
    "controls":[{"key":"hwmon/it87/it87.2608/pwm1","label":"CPU cooler","kind":"pwm","fans":1,"rpm":1140,"rpms":[1140],
                 "state":"curve","reason":null,"duty":51.0,"target":52.0,"trend":"rising",
                 "curve":"cpu-quiet","curve_label":"CPU quiet","floor":30.0,"may_stop":false,"override":null}],
@@ -1208,7 +1218,7 @@ Milestones, each ending in something visible:
     - AMD up to RDNA3 (`pwm1`), RDNA4 (OverDrive only), nouveau (0–100), nct6775 (Smart Fan IV back; manual at 255 reads 0, no contest), f71882fg and w83627ehf (their own modes back).
 
   Not yet, and why:
-  - **A dGPU that sleeps.** amdgpu returns EPERM for every read while a dGPU is runtime-suspended, as hybrid laptops' are most of the time. A curve on its temperature would fail and run its fans at their failsafe. Generated curves skip a GPU the idle sample couldn't read, but a curve given one by hand would fail.
+  - ~~**A dGPU that sleeps.**~~ Done in M10: a device asleep is not a failed read (§4.2). Generated curves still skip a GPU the idle sample couldn't read, since its idle temperature is unknown.
   - **hp's manual duty**, and **dell_smm's global enable** beyond `pwm1`, for the reasons in §3.5.
   - **Captures.** Every driver here is Documented: the simulator is only as good as its reading of the source.
 
@@ -1241,7 +1251,13 @@ Milestones, each ending in something visible:
     - `--version` took the hash of whatever git repository surrounded the build, such as an AUR helper's clone of the
       package. It now takes only this checkout's.
 
-  Not yet: screenshots for the README and the marketplace preview, and the marketplace submission itself.
+  - **A device asleep** (§4.2), approved on 23 Oct 2026: a curve given by hand on a hybrid laptop's sleeping dGPU no longer runs
+    its fans at 100 %. The simulator's chips can sleep while the GPU is idle, and `framework16`, a Framework Laptop 16 with its
+    Radeon module, runs a fan on the hotter of a CPU curve and a dGPU curve through sleep, a render and sleep again.
+  - **The plugin says which to update** when it and the running `pennad` don't fit: the hello's protocol and version are checked
+    against what the plugin reads (protocol 2, `pennad` 0.9.0 or newer).
+
+  Not yet: the marketplace submission itself.
 
 ## 11. Decisions (approved 21 Oct 2026)
 

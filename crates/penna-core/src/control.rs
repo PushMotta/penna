@@ -196,8 +196,8 @@ pub struct LoopState {
     pub full_speed: bool,
     pub override_all: Option<Override>,
     pub overrides: BTreeMap<Key, Override>,
-    /// Every source this tick: physical sensors and virtual ones, value or why not.
-    pub sources: BTreeMap<Key, Result<f64, String>>,
+    /// Every source this tick: physical sensors and virtual ones.
+    pub sources: BTreeMap<Key, SourceValue>,
     windows: BTreeMap<Key, VecDeque<(f64, f64)>>,
     pub curves: BTreeMap<String, CurveState>,
     /// Curve id → its output this tick, or why there is none.
@@ -400,63 +400,109 @@ pub fn tick(plan: &Plan, prev: &LoopState, readings: &Readings, now: f64) -> (Lo
     (st, cmds)
 }
 
+/// One source this tick (§4.2): a temperature, a device asleep, or why there is no value.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SourceValue {
+    Celsius(f64),
+    /// A device asleep, which makes no heat: a curve on it rests at its lowest point, and a virtual sensor leaves it out.
+    Asleep,
+    Failed(String),
+}
+
+impl SourceValue {
+    pub fn celsius(&self) -> Option<f64> {
+        match self {
+            SourceValue::Celsius(v) => Some(*v),
+            _ => None,
+        }
+    }
+}
+
 /// Every source the loop reads, this tick. A sensor that is missing, unreadable or implausible is a failed read at once: the
-/// daemon reads every source on every tick, so there is no older value to fall back on (§6.3).
+/// daemon reads every source on every tick, so there is no older value to fall back on (§6.3). A device asleep is not a failed
+/// read: its driver says it is runtime-suspended (§4.2).
 fn resolve_sources(plan: &Plan, st: &mut LoopState, readings: &Readings, now: f64) {
     st.sources.clear();
     for key in &plan.physical {
         let v = match readings.temps.get(key) {
-            Some(Sample::Value(v)) => Ok(*v),
-            Some(Sample::Implausible(v)) => Err(format!("{key} read {v}, which is not a temperature")),
-            Some(Sample::Error(e)) => Err(format!("{key}: {e}")),
-            None => Err(format!("{key} was not read")),
+            Some(Sample::Value(v)) => SourceValue::Celsius(*v),
+            Some(Sample::Asleep) => SourceValue::Asleep,
+            Some(Sample::Implausible(v)) => SourceValue::Failed(format!("{key} read {v}, which is not a temperature")),
+            Some(Sample::Error(e)) => SourceValue::Failed(format!("{key}: {e}")),
+            None => SourceValue::Failed(format!("{key} was not read")),
         };
         st.sources.insert(key.clone(), v);
     }
+    let get = |k: &Key, st: &LoopState| st.sources.get(k).cloned().unwrap_or_else(|| SourceValue::Failed(format!("{k} was not read")));
     for (key, kind) in &plan.virtuals {
-        let get = |k: &Key, st: &LoopState| st.sources.get(k).cloned().unwrap_or_else(|| Err(format!("{k} was not read")));
         let v = match kind {
             VirtualKind::Max(ins) | VirtualKind::Min(ins) | VirtualKind::Average(ins) => {
-                let vals: Result<Vec<f64>, String> = ins.iter().map(|k| get(k, st)).collect();
-                vals.map(|v| match kind {
-                    VirtualKind::Max(_) => v.iter().copied().fold(f64::MIN, f64::max),
-                    VirtualKind::Min(_) => v.iter().copied().fold(f64::MAX, f64::min),
-                    _ => v.iter().sum::<f64>() / v.len() as f64,
-                })
+                // A failed input fails the sensor. An input asleep is left out, and every input asleep is the sensor asleep.
+                let mut vals = Vec::new();
+                let mut failed = None;
+                for k in ins {
+                    match get(k, st) {
+                        SourceValue::Celsius(v) => vals.push(v),
+                        SourceValue::Asleep => {}
+                        SourceValue::Failed(e) => {
+                            failed.get_or_insert(e);
+                        }
+                    }
+                }
+                match failed {
+                    Some(e) => SourceValue::Failed(e),
+                    None if vals.is_empty() => SourceValue::Asleep,
+                    None => SourceValue::Celsius(match kind {
+                        VirtualKind::Max(_) => vals.iter().copied().fold(f64::MIN, f64::max),
+                        VirtualKind::Min(_) => vals.iter().copied().fold(f64::MAX, f64::min),
+                        _ => vals.iter().sum::<f64>() / vals.len() as f64,
+                    }),
+                }
             }
             VirtualKind::TimeAverage { source, seconds } => {
+                let cur = get(source, st);
                 let window = st.windows.entry(key.clone()).or_default();
-                let cur = st.sources.get(source).cloned().unwrap_or_else(|| Err(format!("{source} was not read")));
-                if let Ok(v) = cur {
-                    window.push_back((now, v));
+                match cur {
+                    SourceValue::Celsius(v) => window.push_back((now, v)),
+                    // A device that wakes starts its average afresh.
+                    SourceValue::Asleep => window.clear(),
+                    SourceValue::Failed(_) => {}
                 }
                 while window.front().is_some_and(|(t, _)| now - t > *seconds) {
                     window.pop_front();
                 }
-                cur.map(|_| window.iter().map(|(_, v)| v).sum::<f64>() / window.len() as f64)
+                match cur {
+                    SourceValue::Celsius(_) => SourceValue::Celsius(window.iter().map(|(_, v)| v).sum::<f64>() / window.len() as f64),
+                    other => other,
+                }
             }
         };
-        st.sources.insert(key.clone(), v.map_err(|e| format!("{key}: {e}")));
+        let v = match v {
+            SourceValue::Failed(e) => SourceValue::Failed(format!("{key}: {e}")),
+            v => v,
+        };
+        st.sources.insert(key.clone(), v);
     }
 }
 
 fn update_emergency(plan: &Plan, st: &mut LoopState) {
     for (key, limit) in &plan.emergency {
         match st.sources.get(key) {
-            Some(Ok(v)) if *v >= *limit => {
+            Some(SourceValue::Celsius(v)) if *v >= *limit => {
                 st.emergency.insert(key.clone(), *limit);
             }
-            Some(Ok(v)) if *v < limit - EMERGENCY_RELEASE => {
+            Some(SourceValue::Celsius(v)) if *v < limit - EMERGENCY_RELEASE => {
                 st.emergency.remove(key);
             }
-            // A failed read keeps whatever it was: an emergency does not end because the sensor went quiet.
+            // A failed read keeps whatever it was: an emergency does not end because the sensor went quiet, nor because it fell
+            // asleep.
             _ => {}
         }
     }
 }
 
 fn eval_curve(c: &CurvePlan, st: &mut LoopState, now: f64) -> Result<f64, String> {
-    let source = |k: &Key, st: &LoopState| st.sources.get(k).cloned().unwrap_or_else(|| Err(format!("{k} was not read")));
+    let source = |k: &Key, st: &LoopState| st.sources.get(k).cloned().unwrap_or_else(|| SourceValue::Failed(format!("{k} was not read")));
     match &c.kind {
         CurveKind::Flat { percent } => Ok(*percent),
         CurveKind::Mix { op, curves } => {
@@ -472,8 +518,14 @@ fn eval_curve(c: &CurvePlan, st: &mut LoopState, now: f64) -> Result<f64, String
             let raw = source(k, st);
             let cs = st.curves.entry(c.id.clone()).or_default();
             let s = match raw {
-                Ok(v) => smooth(cs, v, c.response, now),
-                Err(e) => {
+                SourceValue::Celsius(v) => smooth(cs, v, c.response, now),
+                // Asleep, it makes no heat: the curve rests at its lowest point, and starts afresh when it wakes.
+                SourceValue::Asleep => {
+                    cs.smoothed = None;
+                    cs.out = None;
+                    return Ok(graph(points, f64::MIN));
+                }
+                SourceValue::Failed(e) => {
                     cs.smoothed = None;
                     cs.out = None;
                     return Err(e);
@@ -515,8 +567,14 @@ fn eval_curve(c: &CurvePlan, st: &mut LoopState, now: f64) -> Result<f64, String
             let raw = source(k, st);
             let cs = st.curves.entry(c.id.clone()).or_default();
             let s = match raw {
-                Ok(v) => smooth(cs, v, c.response, now),
-                Err(e) => {
+                SourceValue::Celsius(v) => smooth(cs, v, c.response, now),
+                SourceValue::Asleep => {
+                    cs.smoothed = None;
+                    cs.loaded = false;
+                    cs.out = Some(*idle);
+                    return Ok(*idle);
+                }
+                SourceValue::Failed(e) => {
                     cs.smoothed = None;
                     return Err(e);
                 }

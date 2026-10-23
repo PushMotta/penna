@@ -67,6 +67,7 @@ pub fn tick_frame(t: &Tick, style: Style, via: &str, mock: bool) -> String {
         };
         let note = match (&s.error, s.below_ambient) {
             (Some(e), _) => format!("   {}", style.urgent(&format!("read failed: {e}"))),
+            (None, _) if s.asleep => format!("   {}", style.dim("asleep")),
             (None, true) => format!("   {}", style.dim("below room temperature")),
             _ => String::new(),
         };
@@ -228,6 +229,9 @@ fn sensor(out: &mut String, s: &SensorSnapshot, style: Style) {
     let mut meta: Vec<String> = Vec::new();
     if let Some(p) = problem(&s.status, "°C") {
         meta.push(style.urgent(&p));
+    }
+    if s.status.asleep {
+        meta.push(style.dim("asleep"));
     }
     if !s.limits.is_empty() {
         meta.push(style.dim(&limits(&s.limits)));

@@ -98,6 +98,7 @@ mod tests {
                     is_virtual: false,
                     below_ambient: false,
                     error: None,
+                    asleep: false,
                 })
                 .collect(),
             controls: vec![],

@@ -206,6 +206,9 @@ pub enum Sample<T> {
     Implausible(f64),
     /// The read itself failed.
     Error(String),
+    /// The device is asleep and can't be read without waking it: a GPU its driver has runtime-suspended, as a hybrid laptop's
+    /// is most of the time. It makes no heat while it sleeps (§4.2).
+    Asleep,
 }
 
 impl<T: Copy> Sample<T> {

@@ -376,6 +376,7 @@ Panel {
               detail: row.detail || ""
               celsius: row.celsius === null || row.celsius === undefined ? NaN : Number(row.celsius)
               failed: !!row.error
+              asleep: row.asleep === true
               lo: row.lo || 20
               hi: row.hi || 100
               foreground: root.fg

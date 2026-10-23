@@ -1261,3 +1261,35 @@ fn setup_measures_a_gpd_handheld_and_an_acer_laptop() {
     let acer = laptop_setup("acer");
     assert!(acer.iter().all(|p| p["write"] == "ok"), "a duty kept as a percent reads back within 2 %: {acer:?}");
 }
+
+/// A Framework 16 whose dGPU sleeps whenever it is idle, with the fan on the hotter of a CPU curve and a dGPU curve given by
+/// hand (§4.2). Asleep, the dGPU is no failed read: the fan stays on its curve and follows the CPU. Awake and rendering, the
+/// dGPU's curve takes over; asleep again, the fan comes back down.
+#[test]
+fn a_dgpu_asleep_leaves_its_fan_on_the_cpu_curve() {
+    let dir = fresh("framework16");
+    let scenario = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../test/fixtures/drivers/framework16.toml");
+    let d = Daemon::start_scenario(&dir, scenario.to_str().unwrap(), "tree", &["--speed", "50"]);
+    let mut c = d.connect();
+    c.line();
+    assert_eq!(c.call(json!({"op": "subscribe"}))["ok"], true);
+    let dgpu = "hwmon/amdgpu/0000:03:00.0/temp1";
+    let sensor = |t: &Value| t["sensors"].as_array().unwrap().iter().find(|s| s["key"] == dgpu).cloned().unwrap();
+    let fan = |t: &Value| t["controls"].as_array().unwrap()[0].clone();
+
+    let t = c.tick_where(30, "the fan on its curve", |t| fan(t)["state"] == "curve" && fan(t)["duty"].as_f64() >= Some(24.0));
+    let s = sensor(&t);
+    assert_eq!(s["asleep"], true, "{s}");
+    assert!(s["celsius"].is_null() && s["error"].is_null(), "asleep is neither a value nor an error: {s}");
+    assert!(fan(&t)["duty"].as_f64().unwrap() < 30.0, "the CPU's curve, not a failsafe: {}", fan(&t));
+
+    let t = c.tick_where(200, "the dGPU rendering", |t| fan(t)["duty"].as_f64() > Some(50.0));
+    assert!(sensor(&t)["celsius"].as_f64().is_some_and(|v| v > 55.0), "{}", sensor(&t));
+    assert!(sensor(&t).get("asleep").is_none(), "awake, the field is left out: {}", sensor(&t));
+
+    let t = c.tick_where(200, "asleep again", |t| sensor(t)["asleep"] == true && fan(t)["duty"].as_f64() < Some(30.0));
+    assert_eq!(fan(&t)["state"], "curve");
+    let ticks = (0..20).map(|_| c.tick_where(5, "a tick", |_| true)).collect::<Vec<_>>();
+    assert!(ticks.iter().all(|t| fan(t)["state"] == "curve"), "never failsafe while it sleeps");
+    d.stop();
+}

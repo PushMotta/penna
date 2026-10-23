@@ -35,7 +35,7 @@ pub struct DeviceSnapshot {
     pub controls: Vec<ControlSnapshot>,
 }
 
-/// One value or why there is none. Exactly one field is set.
+/// One value or why there is none. At most one field is set.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Status {
     /// A number the hardware reported that cannot be what it claims (a temperature of 4000 °C).
@@ -43,6 +43,9 @@ pub struct Status {
     pub implausible: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Its device is asleep, which is not a failed read (DESIGN.md §4.2).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub asleep: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -144,9 +147,10 @@ impl Snapshot {
 fn split<T: Copy>(sample: Option<&Sample<T>>) -> (Option<T>, Status) {
     match sample {
         Some(Sample::Value(v)) => (Some(*v), Status::default()),
-        Some(Sample::Implausible(v)) => (None, Status { implausible: Some(*v), error: None }),
-        Some(Sample::Error(e)) => (None, Status { implausible: None, error: Some(e.clone()) }),
-        None => (None, Status { implausible: None, error: Some("not read".to_owned()) }),
+        Some(Sample::Implausible(v)) => (None, Status { implausible: Some(*v), ..Status::default() }),
+        Some(Sample::Error(e)) => (None, Status { error: Some(e.clone()), ..Status::default() }),
+        Some(Sample::Asleep) => (None, Status { asleep: true, ..Status::default() }),
+        None => (None, Status { error: Some("not read".to_owned()), ..Status::default() }),
     }
 }
 

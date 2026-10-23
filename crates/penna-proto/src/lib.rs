@@ -355,6 +355,9 @@ pub struct SensorTick {
     pub below_ambient: bool,
     /// Why there is no value.
     pub error: Option<String>,
+    /// Its device is asleep, so there is no value and nothing is wrong: a GPU its driver has runtime-suspended (§4.2).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub asleep: bool,
 }
 
 /// What a control accepts (§3.5).

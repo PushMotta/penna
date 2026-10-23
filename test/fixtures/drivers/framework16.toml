@@ -1,0 +1,71 @@
+# A Framework Laptop 16 with its Radeon RX 7700S graphics module: a hybrid laptop whose dGPU amdgpu runtime-suspends whenever
+# it is idle (DESIGN.md §4.2; drivers/gpu/drm/amd/pm/amdgpu_pm.c at v7.3, where every hwmon read of a suspended GPU returns
+# EPERM rather than wake it). The fan is cros_ec_hwmon's, as on the Framework 13 fixture. The configuration gives the fan a
+# curve by hand that reads the dGPU: the GPU sleeps for a minute, renders for a minute and a half, and sleeps again.
+# A Documented fixture.
+name = "framework16"
+cpu_model = "AMD Ryzen 9 7940HS w/ Radeon 780M Graphics"
+ambient = 24.0
+seed = 16
+config = "framework16.config.toml"
+seconds = 600
+
+[load]
+points = [
+  { at = 0, cpu = 0.05, gpu = 0.0 },
+  { at = 60, cpu = 0.05, gpu = 0.0 },
+  { at = 61, cpu = 0.3, gpu = 0.9 },
+  { at = 150, cpu = 0.3, gpu = 0.9 },
+  { at = 151, cpu = 0.05, gpu = 0.0 },
+]
+
+[[body]]
+id = "cpu"
+load = "cpu"
+capacity = 16.0
+idle_watts = 5.0
+load_watts = 45.0
+passive = 0.15
+airflow = 1.2
+fan = [{ id = "fan1", weight = 1.0 }]
+
+[[body]]
+id = "dgpu"
+load = "gpu"
+capacity = 30.0
+idle_watts = 0.0
+load_watts = 100.0
+passive = 0.5
+airflow = 2.4
+fan = [{ id = "fan1", weight = 1.0 }]
+
+[[chip]]
+driver = "k10temp"
+path = "devices/pci0000:00/0000:00:18.3"
+hwmon = 2
+temp = [{ channel = 1, label = "Tctl", body = "cpu", noise = 0.3, spikes = 4.0 }]
+
+[[chip]]
+driver = "amdgpu"
+path = "devices/pci0000:00/0000:00:01.1/0000:03:00.0"
+hwmon = 4
+sleeps = true
+temp = [{ channel = 1, label = "edge", body = "dgpu", noise = 0.3 }]
+
+[[chip]]
+driver = "cros_ec"
+path = "devices/platform/cros_ec_lpcs.0/cros-ec-dev.1.auto/cros-ec-hwmon.0"
+hwmon = 7
+
+[[chip.pwm]]
+channel = 1
+enable = 2
+firmware = { body = "cpu", points = [[44, 0], [45, 20], [70, 60], [85, 100]] }
+
+[[chip.fan]]
+channel = 1
+id = "fan1"
+pwm = 1
+max_rpm = 5400
+stop = 12
+start = 16

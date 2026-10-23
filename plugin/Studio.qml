@@ -55,7 +55,9 @@ Item {
   readonly property string selectedCurveId: viewedProfile && viewedProfile.assign && viewedProfile.assign[selectedKey] ? String(viewedProfile.assign[selectedKey]) : "firmware"
   readonly property var selectedCurve: body ? find(body.curves, "id", selectedCurveId) : null
   readonly property var selectedCurveLive: tick ? find(tick.curves, "id", selectedCurveId) : null
-  readonly property var plausibleSensors: Model.sensors(tick).filter(function(s) { return !s.below_ambient && s.celsius !== null && s.celsius !== undefined })
+  readonly property var plausibleSensors: Model.sensors(tick).filter(function(s) {
+    return !s.below_ambient && (s.asleep === true || (s.celsius !== null && s.celsius !== undefined))
+  })
   readonly property var coldSensors: Model.sensors(tick).filter(function(s) { return s.below_ambient })
 
   // A drag sends drafts ten times a second and each reply is a whole studio body; lists built from it are replaced only
@@ -901,6 +903,7 @@ Item {
                   name: s.virtual ? s.label : Model.shortName(s)
                   detail: s.virtual || String(s.label).toLowerCase() === Model.shortName(s).toLowerCase() ? "" : s.label
                   celsius: s.celsius === null || s.celsius === undefined ? NaN : Number(s.celsius)
+                  asleep: s.asleep === true
                   lo: Model.scale(s)[0]
                   hi: Model.scale(s)[1]
                   foreground: root.foreground

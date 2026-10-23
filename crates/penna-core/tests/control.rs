@@ -1,8 +1,8 @@
 //! The control loop on simulated time against a fake desk (DESIGN.md §4, §6.3, §6.4).
 mod common;
 use common::*;
-use penna_core::control::{Command, Request, Scope, State, Trend};
-use penna_core::{ControlMode, Sample};
+use penna_core::control::{Command, Request, Scope, SourceValue, State, Trend};
+use penna_core::{ControlMode, Key, Sample};
 
 #[test]
 fn first_tick_takes_every_adopted_control_and_nothing_else() {
@@ -404,4 +404,72 @@ fn writes_only_when_the_value_changes() {
     rig.run(40);
     rig.step();
     assert!(rig.last.is_empty(), "steady: {:?}", rig.last);
+}
+
+/// A hybrid laptop's dGPU, runtime-suspended, can't be read and makes no heat (§4.2): a curve on it rests at its lowest point
+/// instead of failing safe at 100 %, and a Mix leaves it out. When it wakes, the curve follows it again.
+#[test]
+fn a_gpu_asleep_rests_its_curve_and_a_mix_leaves_it_out() {
+    let mut rig = Rig::standard();
+    rig.st.apply(&rig.plan.clone(), Request::Profile("boost".into()), rig.now).unwrap();
+    let mut cold = Rig::standard();
+    cold.st.apply(&cold.plan.clone(), Request::Profile("boost".into()), cold.now).unwrap();
+    for r in [&mut rig, &mut cold] {
+        r.set(&cpu(), 70.0);
+        r.set(&gpu_temp(), 80.0);
+        r.run(20);
+    }
+    // Asleep on one desk, cold on the other: both run the GPU fan on the CPU's half of the Mix.
+    rig.temps.insert(gpu_temp(), Sample::Asleep);
+    cold.set(&gpu_temp(), 30.0);
+    for _ in 0..60 {
+        rig.step();
+        cold.step();
+        assert_eq!(rig.state(&gpu_fan()), State::Curve, "asleep is not a failed read");
+    }
+    assert_eq!(rig.st.sources[&gpu_temp()], SourceValue::Asleep);
+    assert_eq!(rig.st.outputs["gpu"], Ok(0.0), "the gpu curve rests at its first point");
+    assert_eq!(rig.st.outputs["case"], cold.st.outputs["case"]);
+    assert_eq!(rig.duty(&gpu_fan()), cold.duty(&gpu_fan()));
+
+    rig.set(&gpu_temp(), 80.0);
+    rig.step();
+    assert!(rig.st.outputs["gpu"].clone().unwrap() > 70.0, "awake again, the curve follows it at once");
+}
+
+/// A virtual sensor leaves out an input asleep; with every input asleep it is asleep itself, and a failed input still fails it.
+#[test]
+fn a_virtual_sensor_leaves_out_an_input_asleep() {
+    let config = CONFIG.replace(
+        "[[sensor]]\nkey = \"virt/avg\"",
+        "[[sensor]]\nkey = \"virt/hottest\"\nmax = [\"hwmon/k10temp/0000:00:18.3/temp1\", \"nvml/GPU-1/temp\"]\n\n[[sensor]]\nkey = \"virt/avg\"",
+    );
+    let mut rig = Rig::new(plan(&config, &measured(20.0, 30.0)));
+    let hottest = Key::parse("virt/hottest").unwrap();
+    rig.set(&cpu(), 50.0);
+    rig.temps.insert(gpu_temp(), Sample::Asleep);
+    rig.step();
+    assert_eq!(rig.st.sources[&hottest], SourceValue::Celsius(50.0));
+    rig.temps.insert(cpu(), Sample::Asleep);
+    rig.step();
+    assert_eq!(rig.st.sources[&hottest], SourceValue::Asleep);
+    rig.temps.insert(cpu(), Sample::Error("gone".into()));
+    rig.step();
+    assert!(matches!(rig.st.sources[&hottest], SourceValue::Failed(_)), "{:?}", rig.st.sources[&hottest]);
+}
+
+/// An emergency does not end because its sensor fell asleep: only a reading 5 °C below the limit ends it (§6.3).
+#[test]
+fn an_emergency_outlasts_its_sensor_falling_asleep() {
+    let mut rig = Rig::standard();
+    rig.run(3);
+    rig.set(&gpu_temp(), 94.0);
+    rig.step();
+    assert_eq!(rig.state(&pwm()), State::Emergency);
+    rig.temps.insert(gpu_temp(), Sample::Asleep);
+    rig.run(5);
+    assert_eq!(rig.state(&pwm()), State::Emergency);
+    rig.set(&gpu_temp(), 60.0);
+    rig.step();
+    assert_eq!(rig.state(&pwm()), State::Curve);
 }

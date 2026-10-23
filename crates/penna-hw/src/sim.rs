@@ -173,6 +173,10 @@ pub struct Chip {
     /// amdgpu's OverDrive fan curve, on the device's `gpu_od/fan_ctrl/fan_curve`.
     #[serde(default)]
     pub od: Option<OdSpec>,
+    /// Runtime-suspended while the GPU load is under 5 %, as a hybrid laptop's dGPU is most of the time: the device's
+    /// `power/runtime_status` reads `suspended`, and every temperature read fails, as amdgpu's return EPERM rather than wake it.
+    #[serde(default)]
+    pub sleeps: bool,
 }
 
 /// amdgpu's OverDrive fan curve (amdgpu_pm.c, smu_v13_0_0_ppt.c at v7.3): read as `OD_FAN_CURVE:`, `i: <°C>C <%>%` per point, and
@@ -564,6 +568,10 @@ impl Sim {
             symlink(format!("../../{}/hwmon/hwmon{}", chip.path, chip.hwmon), class.join(format!("hwmon{}", chip.hwmon)))?;
             if let Some(m) = &chip.model {
                 put(&self.root.join(&chip.path).join("model"), m)?;
+            }
+            if chip.sleeps {
+                fs::create_dir_all(self.root.join(&chip.path).join("power"))?;
+                put(&self.root.join(&chip.path).join("power/runtime_status"), "active")?;
             }
             for t in &chip.temps {
                 if let Some(l) = &t.label {
@@ -1132,8 +1140,13 @@ impl Sim {
     }
 
     fn write_sensors(&mut self, dt: f64) -> Result<()> {
+        let gpu_load = self.sc.load_at(self.t).gpu;
         for (ci, chip) in self.sc.chips.clone().iter().enumerate() {
             let dir = self.attr_dir(chip);
+            let asleep = chip.sleeps && gpu_load < 0.05;
+            if chip.sleeps {
+                put(&self.root.join(&chip.path).join("power/runtime_status"), if asleep { "suspended" } else { "active" })?;
+            }
             for t in &chip.temps {
                 let path = dir.join(format!("temp{}_input", t.channel));
                 let target = format!("{}/temp{}", chip.driver, t.channel);
@@ -1145,7 +1158,7 @@ impl Sim {
                     put(&path, "garbage")?;
                     continue;
                 }
-                let unreadable = self.targeted(FaultKind::Unreadable, &target).is_some();
+                let unreadable = asleep || self.targeted(FaultKind::Unreadable, &target).is_some();
                 let v = match (t.fixed, &t.body) {
                     (Some(v), _) => v,
                     (None, Some(b)) => {
@@ -1164,13 +1177,16 @@ impl Sim {
                     }
                     (None, None) => self.sc.ambient,
                 };
+                let locked = fs::metadata(&path).is_ok_and(|m| m.permissions().mode() & 0o777 == 0);
                 if unreadable {
-                    let locked = fs::metadata(&path).is_ok_and(|m| m.permissions().mode() & 0o777 == 0);
                     if !locked {
                         put(&path, &((v * 1000.0).round() as i64).to_string())?;
                         fs::set_permissions(&path, fs::Permissions::from_mode(0o000))?;
                     }
                     continue;
+                }
+                if locked {
+                    fs::set_permissions(&path, fs::Permissions::from_mode(0o644))?;
                 }
                 put(&path, &((v * 1000.0).round() as i64).to_string())?;
             }

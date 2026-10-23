@@ -2,7 +2,7 @@
 //! that changes. Every line that says something changed is also kept for [`Trace::take_events`], which the socket sends to
 //! subscribers as `event`s (DESIGN.md §7.3).
 use penna_core::config::{Measured, VirtualKind};
-use penna_core::control::{Command, LoopState, Outcome, State, Trend};
+use penna_core::control::{Command, LoopState, Outcome, SourceValue, State, Trend};
 use penna_core::plan::Plan;
 use penna_core::{Key, Readings, Sample};
 use penna_hw::Machine;
@@ -217,7 +217,7 @@ impl Trace {
             self.emergency = !st.emergency.is_empty();
             if self.emergency {
                 let (k, l) = st.emergency.iter().next().expect("not empty");
-                let v = st.sources.get(k).and_then(|r| r.as_ref().ok()).copied().unwrap_or(f64::NAN);
+                let v = st.sources.get(k).and_then(SourceValue::celsius).unwrap_or(f64::NAN);
                 let text = format!(
                     "EMERGENCY  {} at {v:.1} °C, limit {l} °C: every fan to 100 % until {:.0} °C",
                     self.labels.get(k).map_or(k.as_str(), String::as_str),
@@ -261,7 +261,8 @@ impl Trace {
             .map(|k| {
                 let name = self.labels.get(k).map_or(k.channel(), String::as_str);
                 match st.sources.get(k) {
-                    Some(Ok(v)) => format!("{name} {v:.1}"),
+                    Some(SourceValue::Celsius(v)) => format!("{name} {v:.1}"),
+                    Some(SourceValue::Asleep) => format!("{name} asleep"),
                     _ => format!("{name} --"),
                 }
             })

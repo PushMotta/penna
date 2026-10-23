@@ -22,11 +22,19 @@ pub struct Hwmon {
 }
 
 struct Chip {
+    /// The device's `power/runtime_status`: a read that fails while it says `suspended` is a device asleep, not a fault.
+    runtime: Option<PathBuf>,
     temps: Vec<(Key, PathBuf)>,
     fans: Vec<(Key, PathBuf)>,
     pwms: Vec<Pwm>,
     targets: Vec<Target>,
     curves: Vec<Curve>,
+}
+
+impl Chip {
+    fn asleep(&self) -> bool {
+        self.runtime.as_deref().and_then(read_trimmed).is_some_and(|s| s == "suspended")
+    }
 }
 
 /// A control set through `pwmN` and `pwmN_enable`: a duty, a level, or a mode (§3.5).
@@ -308,7 +316,14 @@ impl Backend for Hwmon {
                 dir = d.clone();
                 channels = list_channels(d);
             }
-            let mut chip = Chip { temps: Vec::new(), fans: Vec::new(), pwms: Vec::new(), targets: Vec::new(), curves: Vec::new() };
+            let mut chip = Chip {
+                runtime: device_dir.as_ref().map(|d| d.join("power/runtime_status")).filter(|p| p.exists()),
+                temps: Vec::new(),
+                fans: Vec::new(),
+                pwms: Vec::new(),
+                targets: Vec::new(),
+                curves: Vec::new(),
+            };
             let mut device = Device {
                 id: format!("hwmon/{name}/{location}"),
                 source: Source::Hwmon,
@@ -425,7 +440,10 @@ impl Backend for Hwmon {
                 let sample = match read_int_sample(path) {
                     Sample::Value(raw) => sanity::temperature(sanity::millidegrees(raw)),
                     Sample::Implausible(v) => Sample::Implausible(v),
+                    // amdgpu refuses every read of a runtime-suspended GPU (EPERM) rather than wake it (§4.2).
+                    Sample::Error(_) if chip.asleep() => Sample::Asleep,
                     Sample::Error(e) => Sample::Error(e),
+                    Sample::Asleep => Sample::Asleep,
                 };
                 out.temps.insert(key.clone(), sample);
             }
@@ -434,6 +452,7 @@ impl Backend for Hwmon {
                     Sample::Value(rpm) => u32::try_from(rpm).map_or(Sample::Implausible(rpm as f64), Sample::Value),
                     Sample::Implausible(v) => Sample::Implausible(v),
                     Sample::Error(e) => Sample::Error(e),
+                    Sample::Asleep => Sample::Asleep,
                 };
                 out.rpms.insert(key.clone(), sample);
             }
@@ -451,6 +470,7 @@ impl Backend for Hwmon {
                         }
                         Sample::Implausible(v) => Sample::Implausible(v),
                         Sample::Error(e) => Sample::Error(e),
+                        Sample::Asleep => Sample::Asleep,
                     };
                     out.controls.insert(pwm.key.clone(), sample);
                     continue;
@@ -465,6 +485,7 @@ impl Backend for Hwmon {
                     Sample::Value(raw) => Sample::Implausible(raw as f64),
                     Sample::Implausible(v) => Sample::Implausible(v),
                     Sample::Error(e) => Sample::Error(e),
+                    Sample::Asleep => Sample::Asleep,
                 };
                 out.controls.insert(pwm.key.clone(), sample);
             }
@@ -476,6 +497,7 @@ impl Backend for Hwmon {
                     Sample::Value(v) => Sample::Implausible(v as f64),
                     Sample::Implausible(v) => Sample::Implausible(v),
                     Sample::Error(e) => Sample::Error(e),
+                    Sample::Asleep => Sample::Asleep,
                 };
                 out.controls.insert(t.key.clone(), sample);
             }
@@ -695,6 +717,7 @@ fn curve_reading(c: &Curve) -> Sample<ControlReading> {
             }
             Sample::Implausible(v) => Sample::Implausible(v),
             Sample::Error(e) => Sample::Error(e),
+            Sample::Asleep => Sample::Asleep,
         },
         CurveFiles::Od(path) => match od_read(path) {
             Ok(t) => {
