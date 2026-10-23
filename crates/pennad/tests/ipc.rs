@@ -45,9 +45,16 @@ impl Daemon {
         Daemon::start_scenario(dir, "render-burst", tree, extra)
     }
 
+    /// Always with this checkout's board database: the default is the installed one, which a machine with Penna installed has
+    /// and CI doesn't.
     fn start_scenario(dir: &Path, scenario: &str, tree: &str, extra: &[&str]) -> Daemon {
         let log = fs::File::create(dir.join("pennad.log")).unwrap();
-        let child = Command::new(env!("CARGO_BIN_EXE_pennad"))
+        let boards = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data/boards");
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_pennad"));
+        if !extra.contains(&"--boards") {
+            cmd.arg("--boards").arg(&boards);
+        }
+        let child = cmd
             .args(["--mock", scenario, "--forever", "--quiet", "--tree"])
             .arg(dir.join(tree))
             .arg("--runtime-dir")
