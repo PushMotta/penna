@@ -1,6 +1,6 @@
 # Penna — design specification
 
-Draft 3 · 21 October 2026 · status: decisions approved (§11), UI quality bar added (§8.6), M0–M9 done (M9 in the simulator), M10 prepared, design review 01 approved (milestone D, §11.1), design review 03 approved (milestone D2, §11.3). Penna 0.8.3 runs as a service on this desk, and since setup's generated curves were saved there, from the studio, it runs every fan on Balanced (M8). Draft 3 widens Penna from this desk to any workstation or laptop, with automatic setup, generated curves and a Defaults profile: design review 02 (§11.2) was approved the same day. M5 was done on 22 Oct 2026: Penna drives every fan on this desk, and it87 is Verified.
+Draft 3 · 21 October 2026 · status: decisions approved (§11), UI quality bar added (§8.6), M0–M10 done (M9 in the simulator), 0.10.0 published, design review 01 approved (milestone D, §11.1), design review 03 approved (milestone D2, §11.3). Penna 0.8.3 runs as a service on this desk, and since setup's generated curves were saved there, from the studio, it runs every fan on Balanced (M8). Draft 3 widens Penna from this desk to any workstation or laptop, with automatic setup, generated curves and a Defaults profile: design review 02 (§11.2) was approved the same day. M5 was done on 22 Oct 2026: Penna drives every fan on this desk, and it87 is Verified.
 
 Companion: design review 01 — mockups in real theme tokens, live motion prototypes, and eight calls before QML — is `design/penna-design-review.html`, a page to open in a browser.
 
@@ -1226,8 +1226,9 @@ Milestones, each ending in something visible:
   - the repositories, the plugin as its own repo, and a tagged tarball for the PKGBUILD and the AUR;
   - how to contribute a capture.
 
-  **Prepared 23 Oct 2026, as 0.10.0** (plugin 0.7.0). Publishing is `tools/release.sh publish`, once the repositories are public,
-  then `tools/release.sh aur` with the maintainer's AUR key:
+  **Published 23 Oct 2026, as 0.10.0** (plugin 0.7.0): `PushMotta/penna` and `PushMotta/omarchy-penna` are public, `v0.10.0`
+  has its GitHub release, and the AUR package built from the published tarball, its checksum verified and every test passing.
+  Publishing is `tools/release.sh publish`, then `tools/release.sh aur` with the maintainer's AUR key:
   - **README** for someone who has never seen Penna: its promises, the support table by driver and tier, install from the
     AUR, removal, the CLI. **CONTRIBUTING.md** says how to send a machine report and a change. Issue forms for machine reports
     and bugs.
@@ -1257,7 +1258,9 @@ Milestones, each ending in something visible:
   - **The plugin says which to update** when it and the running `pennad` don't fit: the hello's protocol and version are checked
     against what the plugin reads (protocol 2, `pennad` 0.9.0 or newer).
 
-  Not yet: the marketplace submission itself.
+  - **Screenshots** of the real popup and studio, by `tools/screenshots` (§8.6), against the mock desk after setup.
+
+  Not yet: the AUR push, which needs the maintainer's AUR key, and the marketplace submission (`plugin/docs/`).
 
 ## 11. Decisions (approved 21 Oct 2026)
 
