@@ -4,6 +4,10 @@ The shell side of [Penna](https://github.com/PushMotta/penna), fan control for L
 a popup, and a studio for curves and setup. Every fan is named for what it cools, with its RPM beside what it was asked for,
 and anything that goes wrong is said in a sentence.
 
+![The studio on Balanced: every fan named for its header, the CPU fan's generated curve with its stall line, and five minutes of every sensor](docs/media/studio.png)
+
+<img src="docs/media/popup.png" alt="The popup: profiles, temperatures, and every fan with its role, RPM and duty" width="380">
+
 The plugin draws; it changes nothing by itself. The fans are run by `pennad`, Penna's daemon, which the `penna` package
 installs as a system service. Without it the glyph says that Penna isn't running, and the fans stay with their firmware.
 

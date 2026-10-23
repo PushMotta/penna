@@ -18,6 +18,16 @@ only through the kernel's own drivers, hwmon and NVIDIA's NVML, and never touche
 
 The design, and the reasoning behind every rule, is in [DESIGN.md](DESIGN.md).
 
+![The studio on Balanced: every fan of a Gigabyte X570 board named for its header, as setup measured it, the CPU fan's generated curve with its stall line, and five minutes of every sensor](plugin/docs/media/studio.png)
+
+<img src="plugin/docs/media/popup.png" alt="The popup: profiles, three temperatures, every fan with its role, RPM and duty, and Full speed" width="380" align="right">
+
+The **popup** is for every day: the profile, the temperatures the curves follow, and every fan with its role, RPM and duty.
+The **studio** is for curves: one card per fan, the editor with the fan's own stall line and RPM scale, and five minutes of
+every sensor. Both take their colours from the shell's theme. These show a simulation of the desk Penna was built on, after
+setup measured it and its curves were saved.
+<br clear="right">
+
 ## Status
 
 This is the first public release, 0.10. Penna runs every day on the desk it was built on: a Gigabyte X570 AORUS PRO, whose

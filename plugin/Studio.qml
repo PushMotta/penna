@@ -402,8 +402,10 @@ Item {
   property var pushQueue: []
 
   function pushAll() {
-    var q = []
-    for (var i = 0; i < sensorRepeater.count; i++) q.push(i)
+    // Rows still waiting from the last tick go first: a tick that comes before the queue is through (a mock desk at --speed
+    // 20) would otherwise start it over, and the last rows would never be drawn.
+    var q = pushQueue.filter(function(i) { return i < sensorRepeater.count })
+    for (var i = 0; i < sensorRepeater.count; i++) if (q.indexOf(i) < 0) q.push(i)
     pushQueue = q
     stagger.running = q.length > 0
   }
