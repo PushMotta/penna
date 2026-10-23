@@ -23,6 +23,7 @@ use penna_core::held::HeldEntry;
 use penna_core::{ControlMode, Device, Inventory, Key, Readings};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 /// What a control reads right after a write (§6.4).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -73,6 +74,9 @@ pub trait Backend {
     fn relocate(&self, _entry: &HeldEntry) -> Option<HeldEntry> {
         None
     }
+    /// Reads what only people look at, an NVIDIA fan's speed, at most this often; `None`, the default, reads everything every
+    /// pass (§3.4).
+    fn pace(&mut self, _every: Option<Duration>) {}
 }
 
 pub struct Options {
@@ -299,6 +303,13 @@ impl Machine {
     pub fn set_pairing(&mut self, measured: &penna_core::config::Measured) {
         self.pairing = measured.controls.iter().filter(|m| !m.tachs.is_empty()).map(|m| (m.key.clone(), m.tachs.clone())).collect();
         label_controls(&mut self.inventory, &self.pairing);
+    }
+
+    /// See [`Backend::pace`]: `pennad` paces its reads except while setup measures, and `penna watch` reads everything.
+    pub fn pace(&mut self, every: Option<Duration>) {
+        for backend in &mut self.backends {
+            backend.pace(every);
+        }
     }
 
     fn owner(&mut self, key: &Key) -> Result<&mut Box<dyn Backend>> {

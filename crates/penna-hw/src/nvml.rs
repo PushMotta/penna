@@ -7,6 +7,10 @@
 //! * writing is `nvmlDeviceSetFanSpeed_v2`, clamped to the range the card accepts, which also makes the policy manual;
 //! * handing back below the floor is `nvmlDeviceSetDefaultFanSpeed_v2`, the driver's own curve;
 //! * restoring puts back exactly what was found: the driver's policy, or manual at the recorded speed.
+//!
+//! Reading a fan's RPM or percent costs about a millisecond of kernel time a call, and only people look at them: read-back
+//! checks the policy (§6.4), which is read every pass. `pennad` reads them every [`SPEED_EVERY`], and every pass while setup
+//! measures ([`Pace`]).
 use crate::{Backend, Readback};
 use anyhow::{Result, anyhow, bail};
 use nvml_wrapper::enum_wrappers::device::{TemperatureSensor, TemperatureThreshold};
@@ -18,11 +22,46 @@ use penna_core::{
     ControlInfo, ControlKind, ControlMode, ControlReading, Device, Key, Limit, LimitKind, Readings, Sample, SensorInfo, Source, TachInfo,
     sanity,
 };
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fmt;
+use std::time::{Duration, Instant};
 
 pub const DRIVER: &str = "driver";
 pub const MANUAL: &str = "manual";
+
+/// How often `pennad` reads an NVIDIA fan's RPM and percent outside setup (§3.4).
+pub const SPEED_EVERY: Duration = Duration::from_secs(5);
+
+/// A pass that wakes a little early still counts as due: ticks wake late by a different amount each time.
+const PACE_SLACK: Duration = Duration::from_millis(200);
+
+/// When the fans' speeds are read again.
+#[derive(Debug, Default)]
+struct Pace {
+    /// `None`: every pass.
+    every: Option<Duration>,
+    last: Option<Instant>,
+}
+
+impl Pace {
+    fn due(&mut self, now: Instant) -> bool {
+        let due = match (self.every, self.last) {
+            (Some(every), Some(last)) => now.saturating_duration_since(last) + PACE_SLACK >= every,
+            _ => true,
+        };
+        if due {
+            self.last = Some(now);
+        }
+        due
+    }
+}
+
+/// What a fan's last speed read found.
+struct Speed {
+    rpm: Sample<u32>,
+    percent: Result<f64, String>,
+}
 
 /// Who sets a fan's speed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -252,6 +291,8 @@ impl FanApi for RealNvml {
 pub struct NvmlBackend {
     api: RealNvml,
     gpus: Vec<Gpu>,
+    pace: Pace,
+    speeds: BTreeMap<Key, Speed>,
 }
 
 struct Gpu {
@@ -263,7 +304,7 @@ struct Gpu {
 impl NvmlBackend {
     /// `Err` carries why there is no NVML on this machine, in words for a note.
     pub fn open() -> std::result::Result<NvmlBackend, String> {
-        Ok(NvmlBackend { api: RealNvml::open()?, gpus: Vec::new() })
+        Ok(NvmlBackend { api: RealNvml::open()?, gpus: Vec::new(), pace: Pace::default(), speeds: BTreeMap::new() })
     }
 }
 
@@ -274,6 +315,7 @@ impl Backend for NvmlBackend {
 
     fn discover(&mut self) -> Result<Vec<Device>> {
         self.gpus.clear();
+        self.speeds.clear();
         let nvml = &self.api.nvml;
         let mut devices = Vec::new();
         for index in 0..nvml.device_count()? {
@@ -333,6 +375,8 @@ impl Backend for NvmlBackend {
     }
 
     fn read(&mut self, out: &mut Readings) -> Result<()> {
+        let fresh = self.pace.due(Instant::now());
+        let mut lost = false;
         for gpu in &self.gpus {
             let device = match self.api.nvml.device_by_index(gpu.index) {
                 Ok(d) => d,
@@ -344,6 +388,7 @@ impl Backend for NvmlBackend {
                         out.rpms.insert(Key::nvml_fan(&gpu.uuid, fan), Sample::Error(reason.clone()));
                         out.controls.insert(Key::nvml_fan(&gpu.uuid, fan), Sample::Error(reason.clone()));
                     }
+                    lost = true;
                     continue;
                 }
             };
@@ -355,14 +400,25 @@ impl Backend for NvmlBackend {
             );
             for fan in 0..gpu.fans {
                 let key = Key::nvml_fan(&gpu.uuid, fan);
-                out.rpms.insert(
-                    key.clone(),
-                    device.fan_speed_rpm(fan).map_or_else(|e| Sample::Error(Failure::from(e).to_string()), Sample::Value),
-                );
-                out.controls.insert(key, fan_control(&device, fan));
+                if fresh || !self.speeds.contains_key(&key) {
+                    let rpm = device.fan_speed_rpm(fan).map_or_else(|e| Sample::Error(Failure::from(e).to_string()), Sample::Value);
+                    let percent = device.fan_speed(fan).map(f64::from).map_err(|e| Failure::from(e).to_string());
+                    self.speeds.insert(key.clone(), Speed { rpm, percent });
+                }
+                let speed = &self.speeds[&key];
+                out.rpms.insert(key.clone(), speed.rpm.clone());
+                out.controls.insert(key, fan_control(&device, fan, &speed.percent));
             }
         }
+        if lost {
+            // Whatever comes back is read whole on the next pass.
+            self.pace.last = None;
+        }
         Ok(())
+    }
+
+    fn pace(&mut self, every: Option<Duration>) {
+        self.pace.every = every;
     }
 
     fn original(&mut self, key: &Key) -> Result<HeldEntry> {
@@ -391,17 +447,18 @@ impl Backend for NvmlBackend {
     }
 }
 
-fn fan_control(device: &NvmlDevice<'_>, fan: u32) -> Sample<ControlReading> {
-    let percent = match device.fan_speed(fan) {
-        Ok(p) => p,
-        Err(e) => return Sample::Error(Failure::from(e).to_string()),
+/// The fan's percent as last read, and who sets its speed, read now.
+fn fan_control(device: &NvmlDevice<'_>, fan: u32, percent: &Result<f64, String>) -> Sample<ControlReading> {
+    let percent = match percent {
+        Ok(p) => *p,
+        Err(e) => return Sample::Error(e.clone()),
     };
     let mode = match device.fan_control_policy(fan) {
         Ok(FanControlPolicy::TemperatureContinousSw) => ControlMode::Driver,
         Ok(FanControlPolicy::Manual) => ControlMode::Manual,
         Err(_) => ControlMode::Unknown,
     };
-    Sample::Value(ControlReading { percent: percent as f64, raw: None, mode })
+    Sample::Value(ControlReading { percent, raw: None, mode })
 }
 
 /// NVML's `00000000:09:00.0` as sysfs writes it: `0000:09:00.0`.
@@ -506,6 +563,21 @@ mod tests {
     fn back(fake: &mut Fake, entry: &HeldEntry) -> Result<String> {
         let HeldEntry::Nvml { key, uuid, fan, original_policy, original_speed } = entry else { unreachable!() };
         restore(fake, key, uuid, *fan, original_policy, *original_speed)
+    }
+
+    #[test]
+    fn a_fan_speed_is_read_every_five_seconds_and_every_pass_while_setup_measures() {
+        let t0 = Instant::now();
+        let at = |ms: u64| t0 + Duration::from_millis(ms);
+        let mut pace = Pace::default();
+        assert!(pace.due(at(0)) && pace.due(at(1000)), "unpaced, as `penna watch` reads: every pass");
+        pace.every = Some(SPEED_EVERY);
+        // Ticks a second apart, from 2 s to 12 s, the even ones 3 ms early and the odd ones 5 ms late.
+        let tick = |s: u64| if s % 2 == 0 { at(s * 1000 - 3) } else { at(s * 1000 + 5) };
+        let due: Vec<u64> = (2..=12).filter(|&s| pace.due(tick(s))).collect();
+        assert_eq!(due, [6, 11]);
+        pace.every = None;
+        assert!(pace.due(at(12_500)) && pace.due(at(13_000)), "setup measuring: every pass");
     }
 
     #[test]

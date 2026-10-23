@@ -94,7 +94,10 @@ The label the user sees is separate, editable, and stored with the key. Default 
 ### 3.4 Backends
 
 - **hwmon** — plain file reads and writes under a sysfs root that can be swapped (`/sys` in production, a temp directory in tests). Standard attributes are world-readable; writes need root.
-- **NVML** — through `nvml-wrapper`, loaded at runtime so the daemon starts on machines without NVIDIA. The wrapper loads the unversioned `libnvidia-ml.so` by default; Penna asks for `libnvidia-ml.so.1` first and falls back to the unversioned name. `nvml-wrapper` 0.13 does not wrap `GetTargetFanSpeed`; we do not need it (§0).
+- **NVML** — through `nvml-wrapper`, loaded at runtime so the daemon starts on machines without NVIDIA. The wrapper loads the unversioned `libnvidia-ml.so` by default; Penna asks for `libnvidia-ml.so.1` first and falls back to the unversioned name. `nvml-wrapper` 0.13 does not wrap `GetTargetFanSpeed`; we do not need it (§0). *(23 Oct 2026, §13.6.)* Each NVML call
+  costs about 1 ms of kernel time. Every tick reads the GPU's temperature and each fan's policy, which read-back checks. A
+  fan's RPM and percent are for people to read, so `pennad` reads them every 5 s, and every tick while setup measures. The
+  popup's and studio's GPU fan speeds move every 5 s; the CLI's direct `penna watch` still reads everything every pass.
 - **Mock** — fake sysfs tree plus simulator (§9).
 - **Platform profile** *(draft 3)* — the laptop-wide power profile, through power-profiles-daemon when it runs (§3.5).
 - amdgpu is an hwmon driver like any other (`pwm1`, and `gpu_od/fan_ctrl/` on RDNA3 and later), so it arrives with the laptop drivers in M9, not in v2. *v2:* USB coolers and hubs through `hidapi`. None of these exists on this desk.
@@ -1226,6 +1229,11 @@ Milestones, each ending in something visible:
   - ~~**A dGPU that sleeps.**~~ Done in M10: a device asleep is not a failed read (§4.2). Generated curves still skip a GPU the idle sample couldn't read, since its idle temperature is unknown.
   - **hp's manual duty**, and **dell_smm's global enable** beyond `pwm1`, for the reasons in §3.5.
   - **Captures.** Every driver here is Documented: the simulator is only as good as its reading of the source.
+  - **An NVIDIA dGPU's runtime sleep** (to check on a hybrid laptop). The NVIDIA driver can power an idle GPU down (RTD3,
+    `DynamicPowerManagement`). Penna reads NVML every tick, which may wake it or keep it awake, and that costs battery. A
+    report from such a laptop has to show the GPU's `power/runtime_status` with `pennad` running. If NVML wakes it, an
+    NVIDIA GPU that is suspended is asleep (§4.2) and is not read, as an amdgpu's is. This desk can't show it: the 3090
+    drives the display.
 
 - **M10** — **Public release:**
   - the repositories, the plugin as its own repo, and a tagged tarball for the PKGBUILD and the AUR;
@@ -1390,5 +1398,16 @@ These need root or a shell restart, and were not run for this draft.
 3. ~~**BIOS Smart Fan settings** that manual control may need.~~ None on this desk: all eight channels held in both M5 runs with the BIOS settings as they are (F36d). The fork notes some Gigabyte boards need a BIOS curve workaround.
 4. ~~**NVML on the 3090 as root.**~~ Verified in M4 (§9.4): manual speeds hold and read back as manual, `SetDefaultFanSpeed_v2` hands the fans back, and zero RPM returns at idle.
 5. **`pwm_enable` after suspend and after hibernate.**
-6. **Cost of a tick** (`strace -c` on the daemon). Goal: under 1 ms.
+6. ~~**Cost of a tick.**~~ *Measured 23 Oct 2026, without root.* The goal was under 1 ms. 0.10.4 used 11.4 ms of CPU a tick
+   over 60 s, nearly all of it in the kernel (`/proc/<pid>/task/*/stat`; 0.10.1's eight hours averaged 10.1 ms). NVML was
+   most of it. `penna watch --direct` costs 11.6 ms a pass, and 2.6 ms with `--no-nvml`. Through the daemon's own read path,
+   timed from schedstat:
+   - every hwmon read (both Super I/O chips, k10temp, the NVMe drives, acpitz) costs 1.7 ms a pass;
+   - each NVML call costs about 1 ms of kernel time, once a second as the loop makes them. A fan's RPM or percent costs
+     0.6–2.4 ms, its policy 0.3–1 ms, and the temperature under 0.05 ms. The cost moves between calls with their order.
+
+   The RPM and percent are only shown: read-back checks the policy (§6.4). So `pennad` reads them every 5 s (§3.4). A pass
+   then costs 4.7 ms, one in five 8.4 ms, 5.4 ms on average, against 8.9 ms unpaced. What is left is mostly the two policy
+   reads, which read-back needs every tick. The 1 ms goal can't be met with an NVIDIA GPU's fans read every tick. Without
+   one it nearly is. The two NVMe drives' four files also hold the loop for 17 ms of wall time a tick, with little CPU.
 7. ~~**The shell's render loop on this NVIDIA stack.**~~ Verified in M3: `threaded` (Quickshell 0.3.2, NVIDIA 615.78.08). A baseline run of the shipped popups, for comparison, is still to do.

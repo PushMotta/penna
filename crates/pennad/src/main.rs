@@ -533,6 +533,8 @@ fn run(args: Args) -> Result<()> {
         if machine.rediscover() {
             rediscovered(&mut live, &mut machine, &mut held, &mut out, now);
         }
+        // A GPU fan's speed is for people to read, and costs about a millisecond a fan; setup measures it (§3.4).
+        machine.pace(if live.setup.is_some() { None } else { Some(penna_hw::nvml::SPEED_EVERY) });
         let readings = machine.read();
         if setup::step(&mut live, &machine.inventory, &readings, &mut out, now, unix_now()) {
             machine.set_pairing(&live.measured);
