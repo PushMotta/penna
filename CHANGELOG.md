@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+From a second machine, an Intel N100 mini PC whose firmware runs its fan through ACPI:
+- **`penna doctor`** names a machine past its firmware's placeholders ("To be filled by O.E.M."). It also says plainly when a
+  fan is run by the firmware through ACPI, on or off with no speed to read, rather than sending you to look for a fan chip.
+- **`penna capture`** keeps the thermal class, so ACPI fans and the zones that drive them show in a machine report. It also
+  finds a sensor's module when its device has no driver link, as `coretemp`'s doesn't.
+- **The power-profile lever** works only where the firmware has a platform profile. Without one, power-profiles-daemon
+  changes only the CPU's power, and that is no fan lever.
+- An ACPI fan that reports its speed is read as `acpi_fan`, and a Wi-Fi card's sensor is called Wi-Fi.
+
 ## 0.10.3 (23 Oct 2026)
 
 - **Plugin 0.7.2, for the Omarchy marketplace:** its README links to Penna's for installing and removing the daemon, and the

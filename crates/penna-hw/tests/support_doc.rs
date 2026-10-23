@@ -127,7 +127,7 @@ fn boards() -> String {
 
 fn sensors() -> String {
     let mut out = String::from("| hwmon name | Shown as |\n|---|---|\n");
-    for name in ["k10temp", "zenpower", "coretemp", "nvme", "drivetemp", "acpitz", "asus_ec_sensors", "gigabyte_wmi"] {
+    for name in ["k10temp", "zenpower", "coretemp", "nvme", "drivetemp", "acpitz", "iwlwifi", "asus_ec_sensors", "gigabyte_wmi"] {
         out.push_str(&format!("| `{name}` | {} |\n", friendly_label(name)));
     }
     out.push_str(

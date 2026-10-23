@@ -59,6 +59,20 @@ pub fn capture(sysfs_root: &Path, dest: &Path) -> Result<Report> {
         copy_files(&real, &dest.join(&rel), |_| true, &mut report)?;
         link_and_create_target(&real.join("device"), &root, dest, &rel.join("device"), &mut report)?;
         mirror_link(&entry.path(), dest, &Path::new("class/hwmon").join(entry.file_name()))?;
+        // A module that registers its device with no driver link (coretemp): the module named like the chip.
+        if let Some(name) = fs::read_to_string(real.join("name")).ok().map(|n| n.trim().replace('-', "_"))
+            && fs::metadata(real.join("device/driver")).is_err()
+            && root.join("module").join(&name).join("parameters").is_dir()
+            && !report.modules.contains(&name)
+        {
+            copy_files(
+                &root.join("module").join(&name).join("parameters"),
+                &dest.join("module").join(&name).join("parameters"),
+                |_| true,
+                &mut report,
+            )?;
+            report.modules.push(name);
+        }
         if let Ok(device) = fs::canonicalize(real.join("device")) {
             let device_rel = inside(&root, &device)?;
             // Older drivers keep their channels on the device rather than in the hwmon directory (§3.5).
@@ -128,6 +142,17 @@ pub fn capture(sysfs_root: &Path, dest: &Path) -> Result<Report> {
                 |n| Some(n) == name.as_deref(),
                 &mut report,
             )?;
+        }
+    }
+    // The thermal class: the zones the firmware cools by, and its cooling devices. A fan the firmware runs through ACPI is one of
+    // these, of type `Fan`, and nowhere in hwmon.
+    if let Ok(entries) = fs::read_dir(root.join("class/thermal")) {
+        let mut entries: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+        entries.sort_by_key(|e| e.file_name());
+        for entry in entries {
+            let name = entry.file_name();
+            let keep = |n: &str| ["type", "max_state", "cur_state", "temp", "policy"].contains(&n) || n.starts_with("trip_point_");
+            copy_files(&entry.path(), &dest.join("class/thermal").join(&name), keep, &mut report)?;
         }
     }
     report.modules.sort();

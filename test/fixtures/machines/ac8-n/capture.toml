@@ -1,0 +1,5 @@
+# What `penna capture` recorded, and from what (DESIGN.md §3.6). No serial number, UUID or asset tag is kept.
+penna = "0.10.3 (487ebb6)"
+captured = "2026-10-23"
+kernel = "7.2.5-3-omarchy"
+modules = ["coretemp"]

@@ -423,6 +423,22 @@ pub const DRIVERS: &[Driver] = &[
         curve_on: &[],
         source: "github.com/johnfanv2/LenovoLegionLinux README",
     },
+    // An ACPI 4.0 fan that reports its speed (_FST). The firmware runs it; the older on/off kind has no hwmon at all.
+    Driver {
+        name: "acpi-fan",
+        hwmon: &["acpi_fan"],
+        class: Class::Other,
+        label: "ACPI fan",
+        offers: Offers::ReadOnly,
+        tier: Tier::Documented,
+        needs: None,
+        restore: None,
+        watchdog: None,
+        allowed: None,
+        curve: None,
+        curve_on: &[],
+        source: "drivers/acpi/fan_hwmon.c",
+    },
     Driver {
         name: "read-only",
         hwmon: &["system76_acpi", "surface_fan", "i915", "xe", "msi_wmi_platform"],

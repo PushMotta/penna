@@ -24,6 +24,9 @@ When there are no motherboard fans at all, it is usually one of two things:
   knows.
 - **The firmware claims the chip's ports.** The boot log says "ACPI resource conflict". The doctor names both, and the risk of
   the fix.
+- **The firmware runs the fan through ACPI.** Many mini PCs, such as an Intel N100 box, show their fan only as ACPI fan devices
+  that are on or off, with no speed to read. Penna can neither read nor drive those, and the doctor says so. An ACPI fan that
+  reports its speed is read as `acpi_fan`.
 
 ## Systems
 
@@ -64,6 +67,7 @@ When there are no motherboard fans at all, it is usually one of two things:
 | `lenovo-wmi-other` | `lenovo_wmi_other` | Lenovo laptop | set a target speed | — | Documented |
 | `applesmc` | `applesmc` | Mac | set a target speed | — | Documented |
 | `legion-laptop` | `legion_hwmon` | Lenovo Legion | read only | — | Documented |
+| `acpi-fan` | `acpi_fan` | ACPI fan | read only | — | Documented |
 | others | `system76_acpi`, `surface_fan`, `i915`, `xe`, `msi_wmi_platform` | System76, Surface, Intel GPUs (`i915`, `xe`), MSI laptops | read only | — | Documented |
 <!-- end: drivers -->
 
@@ -120,6 +124,7 @@ Penna reads every hwmon temperature, and each NVIDIA GPU's through NVML. A senso
 | `nvme` | NVMe |
 | `drivetemp` | Drive |
 | `acpitz` | ACPI thermal zone |
+| `iwlwifi` | Wi-Fi |
 | `asus_ec_sensors` | Motherboard |
 | `gigabyte_wmi` | Motherboard |
 

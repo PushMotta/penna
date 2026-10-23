@@ -103,6 +103,41 @@ pub fn dmi_board(sysfs_root: &Path) -> Option<(String, String)> {
     Some((read("board_vendor")?, read("board_name")?))
 }
 
+/// A DMI value a firmware left at its default: "To be filled by O.E.M.", "Default string", "System Product Name".
+pub fn dmi_placeholder(value: &str) -> bool {
+    let v = value.trim().to_ascii_lowercase();
+    v.is_empty()
+        || v.chars().all(|c| !c.is_ascii_alphanumeric())
+        || ["to be filled", "default string", "system product name", "system manufacturer", "not applicable", "o.e.m."]
+            .iter()
+            .any(|p| v.contains(p))
+}
+
+/// The machine as a person would name it: the board's vendor and name, or the product's when the board's are placeholders, as
+/// many mini PCs leave them.
+pub fn dmi_machine(sysfs_root: &Path) -> Option<String> {
+    let read = |f: &str| {
+        std::fs::read_to_string(sysfs_root.join("class/dmi/id").join(f)).ok().map(|s| s.trim().to_owned()).filter(|s| !dmi_placeholder(s))
+    };
+    let pair = |a: Option<String>, b: Option<String>| match (a, b) {
+        (Some(a), Some(b)) => Some(format!("{a} {b}")),
+        (None, Some(b)) => Some(b),
+        _ => None,
+    };
+    pair(read("board_vendor"), read("board_name")).or_else(|| pair(read("sys_vendor"), read("product_name")))
+}
+
+/// The fans a machine's firmware runs through ACPI with no speed to read: thermal cooling devices of type `Fan`, each only on or
+/// off. Penna can neither read nor drive them; an ACPI fan that reports its speed registers in hwmon as `acpi_fan` instead.
+pub fn acpi_fans(sysfs_root: &Path) -> usize {
+    let Ok(entries) = std::fs::read_dir(sysfs_root.join("class/thermal")) else { return 0 };
+    entries
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("cooling_device"))
+        .filter(|e| std::fs::read_to_string(e.path().join("type")).is_ok_and(|t| t.trim() == "Fan"))
+        .count()
+}
+
 /// Every board file in `dir`, and why any could not be read.
 pub fn load_boards(dir: &Path) -> (Vec<Board>, Vec<String>) {
     let mut boards = Vec::new();

@@ -20,12 +20,16 @@ pub struct Platform {
 
 impl Platform {
     /// What this machine has: the daemon's profiles when it owns its bus name (`bus`), else the firmware's own choices under the
-    /// sysfs root. `None` without either.
+    /// sysfs root. `None` when the firmware has no platform profile: power-profiles-daemon then changes only the CPU's power (a
+    /// mini PC's `intel_pstate`), which is no fan lever (§3.5).
     pub fn open(sysfs_root: &Path, bus: bool) -> Option<Platform> {
+        let dir = sysfs_root.join("firmware/acpi");
+        if !dir.join("platform_profile").exists() {
+            return None;
+        }
         if bus && let Some(choices) = daemon_profiles() {
             return Some(Platform { via: PlatformVia::Daemon, choices });
         }
-        let dir = sysfs_root.join("firmware/acpi");
         let choices: Vec<String> =
             fs::read_to_string(dir.join("platform_profile_choices")).ok()?.split_whitespace().map(str::to_owned).collect();
         let path = dir.join("platform_profile");

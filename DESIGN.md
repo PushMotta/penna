@@ -159,7 +159,9 @@ Not every fan takes a duty. What a control accepts decides what Penna can do wit
 - **Originals that can't be read.** dell_smm returns `ENODATA` in automatic, and its global enable is write-only; asus reports a cached state. For these, the driver table names the mode to restore (automatic), with its source. This is the one place Penna assumes a mode (§6.1).
 - **Watchdogs.** On a ThinkPad, Penna sets `fan_watchdog` to 5 s and rewrites the level every tick, so a stalled or dead Penna hands the fan back to the EC with nothing else running. The EC's own fallback is automatic, at level 4 or above.
 - **Firmware state that persists.** amdgpu's OverDrive table resets at boot, while ASUS curves and some Lenovo tables may not; nobody has verified it yet. `firmware.json` (§6.7) covers both cases.
-- **Platform profiles.** When power-profiles-daemon or tuned-ppd owns `org.freedesktop.UPower.PowerProfiles`, Penna sets `ActiveProfile` (`power-saver`, `balanced`, `performance`) over D-Bus. Both daemons treat a direct write to `/sys/firmware/acpi/platform_profile` as the user's own choice, and would fight it. Penna writes sysfs only when neither runs. It is a power setting as much as a fan setting, and the card says so.
+- **Platform profiles.** When power-profiles-daemon or tuned-ppd owns `org.freedesktop.UPower.PowerProfiles`, Penna sets `ActiveProfile` (`power-saver`, `balanced`, `performance`) over D-Bus. Both daemons treat a direct write to `/sys/firmware/acpi/platform_profile` as the user's own choice, and would fight it. Penna writes sysfs only when neither runs. It is a power setting as much as a fan setting, and the card says so. *(23 Oct
+  2026.)* Only where the firmware has a `platform_profile`: without one, power-profiles-daemon's profiles change only the CPU's
+  power, as on an Intel N100 mini PC, and are no fan lever. The mini PC in `test/fixtures/machines/ac8-n` showed it.
 - **Module options the doctor names:**
   - `thinkpad_acpi fan_control=1`;
   - `amdgpu.ppfeaturemask` with `0x4000`;
@@ -1281,6 +1283,21 @@ Milestones, each ending in something visible:
     `.js` and `.qml` as a command: `sudo`, `systemctl` and `pacman` there each need review. Penna's plugin had all three,
     in its README's daemon commands and in two messages. The README now links to Penna's, and the messages point to
     `penna doctor`, so by the baseline's published rules the plugin passes with nothing to review.
+
+  - **A second machine, 23 Oct 2026:** an Intel N100 mini PC (an "AC8-N") on Omarchy 4.0.4, run over ssh, read-only. Its
+    fan is the firmware's, through ACPI: five on/off fan devices, no fan chip, nothing in hwmon. It showed five things this
+    desk couldn't:
+    - The doctor called the board "To be filled by O.E.M. To be filled by O.E.M..". DMI placeholders are now skipped for
+      the product's name.
+    - The doctor sent the user to `sensors-detect` for a chip that isn't there. It now says the firmware runs the fan through
+      ACPI, as information.
+    - A capture didn't show those fans. It now keeps the thermal class: zones, trip points and cooling devices.
+    - It missed `coretemp`'s module, which registers its device with no driver link. It now finds a module by the chip's
+      name too.
+    - The power-profile lever would have taken over a power profile that isn't a fan lever there (§3.5).
+
+    The capture is `test/fixtures/machines/ac8-n`, with tests. An ACPI fan that reports its speed (`acpi_fan`) is listed as
+    read-only, and the Wi-Fi card's sensor is called Wi-Fi.
 
   Not yet: the AUR, until it takes new accounts again, and the marketplace submission (`plugin/docs/`).
 

@@ -1,0 +1,24 @@
+[
+  {
+    "area": "daemon",
+    "status": "attention",
+    "text": "No pennad is running at /run/penna/penna.sock, so nothing manages this machine's fans.",
+    "do": "Start it: sudo systemctl enable --now pennad"
+  },
+  {
+    "area": "motherboard",
+    "status": "info",
+    "text": "No motherboard fan driver is bound. Its firmware runs its fans through ACPI: 5 fan devices, each only on or off, with no speed to read. Penna shows the temperatures, and can neither read nor drive these. Its firmware calls it AC8-N.",
+    "do": "If the board has a fan chip as well, sudo sensors-detect, from lm_sensors, names it and the driver it needs."
+  },
+  {
+    "area": "other tools",
+    "status": "ok",
+    "text": "No other fan daemon is running (coolercontrold, fan2go, fancontrol, thinkfan, nbfc_service)."
+  },
+  {
+    "area": "nvidia",
+    "status": "info",
+    "text": "No NVIDIA fans: NVML: libnvidia-ml is not installed."
+  }
+]

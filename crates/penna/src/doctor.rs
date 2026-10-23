@@ -72,6 +72,10 @@ pub struct Facts {
     pub fan_drivers: Vec<FanDriver>,
     /// Vendor and model, from DMI.
     pub board: Option<(String, String)>,
+    /// The machine's name for a person, past the firmware's placeholders (`penna_hw::dmi_machine`).
+    pub machine: Option<String>,
+    /// Fans the firmware runs through ACPI, only on or off, with no speed to read.
+    pub acpi_fans: usize,
     /// The board database knows this board (§3.6).
     pub board_known: bool,
     /// What the board database says to load, when it says.
@@ -140,6 +144,8 @@ pub fn gather() -> Facts {
         production_socket: penna_proto::PRODUCTION_SOCKET.to_owned(),
         fan_drivers,
         board: penna_hw::dmi_board(Path::new("/sys")),
+        machine: penna_hw::dmi_machine(Path::new("/sys")),
+        acpi_fans: penna_hw::acpi_fans(Path::new("/sys")),
         board_known: known.is_some(),
         advice: known.and_then(|b| b.driver),
         portable: portable(),
@@ -311,8 +317,18 @@ pub fn findings(f: &Facts) -> Vec<Finding> {
     // Motherboard and laptop fans.
     let motherboard = f.fan_drivers.iter().any(|d| d.class == Class::Motherboard);
     if !motherboard && !f.portable {
-        let board = f.board.as_ref().map(|(v, n)| format!(" This board is a {v} {n}.")).unwrap_or_default();
-        let mut text = format!("No motherboard fan driver is bound, so Penna can't see the motherboard's fans.{board}");
+        let board = f.machine.as_ref().map(|m| format!(" Its firmware calls it {}.", m.trim_end_matches('.'))).unwrap_or_default();
+        let mut text = if f.acpi_fans > 0 {
+            format!(
+                "No motherboard fan driver is bound. Its firmware runs its fan{} through ACPI: {} fan device{}, each only on or off, \
+                 with no speed to read. Penna shows the temperatures, and can neither read nor drive these.{board}",
+                if f.acpi_fans == 1 { "" } else { "s" },
+                f.acpi_fans,
+                if f.acpi_fans == 1 { "" } else { "s" }
+            )
+        } else {
+            format!("No motherboard fan driver is bound, so Penna can't see the motherboard's fans.{board}")
+        };
         match &f.kernel_log {
             KernelLog::Conflict(line) => text.push_str(&format!(" The kernel log says: \"{line}\".")),
             KernelLog::NoConflict => {}
@@ -347,6 +363,8 @@ pub fn findings(f: &Facts) -> Vec<Finding> {
             "Most ASUS, MSI and ASRock boards use a Nuvoton chip: try sudo modprobe nct6775 (or nct6683). sudo sensors-detect, from \
              lm_sensors, names the chip."
                 .to_owned()
+        } else if f.acpi_fans > 0 {
+            "If the board has a fan chip as well, sudo sensors-detect, from lm_sensors, names it and the driver it needs.".to_owned()
         } else {
             "sudo sensors-detect, from lm_sensors, names the chip and the driver it needs.".to_owned()
         };
@@ -355,7 +373,9 @@ pub fn findings(f: &Facts) -> Vec<Finding> {
         if dkms && f.secure_boot == Some(true) {
             todo.push_str(" Secure Boot is on: a DKMS module loads only once it is signed with a key you have enrolled.");
         }
-        push(&mut out, "motherboard", Status::Attention, text, Some(todo));
+        // A fan the firmware runs through ACPI is how many mini PCs are built, not something to fix.
+        let status = if f.acpi_fans > 0 && f.advice.is_none() { Status::Info } else { Status::Attention };
+        push(&mut out, "motherboard", status, text, Some(todo));
     }
     for d in &f.fan_drivers {
         let area = match d.class {
@@ -485,6 +505,8 @@ mod tests {
             production_socket: "/run/penna/penna.sock".into(),
             fan_drivers: vec![],
             board: Some(("Gigabyte Technology Co., Ltd.".into(), "X570 AORUS PRO".into())),
+            machine: Some("Gigabyte Technology Co., Ltd. X570 AORUS PRO".into()),
+            acpi_fans: 0,
             board_known: false,
             advice: None,
             portable: false,
@@ -663,5 +685,22 @@ mod tests {
     fn chip_names_come_out_of_the_module_strings() {
         let bytes = b"\0it8792\0IT8792E/IT8795E\0IT8689E\0IT87952E\0IT8705F\0not IT9999E\0ITE\0IT8\0";
         assert_eq!(chip_names(bytes), ["IT8689E", "IT8705F", "IT8792E/IT8795E", "IT87952E"]);
+    }
+
+    /// The AC8-N mini PC (test/fixtures/machines/ac8-n): placeholder DMI, five ACPI on/off fans, no fan chip. That is how the
+    /// machine is built, not something to fix, and no sensors-detect will turn up a driver for it.
+    #[test]
+    fn a_mini_pc_whose_firmware_runs_its_fan_is_told_so_plainly() {
+        let mut f = facts();
+        f.board = Some(("To be filled by O.E.M.".into(), "To be filled by O.E.M.".into()));
+        f.machine = Some("AC8-N".into());
+        f.acpi_fans = 5;
+        f.kernel_log = KernelLog::NoConflict;
+        let all = findings(&f);
+        let mb = by_area(&all, "motherboard");
+        assert_eq!(mb[0].status, Status::Info);
+        assert!(mb[0].text.contains("5 fan devices, each only on or off") && mb[0].text.contains("calls it AC8-N."), "{}", mb[0].text);
+        assert!(!mb[0].text.contains("O.E.M"), "{}", mb[0].text);
+        assert!(mb[0].todo.as_deref().unwrap().starts_with("If the board has a fan chip as well"));
     }
 }

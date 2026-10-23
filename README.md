@@ -160,6 +160,7 @@ Everything else is built from the kernel's source and documentation and tested i
 | `lenovo-wmi-other` | Lenovo laptop | set a target speed | Documented |
 | `applesmc` | Mac | set a target speed | Documented |
 | `legion-laptop` | Lenovo Legion | read only | Documented |
+| `acpi-fan` | ACPI fan | read only | Documented |
 | others | System76, Surface, Intel GPUs (`i915`, `xe`), MSI laptops | read only | Documented |
 <!-- end: drivers -->
 

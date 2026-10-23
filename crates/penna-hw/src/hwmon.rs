@@ -789,6 +789,7 @@ pub fn friendly_label(driver: &str) -> &str {
         "drivetemp" => "Drive",
         "acpitz" => "ACPI thermal zone",
         "asus_ec_sensors" | "gigabyte_wmi" => "Motherboard",
+        d if d.starts_with("iwlwifi") => "Wi-Fi",
         d => match drivers::lookup(d) {
             Some(e) if !e.label.is_empty() => e.label,
             _ => d,
