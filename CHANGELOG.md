@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.1 (23 Oct 2026)
+
+- **The package builds on a machine without Penna.** Four daemon tests read the installed board database, so 0.10.0's
+  `check()` failed wherever Penna wasn't installed yet, as in CI or a first AUR build. The tests now use the checkout's.
+
 ## 0.10.0 (23 Oct 2026)
 
 The first public release. Penna runs every day on the desk it was built on, where every way out has been tested on the

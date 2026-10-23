@@ -3,7 +3,7 @@
 # The AUR package, built from a tagged release. `tools/release.sh` fills in the version and checksum; ../PKGBUILD builds the
 # same package from a checkout, and its build(), check() and package() must stay the same as these.
 pkgname=penna
-pkgver=0.10.0
+pkgver=0.10.1
 pkgrel=1
 pkgdesc="Fan control for Linux, made to be understood: a daemon that always hands fans back, a CLI, and an Omarchy plugin"
 arch=('x86_64')
@@ -16,7 +16,7 @@ optdepends=('nvidia-utils: NVIDIA GPU fans'
             'power-profiles-daemon: the power profile as the fan lever on laptops whose fans Penna cannot drive')
 install=penna.install
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('10f421b3b467a7e9b4f9d83e67d9f84900d25807f08fdfdbf11f10f82d24d3ae')
+sha256sums=('SKIP')
 
 _root() { cd "$srcdir/$pkgname-$pkgver"; }
 

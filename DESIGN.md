@@ -1226,8 +1226,11 @@ Milestones, each ending in something visible:
   - the repositories, the plugin as its own repo, and a tagged tarball for the PKGBUILD and the AUR;
   - how to contribute a capture.
 
-  **Published 23 Oct 2026, as 0.10.0** (plugin 0.7.0): `PushMotta/penna` and `PushMotta/omarchy-penna` are public, `v0.10.0`
-  has its GitHub release, and the AUR package built from the published tarball, its checksum verified and every test passing.
+  **Published 23 Oct 2026, as 0.10.0, then 0.10.1** (plugin 0.7.0): `PushMotta/penna` and `PushMotta/omarchy-penna` are public,
+  and each tag has its GitHub release. CI on GitHub's runners, free once the repository was public, found what this desk
+  couldn't: four daemon tests read the installed board database, so 0.10.0's `check()` would fail on any machine without Penna,
+  a first AUR build included. 0.10.1 fixes the tests, and the release check now runs them with `/usr/share/penna`,
+  `/var/lib/penna`, `/etc/penna` and `/run/penna` hidden.
   Publishing is `tools/release.sh publish`, then `tools/release.sh aur` with the maintainer's AUR key:
   - **README** for someone who has never seen Penna: its promises, the support table by driver and tier, install from the
     AUR, removal, the CLI. **CONTRIBUTING.md** says how to send a machine report and a change. Issue forms for machine reports

@@ -42,7 +42,13 @@ check() {
   step "Tests"
   cargo fmt --check
   cargo clippy -q --workspace --all-targets --locked -- -D warnings
-  cargo test -q --workspace --locked >/dev/null
+  # As on a machine without Penna, where the AUR package is first built: nothing installed is visible to the tests.
+  if command -v bwrap >/dev/null; then
+    bwrap --dev-bind / / --tmpfs /usr/share/penna --tmpfs /var/lib/penna --tmpfs /etc/penna --tmpfs /run/penna \
+      --unsetenv PENNA_BOARDS --unsetenv PENNA_SOCKET -- cargo test -q --workspace --locked >/dev/null
+  else
+    cargo test -q --workspace --locked >/dev/null
+  fi
   (cd plugin && node --test test/model.test.js test/studio.test.js >/dev/null)
   step "Ready to publish $tag"
 }
