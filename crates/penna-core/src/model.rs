@@ -98,8 +98,8 @@ pub struct ControlInfo {
     pub kind: ControlKind,
 }
 
-/// What a control accepts (DESIGN.md §3.5). Penna drives `Duty` and `Nvml` from M5; the others are listed for what they are and
-/// driven from M9.
+/// What a control accepts (DESIGN.md §3.5). Penna drives `Duty` and `Nvml` from M5, `Levels` from M9; the others are listed for
+/// what they are.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", tag = "type")]
 pub enum ControlKind {
@@ -107,8 +107,14 @@ pub enum ControlKind {
     Duty { scale: u32 },
     /// An NVML fan, settable between `min` and `max` NVML percent (30–100 on the 3090, DESIGN.md §0)
     Nvml { min: u32, max: u32 },
-    /// A few fixed steps: a ThinkPad's 8 levels, Dell's off, low and high.
-    Levels { steps: u32 },
+    /// A few fixed steps: a ThinkPad's 8 levels, Dell's off, low and high. Its raw value is the level, 0 to `steps − 1`, and the
+    /// backend writes whatever stands for it. `refresh`: written every tick, for a firmware watchdog that takes the fan back when
+    /// nothing is (§3.5).
+    Levels {
+        steps: u32,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        refresh: bool,
+    },
     /// A target RPM between the driver's bounds.
     Speed { min: u32, max: u32 },
     /// Points the firmware runs by itself.
@@ -122,7 +128,7 @@ pub enum ControlKind {
 impl ControlKind {
     /// Whether this Penna drives it.
     pub fn drivable(self) -> bool {
-        matches!(self, ControlKind::Duty { .. } | ControlKind::Nvml { .. })
+        matches!(self, ControlKind::Duty { .. } | ControlKind::Nvml { .. } | ControlKind::Levels { .. })
     }
 
     pub fn name(self) -> &'static str {
@@ -141,14 +147,25 @@ impl ControlKind {
     pub fn undrivable_reason(self) -> Option<String> {
         let later = "Penna drives these from M9 (DESIGN.md §3.5)";
         match self {
-            ControlKind::Duty { .. } | ControlKind::Nvml { .. } => None,
-            ControlKind::Levels { steps } => Some(format!("This fan takes {steps} fixed steps; {later}.")),
+            ControlKind::Duty { .. } | ControlKind::Nvml { .. } | ControlKind::Levels { .. } => None,
             ControlKind::Speed { .. } => Some(format!("This fan takes a target speed in RPM; {later}.")),
             ControlKind::FirmwareCurve { points } => Some(format!("Its firmware runs a {points}-point curve itself; {later}.")),
             ControlKind::Modes => Some(format!("This fan only switches between its firmware's modes; {later}.")),
             ControlKind::ReadOnly => Some("Its driver offers no control Penna can use.".to_owned()),
         }
     }
+}
+
+/// A stepped control's level for a duty: rounded up, so a fan never gets less than it was given (§4.1). A duty within 0.05 %
+/// above a level is that level, so a level's duty written to one decimal place, as the protocol and the files do, stays it.
+pub fn level_of(steps: u32, duty: f64) -> u32 {
+    let top = steps.saturating_sub(1).max(1) as f64;
+    ((duty - 0.05) * top / 100.0).ceil().clamp(0.0, top) as u32
+}
+
+/// The duty a level stands for: level 0 is 0 %, the top level 100 %, and the ones between evenly spaced.
+pub fn level_duty(steps: u32, level: u32) -> f64 {
+    level as f64 * 100.0 / steps.saturating_sub(1).max(1) as f64
 }
 
 /// A device that exists but that no backend can reach, and why.
@@ -225,6 +242,15 @@ pub struct Readings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn levels_round_up() {
+        assert_eq!((level_of(8, 0.0), level_of(8, 0.1), level_of(8, 14.4), level_of(8, 100.0)), (0, 1, 2, 7));
+        assert_eq!((level_of(8, 14.2858), level_of(8, 14.3)), (1, 1), "a level's own duty is that level, to one decimal place");
+        assert_eq!((level_of(3, 49.0), level_of(3, 51.0)), (1, 2));
+        assert!((level_duty(8, 4) - 57.142857).abs() < 1e-4);
+        assert_eq!(level_of(8, level_duty(8, 5)), 5);
+    }
 
     #[test]
     fn pwm_enable_values() {

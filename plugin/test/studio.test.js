@@ -139,3 +139,13 @@ test("a studio whose monitor drops out goes back to it, else to the focused one"
   assert.equal(M.screenIndex(["DP-2", "HDMI-A-1"], "DP-1", ""), 0, "no focus: the first")
   assert.equal(M.screenIndex([], "DP-1", "DP-1"), -1)
 })
+
+test("a stepped fan's readout names the level the duty rounds up to", () => {
+  // A ThinkPad: 8 levels, off included, each measured (§5.4).
+  const thinkpad = { key: "pwm1", nvml: null, levels: 8, floor: 14.3, stop: 14.3, may_stop: true, step_up: 20, step_down: 5,
+                     calibration: [[14.3, 1900], [28.6, 2500], [42.9, 3000], [57.1, 3500], [71.4, 4000], [85.7, 4500], [100, 5000]] }
+  assert.equal(M.readout(65, 40, thinkpad), "65 °C → 40 % → level 3 of 7 ≈ 3,000 RPM")
+  assert.equal(M.readout(70, 42.9, thinkpad), "70 °C → 43 % → level 3 of 7 ≈ 3,000 RPM", "a level's own duty, to one decimal place")
+  assert.equal(M.readout(40, 5, thinkpad), "40 °C → 5 % stopped")
+  assert.equal(M.levelOf(3, 51), 2)
+})

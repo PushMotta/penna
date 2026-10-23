@@ -2,7 +2,8 @@
 use crate::{Backend, Readback};
 use anyhow::{Context, Result, anyhow, bail};
 use penna_core::drivers::{self, Class, Driver, Offers};
-use penna_core::held::HeldEntry;
+use penna_core::held::{Also, HeldEntry};
+use penna_core::model::level_duty;
 use penna_core::{
     ControlInfo, ControlKind, ControlMode, ControlReading, Device, Key, Limit, LimitKind, Readings, Sample, SensorInfo, Source, TachInfo,
     sanity,
@@ -31,14 +32,44 @@ struct Pwm {
     kind: ControlKind,
     value: PathBuf,
     enable: PathBuf,
+    /// The mode to put back when `pwmN_enable` can't be read (§6.1).
+    restore: Option<i64>,
+    /// The firmware's watchdog file and the seconds Penna arms it with (§3.5).
+    watchdog: Option<(PathBuf, u32)>,
 }
 
 impl Pwm {
-    /// What 100 % is written as, for a duty control.
+    /// What 100 % is written as in `pwmN`: the scale of a duty control, 255 for the rest.
     fn scale(&self) -> u32 {
         match self.kind {
             ControlKind::Duty { scale } => scale,
             _ => 255,
+        }
+    }
+
+    /// What `pwmN` is written for a raw value: the duty, or for a stepped control the value that stands for its level, which
+    /// the driver reads back the same way (a ThinkPad's level × 255 / 7, Dell's 0, 128 and 255).
+    fn file_of(&self, raw: u32) -> i64 {
+        match self.kind {
+            ControlKind::Levels { steps, .. } => (raw.min(steps - 1) as f64 * 255.0 / (steps - 1).max(1) as f64).round() as i64,
+            _ => raw.min(self.scale()) as i64,
+        }
+    }
+
+    /// The raw value `pwmN` stands for: the duty, or the nearest level.
+    fn raw_of(&self, v: i64) -> u32 {
+        let v = v.clamp(0, self.scale() as i64);
+        match self.kind {
+            ControlKind::Levels { steps, .. } => (v as f64 * (steps - 1).max(1) as f64 / 255.0).round() as u32,
+            _ => v as u32,
+        }
+    }
+
+    /// The duty a raw value is.
+    fn percent(&self, raw: u32) -> f64 {
+        match self.kind {
+            ControlKind::Levels { steps, .. } => level_duty(steps, raw),
+            _ => raw as f64 * 100.0 / self.scale() as f64,
         }
     }
 }
@@ -177,7 +208,8 @@ impl Backend for Hwmon {
                 let (value, enable) = (dir.join(format!("pwm{n}")), dir.join(format!("pwm{n}_enable")));
                 let kind = control_kind(entry, &value, &enable);
                 device.controls.push(ControlInfo { key: key.clone(), label: format!("pwm{n}"), kind });
-                chip.pwms.push(Pwm { key, kind, value, enable });
+                let watchdog = entry.and_then(|d| d.watchdog).map(|w| (self.root.join(w.path), w.seconds)).filter(|(p, _)| p.exists());
+                chip.pwms.push(Pwm { key, kind, value, enable, restore: entry.and_then(|d| d.restore), watchdog });
             }
 
             devices.push(device);
@@ -207,9 +239,10 @@ impl Backend for Hwmon {
             for pwm in &chip.pwms {
                 let scale = pwm.scale() as i64;
                 let sample = match read_int_sample(&pwm.value) {
-                    Sample::Value(raw) if (0..=scale).contains(&raw) => {
+                    Sample::Value(v) if (0..=scale).contains(&v) => {
                         let mode = read_int(&pwm.enable).map_or(ControlMode::Unknown, ControlMode::from_pwm_enable);
-                        Sample::Value(ControlReading { percent: raw as f64 * 100.0 / scale as f64, raw: Some(raw as u32), mode })
+                        let raw = pwm.raw_of(v);
+                        Sample::Value(ControlReading { percent: pwm.percent(raw), raw: Some(raw), mode })
                     }
                     Sample::Value(raw) => Sample::Implausible(raw as f64),
                     Sample::Implausible(v) => Sample::Implausible(v),
@@ -221,39 +254,59 @@ impl Backend for Hwmon {
         Ok(())
     }
 
+    /// The mode and duty as found. A driver that can't say which mode it is in (`dell_smm`'s write-only enable) gets the mode its
+    /// table entry names, and one that can't read its duty in automatic (`dell_smm`, `ENODATA`) has none to put back (§3.5).
     fn original(&mut self, key: &Key) -> Result<HeldEntry> {
         let p = self.pwm(key)?;
-        let original_enable = read_number(&p.enable)?;
-        let original_pwm = read_number(&p.value)?.clamp(0, p.scale() as i64) as u32;
-        Ok(HeldEntry::Hwmon { key: key.clone(), enable: p.enable.clone(), original_enable, pwm: p.value.clone(), original_pwm })
+        let original_enable = match (read_number(&p.enable), p.restore) {
+            (Ok(v), _) => v,
+            (Err(_), Some(mode)) => mode,
+            (Err(e), None) => return Err(e),
+        };
+        let original_pwm = match (read_number(&p.value), p.restore) {
+            (Ok(v), _) => Some(v.clamp(0, p.scale() as i64) as u32),
+            (Err(_), Some(_)) => None,
+            (Err(e), None) => return Err(e),
+        };
+        let mut also = Vec::new();
+        if let Some((path, _)) = &p.watchdog {
+            let value = fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?.trim().to_owned();
+            also.push(Also { path: path.clone(), value });
+        }
+        Ok(HeldEntry::Hwmon { key: key.clone(), enable: p.enable.clone(), original_enable, pwm: p.value.clone(), original_pwm, also })
     }
 
     /// Manual mode, then the duty the firmware was running written straight back: no jump (§6.1).
-    /// Manual first: several drivers refuse a duty outside manual mode (`EBUSY`, `EROFS`, §3.5).
+    /// Manual first: several drivers refuse a duty outside manual mode (`EBUSY`, `EROFS`, §3.5), and a ThinkPad ignores one. A
+    /// duty that can't be read starts at full speed, and the step rate brings it down. A watchdog is armed last, once the fan
+    /// runs what Penna wrote.
     fn take(&mut self, key: &Key) -> Result<f64> {
         let p = self.pwm(key)?;
-        let scale = p.scale() as i64;
-        let raw = read_number(&p.value)?.clamp(0, scale);
+        let v = read_number(&p.value).map_or(p.scale() as i64, |v| v.clamp(0, p.scale() as i64));
+        let raw = p.raw_of(v);
         write_number(&p.enable, 1)?;
-        write_number(&p.value, raw)?;
-        Ok(raw as f64 * 100.0 / scale as f64)
+        write_number(&p.value, p.file_of(raw))?;
+        if let Some((path, seconds)) = &p.watchdog {
+            write_number(path, *seconds as i64)?;
+        }
+        Ok(p.percent(raw))
     }
 
     fn write(&mut self, key: &Key, raw: u32) -> Result<Readback> {
         let p = self.pwm(key)?;
-        write_number(&p.value, raw.min(p.scale()) as i64)?;
+        write_number(&p.value, p.file_of(raw))?;
         readback(p)
     }
 
     fn reassert(&mut self, key: &Key, raw: u32) -> Result<Readback> {
         let p = self.pwm(key)?;
         write_number(&p.enable, 1)?;
-        write_number(&p.value, raw.min(p.scale()) as i64)?;
+        write_number(&p.value, p.file_of(raw))?;
         readback(p)
     }
 
     fn relocate(&self, entry: &HeldEntry) -> Option<HeldEntry> {
-        let HeldEntry::Hwmon { key, original_enable, original_pwm, .. } = entry else { return None };
+        let HeldEntry::Hwmon { key, original_enable, original_pwm, also, .. } = entry else { return None };
         let p = self.chips.iter().flat_map(|c| &c.pwms).find(|p| &p.key == key)?;
         Some(HeldEntry::Hwmon {
             key: key.clone(),
@@ -261,17 +314,22 @@ impl Backend for Hwmon {
             original_enable: *original_enable,
             pwm: p.value.clone(),
             original_pwm: *original_pwm,
+            also: also.clone(),
         })
     }
 }
 
-/// What a channel offers: its driver's kind (§3.5), or the generic hwmon ABI for a driver Penna doesn't know. A duty control
-/// needs a writable `pwmN` and a `pwmN_enable`, or nobody can tell who is in charge of it.
+/// What a channel offers: its driver's kind (§3.5), or the generic hwmon ABI for a driver Penna doesn't know. A duty or stepped
+/// control needs a writable `pwmN` and a `pwmN_enable`, or nobody can tell who is in charge of it: a ThinkPad's are read-only
+/// without `fan_control=1`.
 fn control_kind(entry: Option<&Driver>, value: &Path, enable: &Path) -> ControlKind {
+    let settable = writable(value) && enable.exists();
     match entry.map_or(Offers::Duty { scale: 255 }, |d| d.offers) {
-        Offers::Duty { scale } if writable(value) && enable.exists() => ControlKind::Duty { scale },
-        Offers::Duty { .. } | Offers::ReadOnly => ControlKind::ReadOnly,
-        Offers::Levels { steps } => ControlKind::Levels { steps },
+        Offers::Duty { scale } if settable => ControlKind::Duty { scale },
+        Offers::Levels { steps } if settable && steps >= 2 => {
+            ControlKind::Levels { steps, refresh: entry.is_some_and(|d| d.watchdog.is_some()) }
+        }
+        Offers::Duty { .. } | Offers::Levels { .. } | Offers::ReadOnly => ControlKind::ReadOnly,
         Offers::FirmwareCurve { points } => ControlKind::FirmwareCurve { points },
         Offers::Modes => ControlKind::Modes,
     }
@@ -283,7 +341,7 @@ fn writable(path: &Path) -> bool {
 }
 
 fn readback(p: &Pwm) -> Result<Readback> {
-    let raw = read_number(&p.value).ok().map(|v| v.clamp(0, p.scale() as i64) as u32);
+    let raw = read_number(&p.value).ok().map(|v| p.raw_of(v));
     let mode = read_number(&p.enable).map_or(ControlMode::Unknown, ControlMode::from_pwm_enable);
     Ok(Readback { raw, mode })
 }

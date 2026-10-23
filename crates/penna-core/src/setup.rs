@@ -8,7 +8,9 @@
 //! sensor that fails to read stops setup, and every fan goes back as it was found.
 use crate::config::{Measured, MeasuredControl};
 use crate::control::{LoopState, State};
-use crate::{ControlKind, ControlMode, ControlReading, Key, Readings, Sample};
+use crate::drivers::Class;
+use crate::model::{level_duty, level_of};
+use crate::{ControlInfo, ControlKind, ControlMode, ControlReading, Device, Key, Readings, Sample, Source};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -173,6 +175,32 @@ pub struct Target {
     /// How it is called before pairing names it for a header: "IT8688E pwm1", "GPU fan 1".
     pub label: String,
     pub kind: ControlKind,
+    /// What its driver is for: a laptop's and a GPU's fans take their role from it (§5.3).
+    pub class: Class,
+    /// The tachs its driver says it turns, so pairing skips it (§5.2). Empty: pairing finds them.
+    pub tachs: Vec<Key>,
+}
+
+impl Target {
+    /// A control as setup sees it. An NVIDIA fan is its own tach. A laptop's or a GPU's `pwmN` turns its `fanN`, and a device
+    /// with one control turns every tach it has: a ThinkPad's `pwm1` runs both its fans. A motherboard's are found by pairing,
+    /// because hwmon doesn't say which header a `pwmN` drives (§3.1).
+    pub fn of(device: &Device, control: &ControlInfo) -> Target {
+        let class = match device.source {
+            Source::Nvml => Class::Gpu,
+            Source::Hwmon => crate::drivers::lookup(&device.driver).map_or(Class::Other, |d| d.class),
+        };
+        let tachs = match (device.source, class) {
+            (Source::Nvml, _) => vec![control.key.clone()],
+            (Source::Hwmon, Class::Laptop | Class::Gpu) if device.controls.len() == 1 => device.tachs.iter().map(|t| t.key.clone()).collect(),
+            (Source::Hwmon, Class::Laptop | Class::Gpu) => {
+                let n = control.key.channel().strip_prefix("pwm").unwrap_or_default();
+                device.tachs.iter().filter(|t| t.key.channel() == format!("fan{n}")).map(|t| t.key.clone()).collect()
+            }
+            _ => Vec::new(),
+        };
+        Target { key: control.key.clone(), label: control.label.clone(), kind: control.kind, class, tachs }
+    }
 }
 
 /// A tach, with what the board database says about its header (§3.6).
@@ -445,7 +473,11 @@ impl Setup {
                 firmware_stops: false,
                 confirmed: None,
                 demand: None,
-                status: if is_nvml(t.kind) { "Driver".to_owned() } else { "BIOS".to_owned() },
+                status: match t.class {
+                    Class::Gpu => "Driver".to_owned(),
+                    Class::Laptop => "Firmware".to_owned(),
+                    _ => "BIOS".to_owned(),
+                },
             })
             .collect();
         Setup {
@@ -736,9 +768,9 @@ impl Setup {
                     c.demand = Some(PAIR_HOLD);
                     c.status = format!("settling at {PAIR_HOLD:.0} %");
                 }
-                if is_nvml(c.target.kind) && c.write.is_some_and(WriteResult::offered) {
-                    // NVML pairs control i with its own tach (§5.2).
-                    c.tachs = vec![c.target.key.clone()];
+                if !c.target.tachs.is_empty() && c.write.is_some_and(WriteResult::offered) {
+                    // Its driver says which tachs it turns: NVML's own, a laptop's `fanN` (§5.2).
+                    c.tachs = c.target.tachs.clone();
                     c.paired = Some(true);
                 }
             }
@@ -746,10 +778,10 @@ impl Setup {
         }
     }
 
-    /// The hwmon controls pairing steps through, in order.
+    /// The controls pairing steps through, in order: those whose driver doesn't say which tachs they turn.
     fn pair_order(&self) -> Vec<usize> {
         (0..self.ctls.len())
-            .filter(|&i| !is_nvml(self.ctls[i].target.kind) && self.ctls[i].write.is_some_and(WriteResult::offered))
+            .filter(|&i| self.ctls[i].target.tachs.is_empty() && self.ctls[i].write.is_some_and(WriteResult::offered))
             .collect()
     }
 
@@ -904,7 +936,7 @@ impl Setup {
     }
 
     fn header(&self, c: &Ctl) -> Option<String> {
-        if is_nvml(c.target.kind) {
+        if !c.target.tachs.is_empty() {
             return Some(c.target.label.clone());
         }
         c.tachs.first().and_then(|k| self.input.tachs.iter().find(|t| &t.key == k)).map(|t| t.label.clone())
@@ -924,6 +956,20 @@ impl Setup {
             let header = self.header(c).unwrap_or_else(|| c.target.label.clone());
             let s = if is_nvml(c.target.kind) {
                 Suggestion { role: Role::Gpu, reason: "An NVIDIA GPU fan.".into(), confirm: false, may_stop: false }
+            } else if c.target.class == Class::Gpu {
+                Suggestion { role: Role::Gpu, reason: "A graphics card's fan.".into(), confirm: false, may_stop: false }
+            } else if c.target.class == Class::Laptop {
+                // The embedded controller runs it until Penna takes it: one it was seen stopping may stop (§11.3 call 8).
+                Suggestion {
+                    role: Role::Laptop,
+                    reason: if firmware_stops {
+                        "A laptop's fan. Its firmware stops it when cool, so it may stop.".into()
+                    } else {
+                        "A laptop's fan.".into()
+                    },
+                    confirm: false,
+                    may_stop: firmware_stops,
+                }
             } else {
                 match hint.as_ref().and_then(|h| h.role.as_deref()) {
                     // A liquid cooler's pump often sits on a CPU header, CPU_OPT above all: a fast fan there is suggested as a
@@ -1057,7 +1103,8 @@ impl Setup {
                         // It stopped: the stop duty is the last that turned it. A stopped fan never starts below that, so the
                         // climb starts there, which keeps a CPU fan's stop short.
                         c.stop = c.table.first().map(|p| p[0]);
-                        let first = c.stop.unwrap_or(duty + CAL_UP).max(duty + CAL_UP);
+                        let up = step_up(c.target.kind, duty).unwrap_or(100.0);
+                        let first = c.stop.unwrap_or(up).max(up);
                         c.cal = Cal::Up { duty: first, since: now, stopped_since: now };
                         c.demand = Some(first);
                         c.status = format!("stopped at {duty:.0} % · starting · {first:.0} %");
@@ -1081,8 +1128,8 @@ impl Setup {
                         continue;
                     }
                     c.table.insert(0, [duty, settled.round()]);
-                    let next = duty - CAL_DOWN;
-                    if next < c.lowest.unwrap_or(0.0) - 1e-9 || next < 0.0 {
+                    let next = step_down(c.target.kind, duty).filter(|n| *n >= c.lowest.unwrap_or(0.0) - 1e-9);
+                    let Some(next) = next else {
                         c.cal = Cal::Done;
                         c.demand = Some(PAIR_HOLD.max(c.lowest.unwrap_or(0.0)));
                         c.status = match c.lowest {
@@ -1093,7 +1140,7 @@ impl Setup {
                             c.stop = Some(duty);
                         }
                         continue;
-                    }
+                    };
                     c.cal = Cal::Down { duty: next, since: now };
                     c.demand = Some(next);
                     c.samples.clear();
@@ -1109,15 +1156,17 @@ impl Setup {
                         continue;
                     }
                     let cap = if c.role() == Some(Role::Cpu) { CPU_STOPPED_MAX } else { STOPPED_MAX };
-                    if now - stopped_since >= cap || duty + CAL_UP > 100.0 {
+                    let up = step_up(c.target.kind, duty);
+                    if now - stopped_since >= cap || up.is_none() {
                         // Never stopped longer than that: back up to the hold, the start duty unknown.
                         c.cal = Cal::Done;
                         c.demand = Some(PAIR_HOLD);
                         c.status = format!("didn't start by {duty:.0} %");
                         continue;
                     }
-                    if now - since >= CAL_UP_WAIT {
-                        let next = duty + CAL_UP;
+                    if now - since >= CAL_UP_WAIT
+                        && let Some(next) = up
+                    {
                         c.cal = Cal::Up { duty: next, since: now, stopped_since };
                         c.demand = Some(next);
                         c.status = format!("starting · {next:.0} %");
@@ -1195,7 +1244,7 @@ impl Setup {
         let cpu_fans: Vec<f64> = self
             .ctls
             .iter()
-            .filter(|c| c.role() == Some(Role::Cpu))
+            .filter(|c| matches!(c.role(), Some(Role::Cpu | Role::Laptop)))
             .filter_map(|c| state.controls.get(&c.target.key).filter(|cs| cs.held).map(|cs| cs.duty))
             .collect();
         let duty = (!cpu_fans.is_empty()).then(|| cpu_fans.iter().sum::<f64>() / cpu_fans.len() as f64);
@@ -1291,7 +1340,7 @@ impl Setup {
             .map(|c| {
                 let mut m = MeasuredControl::new(c.target.key.clone());
                 m.write = c.write;
-                // NVML pairs itself (§5.2).
+                // NVML pairs itself (§5.2); a laptop's or a GPU's fan is paired by its driver, and keeps its tachs for the RPM.
                 m.paired = !is_nvml(c.target.kind) && c.paired == Some(true);
                 m.empty = !is_nvml(c.target.kind) && c.paired == Some(false);
                 m.tachs = if is_nvml(c.target.kind) { Vec::new() } else { c.tachs.clone() };
@@ -1311,7 +1360,7 @@ impl Setup {
     }
 
     pub fn progress(&self) -> Progress {
-        let order = self.pair_order().len().max(self.ctls.iter().filter(|c| !is_nvml(c.target.kind)).count());
+        let order = self.pair_order().len().max(self.ctls.iter().filter(|c| c.target.tachs.is_empty()).count());
         let steps = vec![
             StepProgress { step: Step::Idle, seconds: IDLE_SECONDS },
             StepProgress { step: Step::WriteTest, seconds: WRITE_SECONDS },
@@ -1458,7 +1507,33 @@ fn readback(kind: ControlKind, reading: Option<&Sample<ControlReading>>, duty: f
                 _ => Check::Ok,
             }
         }
+        ControlKind::Levels { steps, .. } => {
+            if r.mode != ControlMode::Manual && !(r.mode == ControlMode::Full && level_of(steps, duty) + 1 >= steps) {
+                return Check::Reverted("its firmware took it back".to_owned());
+            }
+            let want = level_of(steps, duty);
+            match r.raw {
+                Some(got) if got != want => Check::Mapped(want, got),
+                _ => Check::Ok,
+            }
+        }
         _ => Check::Unread("not a kind setup measures yet".to_owned()),
+    }
+}
+
+/// The next duty down that calibration measures (§5.4): 5 % lower, or a stepped control's level below. `None` below 0.
+fn step_down(kind: ControlKind, duty: f64) -> Option<f64> {
+    match kind {
+        ControlKind::Levels { steps, .. } => level_of(steps, duty).checked_sub(1).map(|l| level_duty(steps, l)),
+        _ => Some(duty - CAL_DOWN).filter(|d| *d >= -1e-9),
+    }
+}
+
+/// The next duty up while a stopped fan is started again: 2 % higher, or the level above. `None` past 100 %.
+fn step_up(kind: ControlKind, duty: f64) -> Option<f64> {
+    match kind {
+        ControlKind::Levels { steps, .. } => Some(level_of(steps, duty) + 1).filter(|l| *l < steps).map(|l| level_duty(steps, l)),
+        _ => Some(duty + CAL_UP).filter(|d| *d <= 100.0 + 1e-9),
     }
 }
 

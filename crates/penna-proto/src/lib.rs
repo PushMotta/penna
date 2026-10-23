@@ -558,6 +558,9 @@ pub struct StudioControl {
     pub failsafe: f64,
     /// An NVIDIA fan's settable range, else `null`.
     pub nvml: Option<NvmlRange>,
+    /// A stepped control's levels, off included: the editor draws them, and the curve is rounded up to one (§3.5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub levels: Option<u32>,
     /// Measured duty → RPM, ascending (§5.4), or `null` before calibration.
     pub calibration: Option<Vec<[f64; 2]>>,
 }

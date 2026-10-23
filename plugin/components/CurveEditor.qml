@@ -242,6 +242,19 @@ Item {
     font.pixelSize: Style.font.caption
   }
 
+  // A stepped control's levels (§3.5): the curve's duty is rounded up to the next of these.
+  Repeater {
+    model: root.control && root.control.levels ? root.control.levels - 1 : 0
+    Rectangle {
+      required property int index
+      x: root.padL
+      y: Math.round(root.sy(Model.levelDuty(root.control.levels, index + 1)))
+      width: root.plotW
+      height: 1
+      color: Util.alpha(root.accent, 0.18)
+    }
+  }
+
   // ---------------------------------------------------------- limits
   // NVIDIA: below the floor the driver runs the fan (§4.5). Motherboard: the floor, and where the fan stops.
   readonly property real floorDuty: control ? (control.nvml ? Model.nvmlFloor(control) : Number(control.floor)) : -1

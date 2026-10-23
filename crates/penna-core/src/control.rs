@@ -625,6 +625,8 @@ fn step_control(
         let value_ok = match kind {
             // NVML percent is not duty (§0): only the policy says who is in charge.
             ControlKind::Nvml { .. } => true,
+            // A level reads back as itself, or something else is choosing it.
+            ControlKind::Levels { .. } => reading.raw == Some(raw),
             _ => {
                 let tolerance = (scale as f64 * READBACK_TOLERANCE).round().max(1.0) as u32;
                 reading.raw.is_some_and(|r| r.abs_diff(raw) <= tolerance)
@@ -645,6 +647,7 @@ fn step_control(
                 cs.state = State::Contested;
                 let read = match (kind, reading.raw) {
                     (ControlKind::Duty { scale }, Some(r)) => format!("read back {:.0} %", r as f64 * 100.0 / scale as f64),
+                    (ControlKind::Levels { .. }, Some(r)) => format!("read back level {r}"),
                     _ => format!("read back {:.0} %", reading.percent),
                 };
                 cs.reason = Some(format!(
@@ -682,7 +685,7 @@ fn step_control(
         if cs.force_reassert {
             cs.force_reassert = false;
             cmds.push(Command::Reassert { key: key.clone(), raw });
-        } else if cs.handback || cs.written != Some(raw) {
+        } else if cs.handback || cs.written != Some(raw) || refreshed(kind) {
             cmds.push(Command::Write { key: key.clone(), raw });
         }
         return;
@@ -748,7 +751,7 @@ fn step_control(
     if cs.force_reassert {
         cs.force_reassert = false;
         cmds.push(Command::Reassert { key: key.clone(), raw });
-    } else if cs.handback || cs.written != Some(raw) {
+    } else if cs.handback || cs.written != Some(raw) || refreshed(kind) {
         cmds.push(Command::Write { key: key.clone(), raw });
     }
 }
@@ -775,6 +778,11 @@ fn contested(c: &ControlPlan, cs: &mut ControlState, emergency: Option<String>, 
             }
         }
     }
+}
+
+/// Written every tick, changed or not: a firmware watchdog takes the fan back when nothing writes it (§3.5).
+fn refreshed(kind: ControlKind) -> bool {
+    matches!(kind, ControlKind::Levels { refresh: true, .. })
 }
 
 fn step(from: f64, to: f64, c: &ControlPlan, dt: f64) -> f64 {

@@ -94,7 +94,7 @@ pub fn tick(cx: &Context) -> Tick {
                 rpms,
                 state: if c.kind.is_none() { State::Absent } else { cs.state },
                 reason: cs.reason.clone(),
-                duty: r1(cs.duty),
+                duty: r1(c.given(cs.duty)),
                 target: r1(cs.target),
                 trend: cs.trend,
                 curve_label: curve.as_deref().and_then(|id| plan.config.curve(id)).map(|c| c.label()),
@@ -301,6 +301,10 @@ fn studio_control(c: &penna_core::plan::ControlPlan, inventory: &Inventory, meas
         failsafe: c.failsafe,
         nvml: match c.kind {
             Some(ControlKind::Nvml { min, max }) => Some(NvmlRange { min, max }),
+            _ => None,
+        },
+        levels: match c.kind {
+            Some(ControlKind::Levels { steps, .. }) => Some(steps),
             _ => None,
         },
         calibration: measured.get(&c.key).map(|m| m.calibration.clone()).filter(|t| !t.is_empty()),

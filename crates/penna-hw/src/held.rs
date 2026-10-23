@@ -87,22 +87,39 @@ pub fn load(path: &Path) -> Result<HeldFile> {
     HeldFile::parse(&text).map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))
 }
 
+fn file_name(path: &Path) -> String {
+    path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned())
+}
+
 /// Puts one control back exactly as it was found. A real NVIDIA fan opens NVML for the purpose (M4).
 pub fn restore(entry: &HeldEntry) -> Result<String> {
     match entry {
-        HeldEntry::Hwmon { key, enable, original_enable, pwm, original_pwm } => {
+        HeldEntry::Hwmon { key, enable, original_enable, pwm, original_pwm, also } => {
             // The duty it was found at, in manual mode, and only then the mode. On it87's newer chips the manual duty register
             // is also the automatic curve's start PWM (`pwmN_auto_start`): putting back only the mode left the firmware's curve
             // starting wherever Penna last held the fan (§6.1; the M5 hardware test, IT8688E). Elsewhere an automatic mode takes
             // over at once and the duty is a moment's value. Manual first, as in take: a channel someone else switched back to
-            // automatic refuses the duty.
-            let _ = write_number(enable, 1);
-            let duty = write_number(pwm, *original_pwm as i64);
+            // automatic refuses the duty. A duty that couldn't be read when the fan was taken isn't written.
+            let duty = original_pwm.map(|raw| {
+                let _ = write_number(enable, 1);
+                write_number(pwm, raw as i64).map(|()| raw)
+            });
             write_number(enable, *original_enable)?;
+            // Files beside the control go back once the mode has: a watchdog put back first could hand the fan to its firmware
+            // while the duty above was still being written.
+            let mut beside = Vec::new();
+            for a in also {
+                match fs::write(&a.path, format!("{}\n", a.value)) {
+                    Ok(()) => beside.push(format!(", {} {}", file_name(&a.path), a.value)),
+                    Err(e) => beside.push(format!(", but not {} {}: {e}", file_name(&a.path), a.value)),
+                }
+            }
+            let beside = beside.concat();
             match duty {
-                Ok(()) => Ok(format!("{key}: pwm_enable {original_enable}, pwm {original_pwm}")),
+                Some(Ok(raw)) => Ok(format!("{key}: pwm_enable {original_enable}, pwm {raw}{beside}")),
                 // The mode is what hands the fan back; a duty the driver refused is reported, not retried on every start.
-                Err(e) => Ok(format!("{key}: pwm_enable {original_enable}, but not pwm {original_pwm}: {e:#}")),
+                Some(Err(e)) => Ok(format!("{key}: pwm_enable {original_enable}, but not pwm {}: {e:#}{beside}", original_pwm.unwrap_or(0))),
+                None => Ok(format!("{key}: pwm_enable {original_enable}{beside}")),
             }
         }
         HeldEntry::MockNvml { key, policy, original_policy } => {
@@ -179,7 +196,7 @@ mod tests {
         fs::write(&enable, "5\n").unwrap();
         let mut held = Held::new(d.join(FILE));
         let key = Key::parse("hwmon/it87/it87.2608/pwm1").unwrap();
-        held.add(HeldEntry::Hwmon { key: key.clone(), enable: enable.clone(), original_enable: 5, pwm: d.join("pwm1"), original_pwm: 77 })
+        held.add(HeldEntry::Hwmon { key: key.clone(), enable: enable.clone(), original_enable: 5, pwm: d.join("pwm1"), original_pwm: Some(77), also: vec![] })
             .unwrap();
         assert_eq!(load(&d.join(FILE)).unwrap().controls.len(), 1);
         assert!(fs::read_dir(&d).unwrap().all(|e| !e.unwrap().file_name().to_string_lossy().ends_with(".tmp")));
@@ -199,7 +216,8 @@ mod tests {
             enable: enable.clone(),
             original_enable: 5,
             pwm: pwm.clone(),
-            original_pwm: 90,
+            original_pwm: Some(90),
+            also: vec![],
         })
         .unwrap();
         let r = restore_file(&d.join(FILE)).unwrap();
@@ -210,19 +228,45 @@ mod tests {
     }
 
     #[test]
+    fn an_unread_duty_is_left_alone_and_a_watchdog_goes_back_after_the_mode() {
+        let d = dir("beside");
+        let (enable, pwm, watchdog) = (d.join("pwm1_enable"), d.join("pwm1"), d.join("fan_watchdog"));
+        fs::write(&enable, "1\n").unwrap();
+        fs::write(&pwm, "146\n").unwrap();
+        fs::write(&watchdog, "5\n").unwrap();
+        let mut held = Held::new(d.join(FILE));
+        held.add(HeldEntry::Hwmon {
+            key: Key::parse("hwmon/thinkpad/thinkpad_hwmon/pwm1").unwrap(),
+            enable: enable.clone(),
+            original_enable: 2,
+            pwm: pwm.clone(),
+            original_pwm: None,
+            also: vec![penna_core::held::Also { path: watchdog.clone(), value: "0".into() }],
+        })
+        .unwrap();
+        let r = restore_file(&d.join(FILE)).unwrap();
+        assert_eq!(r.failed, Vec::<String>::new());
+        assert_eq!(fs::read_to_string(&enable).unwrap().trim(), "2");
+        assert_eq!(fs::read_to_string(&pwm).unwrap().trim(), "146", "a duty that couldn't be read isn't made up");
+        assert_eq!(fs::read_to_string(&watchdog).unwrap().trim(), "0");
+        assert!(r.done[0].ends_with("pwm_enable 2, fan_watchdog 0"), "{:?}", r.done);
+    }
+
+    #[test]
     fn an_entry_whose_device_is_gone_waits_in_the_file() {
         let d = dir("gone");
         let (enable, pwm) = (d.join("pwm1_enable"), d.join("pwm1"));
         fs::write(&enable, "1\n").unwrap();
         fs::write(&pwm, "90\n").unwrap();
         let mut held = Held::new(d.join(FILE));
-        let here = HeldEntry::Hwmon { key: Key::parse("hwmon/it87/a/pwm1").unwrap(), enable, original_enable: 2, pwm, original_pwm: 0 };
+        let here = HeldEntry::Hwmon { key: Key::parse("hwmon/it87/a/pwm1").unwrap(), enable, original_enable: 2, pwm, original_pwm: Some(0), also: vec![] };
         let away = HeldEntry::Hwmon {
             key: Key::parse("hwmon/it8792/it87.2656/pwm1").unwrap(),
             enable: d.join("unloaded/pwm1_enable"),
             original_enable: 2,
             pwm: d.join("unloaded/pwm1"),
-            original_pwm: 0,
+            original_pwm: Some(0),
+            also: vec![],
         };
         held.add(here).unwrap();
         held.add(away.clone()).unwrap();

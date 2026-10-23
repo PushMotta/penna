@@ -19,8 +19,18 @@ pub struct HeldFile {
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum HeldEntry {
     /// The exact `pwmN_enable` value found, never an assumed "automatic" (§6.1), and the duty it was running. Both go back, the
-    /// duty first: on some chips it is also the automatic curve's start.
-    Hwmon { key: Key, enable: PathBuf, original_enable: i64, pwm: PathBuf, original_pwm: u32 },
+    /// duty first: on some chips it is also the automatic curve's start. A duty that couldn't be read, as `dell_smm`'s in
+    /// automatic, is `None` and isn't written back; an enable that couldn't be read is the driver table's (§3.5). `also` are
+    /// files Penna changed beside the control, put back after its mode: a ThinkPad's fan watchdog.
+    Hwmon {
+        key: Key,
+        enable: PathBuf,
+        original_enable: i64,
+        pwm: PathBuf,
+        original_pwm: Option<u32>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        also: Vec<Also>,
+    },
     /// The simulator's file-backed NVML (§9.1).
     MockNvml { key: Key, policy: PathBuf, original_policy: String },
     /// A real NVIDIA fan (M4): the policy it was on, `driver` (restored with `nvmlDeviceSetDefaultFanSpeed_v2`) or `manual`
@@ -34,6 +44,13 @@ pub enum HeldEntry {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         original_speed: Option<u32>,
     },
+}
+
+/// A file Penna changed beside a control, and the value it held.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Also {
+    pub path: PathBuf,
+    pub value: String,
 }
 
 fn driver_policy() -> String {
@@ -77,7 +94,8 @@ mod tests {
                     enable: "/tmp/x/pwm3_enable".into(),
                     original_enable: 5,
                     pwm: "/tmp/x/pwm3".into(),
-                    original_pwm: 102,
+                    original_pwm: Some(102),
+                    also: vec![],
                 },
                 HeldEntry::MockNvml {
                     key: Key::parse("nvml/GPU-1/fan0").unwrap(),
@@ -88,6 +106,27 @@ mod tests {
         };
         assert_eq!(HeldFile::parse(&f.to_json()).unwrap(), f);
         assert!(f.to_json().contains("\"kind\": \"hwmon\""));
+        assert!(!f.to_json().contains("also"), "nothing beside the control: nothing written");
+    }
+
+    #[test]
+    fn a_duty_that_could_not_be_read_and_files_beside_the_control() {
+        let entry = HeldEntry::Hwmon {
+            key: Key::parse("hwmon/dell_smm/dell_smm-hwmon/pwm1").unwrap(),
+            enable: "/tmp/x/pwm1_enable".into(),
+            original_enable: 2,
+            pwm: "/tmp/x/pwm1".into(),
+            original_pwm: None,
+            also: vec![Also { path: "/tmp/x/fan_watchdog".into(), value: "0".into() }],
+        };
+        let f = HeldFile { version: VERSION, pid: 3, controls: vec![entry] };
+        assert_eq!(HeldFile::parse(&f.to_json()).unwrap(), f);
+        // A file an earlier Penna wrote: the duty as a plain number, no `also`.
+        let old = r#"{"version":1,"pid":1,"controls":[{"kind":"hwmon","key":"hwmon/it87/it87.2608/pwm3","enable":"/e","original_enable":5,"pwm":"/p","original_pwm":102}]}"#;
+        match &HeldFile::parse(old).unwrap().controls[0] {
+            HeldEntry::Hwmon { original_pwm, also, .. } => assert_eq!((*original_pwm, also.len()), (Some(102), 0)),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

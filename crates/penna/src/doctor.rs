@@ -594,12 +594,12 @@ mod tests {
         let mut f = facts();
         f.portable = true;
         f.fan_drivers = vec![FanDriver {
-            driver: "thinkpad".into(),
+            driver: "asus".into(),
             model: None,
             class: Class::Laptop,
             controls: 1,
             drivable: 0,
-            why: penna_core::ControlKind::Levels { steps: 8 }.undrivable_reason(),
+            why: penna_core::ControlKind::Modes.undrivable_reason(),
             tier: Tier::Documented,
         }];
         let all = findings(&f);
@@ -607,7 +607,7 @@ mod tests {
         let laptop = by_area(&all, "laptop")[0];
         assert_eq!(laptop.status, Status::Info);
         assert!(
-            laptop.text.starts_with("thinkpad is bound; Penna can't drive its fans yet. This fan takes 8 fixed steps"),
+            laptop.text.starts_with("asus is bound; Penna can't drive its fans yet. This fan only switches between its firmware's modes"),
             "{}",
             laptop.text
         );

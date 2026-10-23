@@ -513,11 +513,27 @@ function nvmlFloor(control) {
   return control.floor !== null && control.floor !== undefined ? Number(control.floor) : Number(control.nvml.min)
 }
 
+// A stepped control's level for a duty, rounded up as the daemon does (§3.5): a duty within 0.05 % above a level is that level.
+function levelOf(steps, d) {
+  var top = Math.max(1, steps - 1)
+  return Math.max(0, Math.min(top, Math.ceil((d - 0.05) * top / 100)))
+}
+
+function levelDuty(steps, level) {
+  return level * 100 / Math.max(1, steps - 1)
+}
+
 function readout(t, d, control) {
   var head = Math.round(t) + " °C → " + Math.round(d) + " %"
   if (!control) return head
   if (control.nvml && d < nvmlFloor(control)) return head + " driver curve"
   if (control.stop !== null && control.stop !== undefined && d < Number(control.stop) && control.may_stop) return head + " stopped"
+  if (control.levels) {
+    // The fan runs the level the duty rounds up to, and its RPM is that level's.
+    var level = levelOf(control.levels, d)
+    var lr = rpmAt(control.calibration, levelDuty(control.levels, level))
+    return head + " → level " + level + " of " + (control.levels - 1) + (lr === null ? "" : " ≈ " + formatNumber(lr, 10, 0, true) + " RPM")
+  }
   var r = rpmAt(control.calibration, d)
   return r === null ? head : head + " ≈ " + formatNumber(r, 10, 0, true) + " RPM"
 }
@@ -729,6 +745,7 @@ if (typeof module !== "undefined") {
     inspector: inspector, limitsLine: limitsLine, curveOptions: curveOptions, handlesOf: handlesOf, curveWith: curveWith,
     moveHandle: moveHandle, pathOf: pathOf, shadeOf: shadeOf, nvmlFloor: nvmlFloor, profileTabs: profileTabs,
     viewProfile: viewProfile, generatedDraft: generatedDraft, isGenerated: isGenerated, draftLine: draftLine, saveLabel: saveLabel,
-    anchorMarks: anchorMarks, loadView: loadView, proposalText: proposalText, screenIndex: screenIndex
+    anchorMarks: anchorMarks, loadView: loadView, proposalText: proposalText, screenIndex: screenIndex,
+    levelOf: levelOf, levelDuty: levelDuty
   }
 }

@@ -76,10 +76,11 @@ impl ControlPlan {
     }
 
     /// The raw value for a duty: 0 to the control's scale (255 for PWM), rounded up so the fan never gets less than it was given,
-    /// or NVML percent within its range.
+    /// NVML percent within its range, or a stepped control's level.
     pub fn raw(&self, duty: f64) -> u32 {
         match self.kind {
             Some(ControlKind::Nvml { min, max }) => (duty.round() as i64).clamp(min as i64, max as i64) as u32,
+            Some(ControlKind::Levels { steps, .. }) => crate::model::level_of(steps, duty),
             _ => {
                 let scale = self.scale() as f64;
                 (duty * scale / 100.0 - 1e-9).ceil().clamp(0.0, scale) as u32
@@ -92,7 +93,16 @@ impl ControlPlan {
         match self.kind {
             Some(ControlKind::Duty { scale }) => scale,
             Some(ControlKind::Nvml { max, .. }) => max,
+            Some(ControlKind::Levels { steps, .. }) => steps.saturating_sub(1),
             _ => 255,
+        }
+    }
+
+    /// The duty the fan gets for `duty`: on a stepped control, the duty of the level it is rounded up to.
+    pub fn given(&self, duty: f64) -> f64 {
+        match self.kind {
+            Some(ControlKind::Levels { steps, .. }) => crate::model::level_duty(steps, self.raw(duty)),
+            _ => duty,
         }
     }
 }
@@ -237,12 +247,15 @@ pub fn control_plan(cfg: &config::ControlConfig, present: Option<(ControlKind, &
         // duty each run, and held at it for long enough they stall there too (§5.4). The floor keeps the margin above it, and one
         // that may stop is handed back to its driver below the floor.
         Some(ControlKind::Nvml { min, .. }) => cfg.min.max(min as f64).max(stop.map_or(0.0, |s| s + STOP_MARGIN)),
+        // A level is a speed its firmware was built to hold, so there is no margin to keep: the lowest that turns the fan, or
+        // the first level above off until calibration has found it.
+        Some(ControlKind::Levels { steps, .. }) => cfg.min.max(stop.unwrap_or_else(|| crate::model::level_duty(steps, 1))),
         _ if cfg.may_stop => cfg.min.max(stop.unwrap_or(0.0)),
         // Measured down to its lowest without stopping is calibration enough: a pump, or a header that races below it.
         _ => cfg.min.max(stop.map_or(lowest.unwrap_or(UNCALIBRATED_FLOOR), |s| s + STOP_MARGIN)),
     }
     .max(lowest.unwrap_or(0.0));
-    if kind.is_some() && !matches!(kind, Some(ControlKind::Nvml { .. })) && cfg.may_stop && stop.is_none() {
+    if kind.is_some() && !matches!(kind, Some(ControlKind::Nvml { .. } | ControlKind::Levels { .. })) && cfg.may_stop && stop.is_none() {
         problems.push(Problem { at: at.clone(), message: "may_stop needs a calibrated stop duty (penna calibrate)".into() });
     }
     if let Some(ControlKind::Nvml { max, .. }) = kind

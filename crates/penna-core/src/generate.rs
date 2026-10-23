@@ -102,7 +102,6 @@ pub fn generate(base: &Config, inventory: &Inventory, measured: &Measured, cpu_m
             continue;
         }
         match m.role.or(m.suggested) {
-            Some(Role::Laptop) => g.notes.push(format!("{label}: laptop fans get their curves in a later version")),
             Some(role) => roles.entry(role).or_default().push((m, kind, label)),
             None => g.notes.push(format!("{label}: no role, so it stays with its firmware")),
         }
@@ -134,7 +133,8 @@ pub fn generate(base: &Config, inventory: &Inventory, measured: &Measured, cpu_m
                 Some(s) => g.chipset(&fans, &s),
                 None => g.left(&fans, "the board has no chipset temperature, so it stays with its firmware"),
             },
-            Role::Laptop => {}
+            Role::Laptop if cpu.is_none() && gpus.is_empty() => g.left(&fans, "there is no CPU or GPU temperature to follow"),
+            Role::Laptop => g.laptop(&fans, cpu.as_ref(), &gpus),
         }
     }
     Generated { config: g.config, curves: g.curves, anchors: g.anchors, notes: g.notes }
@@ -233,6 +233,15 @@ fn points(fans: &[Fan], at: &[(f64, f64)]) -> Vec<[f64; 2]> {
     out
 }
 
+/// Points as [`points`] places them, with a 0 % point 1 °C below the first when the fans may stop.
+fn resting(fans: &[Fan], at: &[(f64, f64)], rest: bool) -> Vec<[f64; 2]> {
+    let mut pts = points(fans, at);
+    if let (true, Some(first)) = (rest, pts.first().copied()) {
+        pts.insert(0, [first[0] - 1.0, 0.0]);
+    }
+    pts
+}
+
 /// From the floor at `t0` to `share` at `t1`, with points at a quarter, half and three quarters of the way.
 fn ramp(t0: f64, t1: f64, share: f64) -> Vec<(f64, f64)> {
     (0..=4).map(|i| i as f64 / 4.0).map(|k| (t0 + (t1 - t0) * k, share * k)).collect()
@@ -261,12 +270,27 @@ impl Builder {
         Some(Src { key, a, device: String::new() })
     }
 
-    /// Each NVIDIA GPU's temperature: its target is NVML's acoustic threshold, or its limit less 10 °C.
+    /// Each GPU's temperature: an NVIDIA GPU's own, and an AMD (or nouveau) GPU's `edge`, the one closest to what NVML reports.
+    /// Its limit is NVML's maximum or the sensor's critical temperature, and its target NVML's acoustic threshold or the limit
+    /// less 10 °C.
     fn gpu_anchors(&mut self, inventory: &Inventory, measured: &Measured) -> Vec<Src> {
         let mut out = Vec::new();
-        for d in inventory.devices.iter().filter(|d| d.source == Source::Nvml) {
-            let Some(s) = d.sensors.iter().find(|s| s.key.channel() == "temp") else { continue };
-            let limit = s.limits.iter().find(|l| l.kind == LimitKind::GpuMax).map_or(DEFAULT_EMERGENCY, |l| l.celsius);
+        let is_gpu = |d: &&crate::Device| match d.source {
+            Source::Nvml => true,
+            Source::Hwmon => crate::drivers::lookup(&d.driver).is_some_and(|e| e.class == crate::drivers::Class::Gpu),
+        };
+        for d in inventory.devices.iter().filter(is_gpu) {
+            let sensor = match d.source {
+                Source::Nvml => d.sensors.iter().find(|s| s.key.channel() == "temp"),
+                Source::Hwmon => d.sensors.iter().find(|s| s.label == "edge").or_else(|| d.sensors.first()),
+            };
+            let Some(s) = sensor else { continue };
+            let limit = s
+                .limits
+                .iter()
+                .find(|l| l.kind == LimitKind::GpuMax)
+                .or_else(|| s.limits.iter().find(|l| l.kind == LimitKind::Crit))
+                .map_or(DEFAULT_EMERGENCY, |l| l.celsius);
             let target = s.limits.iter().find(|l| l.kind == LimitKind::Acoustic).map_or(limit - 10.0, |l| l.celsius);
             let Some(&idle) = measured.idle.get(&s.key) else { continue };
             let a = Anchors { idle: idle.round(), target: Some(target), limit: Some(limit) };
@@ -284,12 +308,12 @@ impl Builder {
         Some(Src { key: s.key.clone(), a, device: String::new() })
     }
 
-    /// A fan's limits in the draft: what the configuration says, *may stop* for a GPU fan and for a chipset fan its firmware
-    /// stops, and its top speed as its maximum.
+    /// A fan's limits in the draft: what the configuration says, *may stop* for a GPU fan and for a chipset or laptop fan its
+    /// firmware stops, and its top speed as its maximum.
     fn fan(&mut self, m: &MeasuredControl, kind: ControlKind, label: &str, role: Role, measured: &Measured) -> Fan {
         let table = monotonic(&m.calibration);
         let mut cfg = self.config.control(&m.key).cloned().unwrap_or_else(|| ControlConfig::defaults(m.key.clone()));
-        cfg.may_stop = role == Role::Gpu || (role == Role::Chipset && m.firmware_stops);
+        cfg.may_stop = role == Role::Gpu || (matches!(role, Role::Chipset | Role::Laptop) && m.firmware_stops);
         let fastest = table.last().map_or(0.0, |p| p[1]);
         let top = table.iter().find(|p| p[1] >= fastest * TOP).map_or(100.0, |p| p[0]);
         cfg.max = top;
@@ -382,6 +406,43 @@ impl Builder {
             }
             let id = format!("case-{}", PROFILES[p]);
             let label = format!("Case · {}", title(p));
+            if let [(_, _, source, pts, response, hysteresis)] = parts.as_slice() {
+                let kind = CurveKind::Graph { source: source.clone(), points: pts.clone() };
+                self.put(id.clone(), label, kind, Some(*response), Some(*hysteresis));
+            } else {
+                let mut ids = Vec::new();
+                for (pid, name, source, pts, response, hysteresis) in parts {
+                    let kind = CurveKind::Graph { source, points: pts };
+                    ids.push(self.put(pid, format!("{label} · {name}"), kind, Some(response), Some(hysteresis)));
+                }
+                self.put(id.clone(), label, CurveKind::Mix { op: MixOp::Max, curves: ids }, None, None);
+            }
+            self.assign(fans, p, &id);
+        }
+    }
+
+    /// A laptop's fans follow the larger of a CPU curve and a curve per GPU, each placed as that source's own curve would be,
+    /// and the loop rounds the duty up to the fan's levels (§5.5). Fans its firmware stops may stop: each part goes to 0 % 1 °C
+    /// below its floor, as the embedded controller stops them when cool.
+    fn laptop(&mut self, fans: &[Fan], cpu: Option<&Src>, gpus: &[Src]) {
+        let rest = fans.iter().all(|f| f.may_stop);
+        for p in 0..3 {
+            let mut parts = Vec::new();
+            if let Some(c) = cpu {
+                let [from, half, _] = CPU[p];
+                let at = legs(c.a.idle + from, c.a.limit.unwrap_or(DEFAULT_EMERGENCY) - half, Self::cpu_full(c, p));
+                parts.push((format!("laptop-{}-cpu", PROFILES[p]), "CPU".to_owned(), c.key.clone(), resting(fans, &at, rest), 5.0, 3.0));
+            }
+            for (i, g) in gpus.iter().enumerate() {
+                let target = g.a.target.unwrap_or(83.0);
+                let [below, half] = GPU[p];
+                let at = legs(target - below, target - half, Self::gpu_full(g, p));
+                let (id, name) =
+                    if gpus.len() > 1 { (format!("gpu-{}", i + 1), format!("GPU {}", i + 1)) } else { ("gpu".into(), "GPU".into()) };
+                parts.push((format!("laptop-{}-{id}", PROFILES[p]), name, g.key.clone(), resting(fans, &at, rest), 2.0, 2.0));
+            }
+            let id = format!("laptop-{}", PROFILES[p]);
+            let label = format!("Laptop · {}", title(p));
             if let [(_, _, source, pts, response, hysteresis)] = parts.as_slice() {
                 let kind = CurveKind::Graph { source: source.clone(), points: pts.clone() };
                 self.put(id.clone(), label, kind, Some(*response), Some(*hysteresis));

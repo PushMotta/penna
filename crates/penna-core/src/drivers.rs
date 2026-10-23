@@ -65,8 +65,21 @@ pub struct Driver {
     pub tier: Tier,
     /// What a write needs that a default install may not have.
     pub needs: Option<&'static str>,
+    /// The `pwmN_enable` to put back when the driver can't say which mode it was in (§6.1): `dell_smm`'s global enable is
+    /// write-only.
+    pub restore: Option<i64>,
+    /// A firmware watchdog that takes the fan back when nothing writes it for a while: Penna arms it and writes every tick, so a
+    /// Penna that stops for any reason hands the fan back with nothing else running (§3.5).
+    pub watchdog: Option<Watchdog>,
     /// Where this entry was written from.
     pub source: &'static str,
+}
+
+/// A watchdog file, under the sysfs root, and the seconds Penna arms it with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Watchdog {
+    pub path: &'static str,
+    pub seconds: u32,
 }
 
 const LINUX: &str = "Linux 7.3 source and documentation";
@@ -80,6 +93,8 @@ pub const DRIVERS: &[Driver] = &[
         offers: Offers::Duty { scale: 255 },
         tier: Tier::Verified,
         needs: None,
+        restore: None,
+        watchdog: None,
         source: "drivers/hwmon/it87.c, Documentation/hwmon/it87.rst; github.com/frankcrawford/it87 at bd7a566; the §9.4 test on \
                  this desk's IT8688E and IT8792E with that fork, 22 Oct 2026",
     },
@@ -91,6 +106,8 @@ pub const DRIVERS: &[Driver] = &[
         offers: Offers::Duty { scale: 255 },
         tier: Tier::Documented,
         needs: None,
+        restore: None,
+        watchdog: None,
         source: "drivers/hwmon/nct6775-core.c, Documentation/hwmon/nct6775.rst",
     },
     // nct6683 reads only (no pwm_enable); the out-of-tree nct6687d registers the same name with writable controls, so the
@@ -103,6 +120,8 @@ pub const DRIVERS: &[Driver] = &[
         offers: Offers::Duty { scale: 255 },
         tier: Tier::Documented,
         needs: None,
+        restore: None,
+        watchdog: None,
         source: "drivers/hwmon/nct6683.c; github.com/Fred78290/nct6687d",
     },
     Driver {
@@ -113,6 +132,8 @@ pub const DRIVERS: &[Driver] = &[
         offers: Offers::Duty { scale: 255 },
         tier: Tier::Documented,
         needs: None,
+        restore: None,
+        watchdog: None,
         source: "drivers/hwmon/f71882fg.c, Documentation/hwmon/f71882fg.rst",
     },
     Driver {
@@ -123,6 +144,8 @@ pub const DRIVERS: &[Driver] = &[
         offers: Offers::Duty { scale: 255 },
         tier: Tier::Documented,
         needs: None,
+        restore: None,
+        watchdog: None,
         source: "Documentation/hwmon/w83627ehf.rst",
     },
     Driver {
@@ -133,6 +156,8 @@ pub const DRIVERS: &[Driver] = &[
         offers: Offers::Duty { scale: 255 },
         tier: Tier::Documented,
         needs: None,
+        restore: None,
+        watchdog: None,
         source: "drivers/gpu/drm/amd/pm/amdgpu_pm.c, Documentation/gpu/amdgpu/thermal.rst",
     },
     Driver {
@@ -143,6 +168,8 @@ pub const DRIVERS: &[Driver] = &[
         offers: Offers::Duty { scale: 100 },
         tier: Tier::Documented,
         needs: None,
+        restore: None,
+        watchdog: None,
         source: "drivers/gpu/drm/nouveau/nouveau_hwmon.c",
     },
     Driver {
@@ -153,6 +180,8 @@ pub const DRIVERS: &[Driver] = &[
         offers: Offers::Duty { scale: 255 },
         tier: Tier::Documented,
         needs: None,
+        restore: None,
+        watchdog: None,
         source: "Documentation/hwmon/gpd-fan.rst",
     },
     Driver {
@@ -163,6 +192,8 @@ pub const DRIVERS: &[Driver] = &[
         offers: Offers::Duty { scale: 255 },
         tier: Tier::Documented,
         needs: None,
+        restore: None,
+        watchdog: None,
         source: "Documentation/hwmon/cros_ec_hwmon.rst",
     },
     Driver {
@@ -173,6 +204,8 @@ pub const DRIVERS: &[Driver] = &[
         offers: Offers::Duty { scale: 255 },
         tier: Tier::Documented,
         needs: None,
+        restore: None,
+        watchdog: None,
         source: "drivers/platform/x86/acer-wmi.c",
     },
     Driver {
@@ -183,6 +216,8 @@ pub const DRIVERS: &[Driver] = &[
         offers: Offers::Levels { steps: 8 },
         tier: Tier::Documented,
         needs: Some("thinkpad_acpi fan_control=1"),
+        restore: None,
+        watchdog: None,
         source: "Documentation/admin-guide/laptops/thinkpad-acpi.rst",
     },
     Driver {
@@ -193,6 +228,8 @@ pub const DRIVERS: &[Driver] = &[
         offers: Offers::Levels { steps: 3 },
         tier: Tier::Documented,
         needs: None,
+        restore: None,
+        watchdog: None,
         source: "Documentation/hwmon/dell-smm-hwmon.rst",
     },
     Driver {
@@ -203,6 +240,8 @@ pub const DRIVERS: &[Driver] = &[
         offers: Offers::Modes,
         tier: Tier::Documented,
         needs: None,
+        restore: None,
+        watchdog: None,
         source: "drivers/platform/x86/asus-wmi.c",
     },
     Driver {
@@ -213,6 +252,8 @@ pub const DRIVERS: &[Driver] = &[
         offers: Offers::FirmwareCurve { points: 8 },
         tier: Tier::Documented,
         needs: None,
+        restore: None,
+        watchdog: None,
         source: "drivers/platform/x86/asus-wmi.c",
     },
     Driver {
@@ -223,6 +264,8 @@ pub const DRIVERS: &[Driver] = &[
         offers: Offers::Modes,
         tier: Tier::Documented,
         needs: None,
+        restore: None,
+        watchdog: None,
         source: "drivers/platform/x86/hp/hp-wmi.c",
     },
     Driver {
@@ -233,6 +276,8 @@ pub const DRIVERS: &[Driver] = &[
         offers: Offers::Modes,
         tier: Tier::Documented,
         needs: None,
+        restore: None,
+        watchdog: None,
         source: "Documentation/admin-guide/laptops/alienware-wmi.rst",
     },
     // Penna never writes its curve files: one written in the wrong unit hard-powered-off a Legion Pro 5 (§3.5).
@@ -244,6 +289,8 @@ pub const DRIVERS: &[Driver] = &[
         offers: Offers::ReadOnly,
         tier: Tier::Documented,
         needs: None,
+        restore: None,
+        watchdog: None,
         source: "github.com/johnfanv2/LenovoLegionLinux README",
     },
     Driver {
@@ -254,6 +301,8 @@ pub const DRIVERS: &[Driver] = &[
         offers: Offers::ReadOnly,
         tier: Tier::Documented,
         needs: None,
+        restore: None,
+        watchdog: None,
         source: LINUX,
     },
 ];

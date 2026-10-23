@@ -147,18 +147,46 @@ fn held_entries_follow_a_control_to_its_new_path() {
 #[test]
 fn channels_penna_does_not_drive_are_listed_and_never_written() {
     let (sim, mut machine) = desk("kinds", "render-burst");
-    plug(sim.root(), "thinkpad_hwmon", 12, "thinkpad", &[(1, 0o644)]);
+    plug(sim.root(), "asus-nb-wmi", 12, "asus", &[(1, 0o644)]);
     plug(sim.root(), "nct6683.2592", 13, "nct6687", &[(1, 0o444)]);
+    plug(sim.root(), "thinkpad_hwmon", 14, "thinkpad", &[(1, 0o444)]);
     machine.rediscover();
     let kind = |driver: &str| machine.inventory.devices.iter().find(|d| d.driver == driver).unwrap().controls[0].kind;
-    assert_eq!(kind("thinkpad"), ControlKind::Levels { steps: 8 });
+    assert_eq!(kind("asus"), ControlKind::Modes);
     assert_eq!(kind("nct6687"), ControlKind::ReadOnly, "nct6683's pwm is read-only");
-    let tp = Key::hwmon("thinkpad", "thinkpad_hwmon", "pwm1");
-    let err = machine.original(&tp).unwrap_err().to_string();
-    assert!(err.contains("8 fixed steps"), "{err}");
-    assert!(machine.write(&tp, 255).is_err());
-    let dir = sim.root().join("devices/platform/thinkpad_hwmon/hwmon/hwmon12");
+    assert_eq!(kind("thinkpad"), ControlKind::ReadOnly, "without fan_control=1 a ThinkPad's pwm is read-only");
+    let asus = Key::hwmon("asus", "asus-nb-wmi", "pwm1");
+    let err = machine.original(&asus).unwrap_err().to_string();
+    assert!(err.contains("firmware's modes"), "{err}");
+    assert!(machine.write(&asus, 255).is_err());
+    let dir = sim.root().join("devices/platform/asus-nb-wmi/hwmon/hwmon12");
     assert_eq!(read(&dir.join("pwm1")), "128");
+}
+
+#[test]
+fn a_stepped_control_is_written_and_read_as_its_levels() {
+    let (sim, mut machine) = desk("levels", "render-burst");
+    plug(sim.root(), "thinkpad_hwmon", 12, "thinkpad", &[(1, 0o644)]);
+    machine.rediscover();
+    let tp = Key::hwmon("thinkpad", "thinkpad_hwmon", "pwm1");
+    let dir = sim.root().join("devices/platform/thinkpad_hwmon/hwmon/hwmon12");
+    assert!(matches!(machine.inventory.devices.iter().flat_map(|d| &d.controls).find(|c| c.key == tp).unwrap().kind,
+        ControlKind::Levels { steps: 8, .. }));
+    let entry = machine.original(&tp).unwrap();
+    assert!(matches!(&entry, HeldEntry::Hwmon { original_enable: 2, original_pwm: Some(128), .. }), "{entry:?}");
+    // 128 is level 4 (`128 >> 5`), which the driver reads back as 4 × 255 / 7.
+    let duty = machine.take(&tp).unwrap();
+    assert!((duty - 400.0 / 7.0).abs() < 1e-6, "{duty}");
+    assert_eq!((read(&dir.join("pwm1_enable")), read(&dir.join("pwm1"))), ("1".to_owned(), "146".to_owned()));
+    for (level, file) in [(7, "255"), (1, "36"), (0, "0"), (5, "182")] {
+        let r = machine.write(&tp, level).unwrap();
+        assert_eq!((read(&dir.join("pwm1")), r.raw), (file.to_owned(), Some(level)), "level {level}");
+    }
+    let mut readings = penna_core::Readings::default();
+    readings = { let _ = &mut readings; machine.read() };
+    let r = readings.controls[&tp].value().unwrap();
+    assert_eq!(r.raw, Some(5));
+    assert!((r.percent - 500.0 / 7.0).abs() < 1e-6);
 }
 
 #[test]

@@ -125,6 +125,23 @@ may_stop = true
 "nvml/GPU-1/fan0" = "case"
 "#;
 
+/// The same desk with its motherboard header swapped for a stepped control: a ThinkPad's 8 levels, written every tick when
+/// `refresh`, as its watchdog needs (§3.5).
+pub fn stepped(refresh: bool, measured: &Measured) -> Rig {
+    let kind = ControlKind::Levels { steps: 8, refresh };
+    let mut inv = inventory();
+    for c in inv.devices.iter_mut().flat_map(|d| &mut d.controls).filter(|c| c.key == pwm()) {
+        c.kind = kind;
+    }
+    let cfg = Config::parse(CONFIG).expect("test config parses");
+    let plan = Plan::new(cfg, &inv, measured, Some("AMD Ryzen 9 5950X 16-Core Processor")).expect("test config plans");
+    let mut rig = Rig::new(plan);
+    let h = rig.hw.get_mut(&pwm()).expect("the header");
+    h.kind = kind;
+    h.raw = 3;
+    rig
+}
+
 pub fn measured(stop: f64, start: f64) -> Measured {
     Measured {
         controls: vec![MeasuredControl { stop: Some(stop), start: Some(start), ..MeasuredControl::new(pwm()) }],
@@ -205,9 +222,10 @@ impl Rig {
             } else {
                 let percent = match h.kind {
                     ControlKind::Duty { scale } => h.raw as f64 * 100.0 / scale as f64,
+                    ControlKind::Levels { steps, .. } => penna_core::model::level_duty(steps, h.raw),
                     _ => h.raw as f64,
                 };
-                let raw = matches!(h.kind, ControlKind::Duty { .. }).then_some(h.raw);
+                let raw = matches!(h.kind, ControlKind::Duty { .. } | ControlKind::Levels { .. }).then_some(h.raw);
                 Sample::Value(ControlReading { percent, raw, mode: h.mode })
             };
             r.controls.insert(k.clone(), sample);
@@ -245,6 +263,10 @@ impl Rig {
                 ControlKind::Duty { scale } => {
                     h.mode = ControlMode::Manual;
                     Outcome::Taken { duty: h.raw as f64 * 100.0 / scale as f64 }
+                }
+                ControlKind::Levels { steps, .. } => {
+                    h.mode = ControlMode::Manual;
+                    Outcome::Taken { duty: penna_core::model::level_duty(steps, h.raw) }
                 }
                 _ => Outcome::Taken { duty: h.raw as f64 },
             },

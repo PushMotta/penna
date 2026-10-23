@@ -32,9 +32,9 @@ pub fn input(inventory: &Inventory, board: Option<&Board>, only: Option<&[Key]>)
     let targets = inventory
         .devices
         .iter()
-        .flat_map(|d| &d.controls)
-        .filter(|c| c.kind.drivable() && only.is_none_or(|o| o.contains(&c.key)))
-        .map(|c| Target { key: c.key.clone(), label: c.label.clone(), kind: c.kind })
+        .flat_map(|d| d.controls.iter().map(move |c| (d, c)))
+        .filter(|(_, c)| c.kind.drivable() && only.is_none_or(|o| o.contains(&c.key)))
+        .map(|(d, c)| Target::of(d, c))
         .collect();
     let tachs = inventory
         .devices
@@ -267,7 +267,9 @@ pub fn propose(live: &mut Live, inventory: &Inventory, out: &mut Trace) {
     };
     let mut g = generate(&base, inventory, &live.measured, live.cpu_model.as_deref());
     if moved > 0.0 {
+        // The CPU's Balanced curve: a desktop's CPU fans', or the CPU half of a laptop's fans' (§5.5).
         earlier(&mut g.config, "cpu-balanced", moved);
+        earlier(&mut g.config, "laptop-balanced-cpu", moved);
     }
     // During the load check the proposed Balanced curves run the fans; for the review, the profile that was on (§5.5).
     if checking {

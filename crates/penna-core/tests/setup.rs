@@ -215,12 +215,7 @@ impl Desk {
     fn input(&self) -> Input {
         let inv = self.inventory();
         Input {
-            targets: inv
-                .devices
-                .iter()
-                .flat_map(|d| &d.controls)
-                .map(|c| Target { key: c.key.clone(), label: c.label.clone(), kind: c.kind })
-                .collect(),
+            targets: inv.devices.iter().flat_map(|d| d.controls.iter().map(move |c| Target::of(d, c))).collect(),
             tachs: self
                 .channels
                 .iter()
