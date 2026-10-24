@@ -1410,4 +1410,8 @@ These need root or a shell restart, and were not run for this draft.
    then costs 4.7 ms, one in five 8.4 ms, 5.4 ms on average, against 8.9 ms unpaced. What is left is mostly the two policy
    reads, which read-back needs every tick. The 1 ms goal can't be met with an NVIDIA GPU's fans read every tick. Without
    one it nearly is. The two NVMe drives' four files also hold the loop for 17 ms of wall time a tick, with little CPU.
+
+   *(24 Oct 2026.)* Installed on the desk, the paced `pennad` used 7.0 ms a tick over 60 s with the desk idle. The 11.4 ms
+   above was measured under a compile. At the same idle load, the read path costs 10.3 ms a pass unpaced and 5.0 ms paced
+   (median 4.0).
 7. ~~**The shell's render loop on this NVIDIA stack.**~~ Verified in M3: `threaded` (Quickshell 0.3.2, NVIDIA 615.78.08). A baseline run of the shipped popups, for comparison, is still to do.
