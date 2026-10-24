@@ -1,5 +1,6 @@
 //! Every way out hands the fans back (DESIGN.md §6.2, §9.2): pennad runs a mock desk as an ordinary user, then is killed,
-//! stopped or made to panic, and every `pwmN_enable` and GPU policy must end exactly as the firmware had it.
+//! stopped or made to panic, and every `pwmN_enable` and GPU policy must end exactly as the firmware had it. A sleep is a way
+//! out and back in: the fans are left alone, then written again (§6.5).
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -195,4 +196,38 @@ fn a_held_json_left_by_a_dead_daemon_is_restored_first() {
     assert!(status.success(), "{}", fs::read_to_string(dir.join("pennad2.log")).unwrap());
     assert!(fs::read_to_string(dir.join("pennad2.log")).unwrap().contains("restored what a previous run left"));
     assert_firmware(&dir);
+}
+
+#[test]
+fn sleep_leaves_the_fans_alone_and_waking_writes_them_again() {
+    let dir = fresh("sleep");
+    // A tick is 50 ms at 20×. Asleep from tick 40 to tick 68: between the scenario's own fights over the fans, and inside the
+    // 30 s after which the loop stops waiting for the wake.
+    let mut child = Reaped(start(&dir, &["--forever", "--test-sleep", "40:68"]));
+    let log = || fs::read_to_string(dir.join("pennad.log")).unwrap_or_default();
+    wait_until("sleep", Duration::from_secs(20), || log().contains("Going to sleep"), &dir);
+    assert_eq!(it87(&dir, "pwm1_enable"), "1", "taken before the machine slept");
+    // The firmware takes the fan back while the machine sleeps. Awake, read-back would write it again within three ticks.
+    fs::write(dir.join("tree/sys/devices/platform/it87.2608/hwmon/hwmon5/pwm1_enable"), "2").unwrap();
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(!log().contains("Awake"), "still asleep half a second in:\n{}", log());
+    assert_eq!(it87(&dir, "pwm1_enable"), "2", "asleep, the loop leaves the hardware alone");
+    wait_until("the wake", Duration::from_secs(20), || log().contains("Awake"), &dir);
+    wait_until("the fan written again", Duration::from_secs(2), || it87(&dir, "pwm1_enable") == "1", &dir);
+    let log = log();
+    let woke = log.lines().find(|l| l.contains("Awake")).and_then(|l| l.split("  ").next()).unwrap().to_owned();
+    assert!(!log.lines().any(|l| l.starts_with(&woke) && l.contains("something changed it")), "waking is not a contest:\n{log}");
+    assert_eq!(unsafe { libc::kill(child.0.id() as i32, libc::SIGTERM) }, 0);
+    assert!(wait_exit(&mut child.0, &dir).success());
+    assert_firmware(&dir);
+}
+
+/// Kills pennad when a test fails before stopping it, so a run left behind can't write into the next one's tree.
+struct Reaped(Child);
+
+impl Drop for Reaped {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
 }

@@ -15,6 +15,7 @@ mod ipc;
 mod platform_lever;
 mod requests;
 mod setup;
+mod sleep;
 mod trace;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -97,6 +98,9 @@ struct Args {
     /// WatchdogSec kills it. SIGTERM still stops it cleanly.
     #[arg(long, hide = true)]
     test_hang_after: Option<u64>,
+    /// Test only: asleep from tick FROM to tick TO, as logind would say it, without logind.
+    #[arg(long, hide = true, value_name = "FROM:TO", value_parser = parse_span)]
+    test_sleep: Option<(u64, u64)>,
     /// Print the configuration pennad would write on its first start on this machine, read-only, and exit.
     #[arg(long, hide = true)]
     print_starter: bool,
@@ -105,6 +109,12 @@ struct Args {
 fn parse_tick(s: &str) -> Result<f64, String> {
     let v = penna_core::config::parse_seconds(s).ok_or_else(|| format!("not a duration: {s}"))?;
     if (0.25..=5.0).contains(&v) { Ok(v) } else { Err("between 0.25 and 5 seconds".into()) }
+}
+
+fn parse_span(s: &str) -> Result<(u64, u64), String> {
+    let (a, b) = s.split_once(':').ok_or("FROM:TO, in ticks")?;
+    let (a, b) = (a.parse().map_err(|_| "FROM:TO, in ticks")?, b.parse().map_err(|_| "FROM:TO, in ticks")?);
+    if a < b { Ok((a, b)) } else { Err("FROM comes before TO".into()) }
 }
 
 fn parse_speed(s: &str) -> Result<f64, String> {
@@ -500,6 +510,11 @@ fn run(args: Args) -> Result<()> {
         held = held.with_firmware(fw);
     }
     let mut lever = platform_lever::Lever::new(platform);
+    let mut sleep = match args.test_sleep {
+        Some((from, to)) => sleep::Sleep::script(from, to),
+        None if real => sleep::Sleep::watch(),
+        None => sleep::Sleep::off(),
+    };
     // The loop pings the watchdog after every tick, and between ticks whenever half of WatchdogSec has passed: never from a
     // thread of its own, so a loop that stops stops the pings (§6.2).
     let ping_every = sd_notify::watchdog_enabled().map(|d| d / 2);
@@ -522,55 +537,61 @@ fn run(args: Args) -> Result<()> {
             break Ok(());
         }
         let now = if mock { ticks as f64 * args.tick } else { start.elapsed().as_secs_f64() };
-        if let Some(sim) = sim.as_mut()
-            && ticks > 0
-        {
-            match sim.advance(args.tick) {
-                Ok(events) => out.sim_events(now, &events),
-                Err(e) => break Err(e.context("simulator")),
+        if slept(&mut sleep, &mut live, &machine.inventory, &mut out, ticks, now) {
+            send_events(&events, &mut out, live.state.seq, now);
+        }
+        // While the machine goes to sleep and until it wakes, the hardware is left alone: the loop keeps time and answers (§6.5).
+        if !sleep.asleep() {
+            if let Some(sim) = sim.as_mut()
+                && ticks > 0
+            {
+                match sim.advance(args.tick) {
+                    Ok(events) => out.sim_events(now, &events),
+                    Err(e) => break Err(e.context("simulator")),
+                }
             }
-        }
-        if machine.rediscover() {
-            rediscovered(&mut live, &mut machine, &mut held, &mut out, now);
-        }
-        // A GPU fan's speed is for people to read, and costs about a millisecond a fan; setup measures it (§3.4).
-        machine.pace(if live.setup.is_some() { None } else { Some(penna_hw::nvml::SPEED_EVERY) });
-        let readings = machine.read();
-        if setup::step(&mut live, &machine.inventory, &readings, &mut out, now, unix_now()) {
-            machine.set_pairing(&live.measured);
-            setup::replan(&mut live, &machine.inventory, &mut out, now);
-            setup::propose(&mut live, &machine.inventory, &mut out);
+            if machine.rediscover() {
+                rediscovered(&mut live, &mut machine, &mut held, &mut out, now);
+            }
+            // A GPU fan's speed is for people to read, and costs about a millisecond a fan; setup measures it (§3.4).
+            machine.pace(if live.setup.is_some() { None } else { Some(penna_hw::nvml::SPEED_EVERY) });
+            let readings = machine.read();
+            if setup::step(&mut live, &machine.inventory, &readings, &mut out, now, unix_now()) {
+                machine.set_pairing(&live.measured);
+                setup::replan(&mut live, &machine.inventory, &mut out, now);
+                setup::propose(&mut live, &machine.inventory, &mut out);
+            }
+            let (next, cmds) = tick(&live.plan, &live.state, &readings, now);
+            live.state = next;
+            let mut queue: std::collections::VecDeque<Command> = cmds.into();
+            while let Some(cmd) = queue.pop_front() {
+                let outcome = carry_out(&mut machine, &mut held, &cmd);
+                out.command(now, &live.plan, &live.state, &cmd, &outcome);
+                if let Some(follow) = live.state.record(&live.plan, &cmd, &outcome) {
+                    queue.push_back(follow);
+                }
+            }
+            live.plan.drop_released(&live.state);
+            lever.step(&machine.inventory, &live.state.profile, &mut held, &mut out, now);
+            live.power = lever.profiles(&machine.inventory, live.plan.config.profiles.keys());
+            for change in live.drift.update(&live.state, &readings, &live.measured, now) {
+                drifted(&live, &mut out, now, change);
+            }
+            out.tick(now, &live.plan, &live.state, &readings);
+            live.readings = readings;
+            live.now = now;
+
+            let body = live.tick_body(&machine.inventory);
+            ring.push(&body);
+            send_events(&events, &mut out, live.state.seq, body.t);
+            publish.send_replace(Arc::new(ipc::Published::new(&body, ring.snapshot(body.seq, args.tick), &live.plan.config)));
         }
         match sim.as_mut() {
             Some(sim) => sim.full_cpu(live.load_wanted),
             None => burn.set(live.load_wanted),
         }
-        let (next, cmds) = tick(&live.plan, &live.state, &readings, now);
-        live.state = next;
-        let mut queue: std::collections::VecDeque<Command> = cmds.into();
-        while let Some(cmd) = queue.pop_front() {
-            let outcome = carry_out(&mut machine, &mut held, &cmd);
-            out.command(now, &live.plan, &live.state, &cmd, &outcome);
-            if let Some(follow) = live.state.record(&live.plan, &cmd, &outcome) {
-                queue.push_back(follow);
-            }
-        }
-        live.plan.drop_released(&live.state);
-        lever.step(&machine.inventory, &live.state.profile, &mut held, &mut out, now);
-        live.power = lever.profiles(&machine.inventory, live.plan.config.profiles.keys());
-        for change in live.drift.update(&live.state, &readings, &live.measured, now) {
-            drifted(&live, &mut out, now, change);
-        }
         let _ = sd_notify::notify(&[sd_notify::NotifyState::Watchdog]);
         last_ping = Instant::now();
-        out.tick(now, &live.plan, &live.state, &readings);
-        live.readings = readings;
-        live.now = now;
-
-        let body = live.tick_body(&machine.inventory);
-        ring.push(&body);
-        send_events(&events, &mut out, live.state.seq, body.t);
-        publish.send_replace(Arc::new(ipc::Published::new(&body, ring.snapshot(body.seq, args.tick), &live.plan.config)));
 
         ticks += 1;
         if args.test_panic_after == Some(ticks) {
@@ -611,6 +632,9 @@ fn run(args: Args) -> Result<()> {
             }
             if changed {
                 publish_now(&live, &mut out);
+            }
+            if slept(&mut sleep, &mut live, &machine.inventory, &mut out, ticks, now) {
+                send_events(&events, &mut out, live.state.seq, now);
             }
             if ping_every.is_some_and(|p| last_ping.elapsed() >= p) {
                 let _ = sd_notify::notify(&[sd_notify::NotifyState::Watchdog]);
@@ -696,6 +720,37 @@ fn rediscovered(live: &mut Live, machine: &mut Machine, held: &mut Held, out: &m
             Err(err) => out.note(now, penna_proto::Level::Alert, Some(key), format!("Back, but could not be put back: {err}")),
         }
     }
+}
+
+/// What logind said about sleep, taken between ticks (§6.5). Returns whether anything was said.
+fn slept(sleep: &mut sleep::Sleep, live: &mut Live, inventory: &Inventory, out: &mut trace::Trace, ticks: u64, now: f64) -> bool {
+    use penna_proto::Level;
+    let changes = sleep.poll(ticks, now);
+    for change in &changes {
+        match change {
+            sleep::Change::Going => {
+                setup::stop(live, inventory, out, "The machine went to sleep.");
+                out.note(now, Level::Info, None, "Going to sleep: Penna leaves the fans alone until the machine wakes".into());
+            }
+            sleep::Change::Woke => {
+                live.state.woke();
+                out.note(now, Level::Info, None, "Awake: every fan Penna drives is written again".into());
+            }
+            sleep::Change::GaveUp => {
+                live.state.woke();
+                out.note(
+                    now,
+                    Level::Warn,
+                    None,
+                    format!("No word that the machine woke {:.0} s after it was to sleep: Penna drives the fans again", sleep::GIVE_UP),
+                );
+            }
+            sleep::Change::Trouble(why) => {
+                out.note(now, Level::Warn, None, format!("{why}. Read-back catches what sleep changes instead (§6.4)"))
+            }
+        }
+    }
+    !changes.is_empty()
 }
 
 /// A fan that drifted, or recovered, said once (§5.6).

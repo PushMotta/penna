@@ -235,6 +235,46 @@ fn a_resume_reset_is_reasserted_once_and_forgotten() {
 }
 
 #[test]
+fn waking_from_sleep_writes_every_driven_fan_at_once_and_counts_nothing() {
+    let mut rig = Rig::standard();
+    rig.set(&gpu_temp(), 60.0);
+    rig.run(5);
+    assert_eq!((rig.state(&pwm()), rig.state(&gpu_fan())), (State::Curve, State::Curve));
+    // The firmware took both back while the machine slept. A tick after waking writes them, before read-back has looked.
+    rig.hw.get_mut(&pwm()).unwrap().mode = ControlMode::Automatic(2);
+    rig.hw.get_mut(&gpu_fan()).unwrap().mode = ControlMode::Driver;
+    rig.st.woke();
+    let cmds = rig.step();
+    for key in [pwm(), gpu_fan()] {
+        assert!(cmds.iter().any(|c| matches!(c, Command::Reassert { key: k, .. } if k == &key)), "{key}: {cmds:?}");
+        assert!(rig.st.controls[&key].reasserts.is_empty(), "{key}: sleep is not a contest");
+    }
+    assert_eq!((rig.hw[&pwm()].mode, rig.hw[&gpu_fan()].mode), (ControlMode::Manual, ControlMode::Manual));
+    let before = rig.log.len();
+    rig.run(3);
+    assert!(!rig.log[before..].iter().any(|(_, c)| matches!(c, Command::Reassert { .. })), "{:?}", &rig.log[before..]);
+}
+
+#[test]
+fn waking_from_sleep_leaves_a_contested_fan_and_a_handed_back_one_alone() {
+    let mut rig = Rig::standard();
+    rig.run(5);
+    assert_eq!(rig.state(&gpu_fan()), State::Handback, "a cool GPU runs on the driver's curve");
+    for _ in 0..20 {
+        rig.hw.get_mut(&pwm()).unwrap().mode = ControlMode::Automatic(2);
+        rig.step();
+        if rig.state(&pwm()) == State::Contested {
+            break;
+        }
+    }
+    assert_eq!(rig.state(&pwm()), State::Contested);
+    rig.st.woke();
+    let cmds = rig.step();
+    assert!(cmds.is_empty(), "{cmds:?}");
+    assert_eq!(rig.state(&pwm()), State::Contested);
+}
+
+#[test]
 fn a_value_overwritten_by_someone_else_counts_too() {
     let mut rig = Rig::standard();
     rig.run(5);

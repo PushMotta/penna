@@ -260,6 +260,20 @@ impl LoopState {
         Ok(())
     }
 
+    /// The machine woke from sleep (§6.5). Firmware may have taken any fan back while it slept, so every control Penna is driving
+    /// is written again on the next tick, mode and all, without waiting for read-back to notice. What sleep changed is not
+    /// counted against a fan. A contested, failed or handed-back control stays as it is.
+    pub fn woke(&mut self) {
+        for cs in self.controls.values_mut() {
+            let driving = cs.held && !cs.handback && !cs.taking && !cs.releasing && cs.parked.is_none();
+            if driving && !matches!(cs.state, State::Contested | State::Fault) {
+                cs.mismatch = 0;
+                cs.reasserts.clear();
+                cs.force_reassert = true;
+            }
+        }
+    }
+
     /// What the hardware said about a command. A failed write or hand-back asks for the control to be released at once.
     pub fn record(&mut self, plan: &Plan, cmd: &Command, outcome: &Outcome) -> Option<Command> {
         let key = cmd.key();

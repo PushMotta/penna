@@ -189,6 +189,8 @@ impl Trace {
             (Command::Reassert { key, .. }, Outcome::Done) => match st.controls.get(key) {
                 // A contested fan taken back for the emergency: the state line already says so, every tick.
                 Some(c) if c.state == State::Emergency => return,
+                // Penna's own, after a retry or a wake: each is said once for itself.
+                Some(c) if c.reasserts.is_empty() => return,
                 c => format!(
                     "{label}: something changed it; manual control re-asserted ({} of 3 in 30 s)",
                     c.map_or(0, |c| c.reasserts.len())

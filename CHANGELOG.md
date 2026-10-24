@@ -6,6 +6,10 @@
   time, and a 3090's two fans took 7–9 ms of each one-second tick. An NVIDIA fan's RPM and percent are now read every 5 s,
   and every tick while setup measures. Who controls the fan, which read-back checks, and the GPU's temperature are still
   read every tick. The popup's and studio's GPU fan speeds now update every 5 s.
+- **Sleep.** `pennad` now holds a logind delay lock. When the machine goes to sleep, it leaves the fans alone until the machine
+  wakes, then writes every fan it drives again. Before, its loop ran on into the suspend. On the desk's first suspend a fan
+  write hung there, and on waking the watchdog killed `pennad`. Every fan was handed back and taken again a second later, but
+  only because the last way out worked.
 
 ## 0.10.4 (23 Oct 2026)
 

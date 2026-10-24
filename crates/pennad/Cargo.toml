@@ -12,11 +12,13 @@ penna-hw.workspace = true
 penna-proto.workspace = true
 anyhow.workspace = true
 clap.workspace = true
+futures-lite.workspace = true
 libc.workspace = true
 sd-notify.workspace = true
 serde_json.workspace = true
 signal-hook.workspace = true
 tokio.workspace = true
+zbus.workspace = true
 
 [dev-dependencies]
 penna-core.workspace = true

@@ -494,7 +494,9 @@ At start, `penna doctor` and the daemon refuse to adopt while `coolercontrold`, 
 
 ### 6.5 Resume
 
-The daemon subscribes to logind `PrepareForSleep(false)`. On resume it re-reads every mode and re-asserts manual control where it held it. Read-back (§6.4) catches whatever this misses. Both suspend and hibernate have to be tested here (§13).
+The daemon holds a logind delay lock for sleep and listens for `PrepareForSleep`. When sleep is asked for, the loop finishes its tick, stops touching the hardware and lets the lock go. It keeps time, answers the socket and pings the watchdog, but reads and writes nothing until `PrepareForSleep(false)`. Then every control it drives is written again on the next tick, mode and all, before read-back has looked, and none of it counts toward a contest (§6.4). A contested, failed or handed-back control stays as it is. A setup that is running stops. If logind says nothing for 30 s of loop time, the loop drives the fans again; time asleep doesn't count, as the loop is frozen and its clock stops. Without logind the loop runs as before, and read-back catches what sleep changes. The lock is `systemd-inhibit --list`'s "Penna".
+
+*(24 Oct 2026, the desk's first suspend; §13.)* Before the lock, the loop went on ticking into the kernel's suspend. The tick that ran as the kernel began had three writes to the IT8688E fail with `EBUSY`, and handing the first of those fans back hung until the watchdog killed `pennad` on waking. `penna restore` then handed every fan back, and the restarted daemon took them again a second later. Nothing went uncontrolled, but only the last way out worked. The NVIDIA driver also holds the GPU for about 2.6 s before the freeze and 1.7 s after waking (`UseKernelSuspendNotifiers`), so NVML reads would have stalled the loop there too. The it87 fork does its own part: it hands the fans to the firmware in its suspend callback and puts Penna's settings back on resume.
 
 ### 6.6 What we do to the chip
 
@@ -1397,7 +1399,7 @@ These need root or a shell restart, and were not run for this draft.
 2. ~~**Which headers each chip drives.**~~ Paired by hand in M5: each `pwmN` drives `fanN`, as the fork's labels say (§3.6). ~~Whether IT8792E writes hold~~: they held for 40 s in both M5 hardware runs, with no contest (M5 status, §10).
 3. ~~**BIOS Smart Fan settings** that manual control may need.~~ None on this desk: all eight channels held in both M5 runs with the BIOS settings as they are (F36d). The fork notes some Gigabyte boards need a BIOS curve workaround.
 4. ~~**NVML on the 3090 as root.**~~ Verified in M4 (§9.4): manual speeds hold and read back as manual, `SetDefaultFanSpeed_v2` hands the fans back, and zero RPM returns at idle.
-5. **`pwm_enable` after suspend and after hibernate.**
+5. **`pwm_enable` after suspend and after hibernate.** *Suspend, 24 Oct 2026, before the delay lock (§6.5):* S3 for a few seconds, with a VM running. The it87 fork's resume logged no failed sanity check, so by its code it put Penna's settings back, but nothing read the chips between waking and the restore below. `pennad` itself didn't come through: its loop hung as the suspend began and the watchdog killed it on waking, and `ExecStopPost` handed every fan back. The delay lock is the fix; suspend with it, then hibernate, are still to run.
 6. ~~**Cost of a tick.**~~ *Measured 23 Oct 2026, without root.* The goal was under 1 ms. 0.10.4 used 11.4 ms of CPU a tick
    over 60 s, nearly all of it in the kernel (`/proc/<pid>/task/*/stat`; 0.10.1's eight hours averaged 10.1 ms). NVML was
    most of it. `penna watch --direct` costs 11.6 ms a pass, and 2.6 ms with `--no-nvml`. Through the daemon's own read path,
