@@ -1039,7 +1039,11 @@ impl Sim {
             let file = self.root.join(&chip.path).join("gpu_od/fan_ctrl/fan_curve");
             let mut committed = self.od.get(&file).cloned().unwrap_or_else(|| od.points.clone());
             let text = fs::read_to_string(&file).unwrap_or_default();
-            let commands: Vec<&str> = text.split("OD_RANGE:").nth(1).map_or(Vec::new(), |r| r.lines().skip(2).collect());
+            // Whatever follows the table's range lines was written to it: `i °C %`, `c` or `r`.
+            let commands: Vec<&str> = text
+                .split("OD_RANGE:")
+                .nth(1)
+                .map_or(Vec::new(), |r| r.lines().filter(|l| !l.trim().is_empty() && !l.starts_with("FAN_CURVE(")).collect());
             if !commands.is_empty() {
                 let mut staged = committed.clone();
                 for c in commands {

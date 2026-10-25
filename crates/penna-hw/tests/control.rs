@@ -372,3 +372,32 @@ fn a_thinkpad_s_watchdog_takes_the_fan_back_when_penna_stops_writing() {
     sim.advance(6.0).unwrap();
     assert_eq!(read(&dir.join("pwm1_enable")), "2", "5 s without a write: back to the embedded controller");
 }
+
+/// amdgpu's OverDrive curve file (§3.5): the simulator rewrites it only to apply a command written to it. A test reading it
+/// from outside between the truncate and the write of a rewrite would find it empty, which a real sysfs file never is.
+#[test]
+fn an_overdrive_curve_is_rewritten_only_to_apply_a_command() {
+    let scenario = concat!(env!("CARGO_MANIFEST_DIR"), "/../../test/fixtures/drivers/amdgpu-rdna4.toml");
+    let (mut sim, mut machine) = desk("overdrive", scenario);
+    let file = sim.root().join("devices/pci0000:00/0000:00:01.1/0000:03:00.0/gpu_od/fan_ctrl/fan_curve");
+    let long_ago = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+    let stamp = || fs::File::options().write(true).open(&file).unwrap().set_modified(long_ago).unwrap();
+    let untouched = || fs::metadata(&file).unwrap().modified().unwrap() == long_ago;
+
+    stamp();
+    sim.advance(5.0).unwrap();
+    assert!(untouched(), "nothing written, so nothing rewritten");
+
+    let key = Key::hwmon("amdgpu", "0000:03:00.0", "pwm1");
+    machine.original(&key).unwrap();
+    machine.take(&key).unwrap();
+    machine.write_curve(&key, &[[40.0, 20.0], [55.0, 35.0], [70.0, 50.0], [85.0, 75.0], [100.0, 100.0]]).unwrap();
+    sim.advance(1.0).unwrap();
+    let table = fs::read_to_string(&file).unwrap();
+    assert!(table.contains("0: 40C 20%") && table.contains("4: 100C 100%"), "committed: {table}");
+    assert!(table.trim_end().ends_with('%'), "no command left waiting: {table}");
+
+    stamp();
+    sim.advance(5.0).unwrap();
+    assert!(untouched(), "committed, then left alone");
+}
