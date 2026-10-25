@@ -471,6 +471,10 @@ fn run(args: Args) -> Result<()> {
     let mut ring = history::Ring::default();
     let mut burn = burn::Burn::default();
 
+    let mut lever = platform_lever::Lever::new(platform);
+    // What each profile sets is in the first state a client can see, not only from the first tick on.
+    live.power = lever.profiles(&machine.inventory, live.plan.config.profiles.keys());
+
     // The socket comes up before any fan is taken: if it cannot, nothing has changed.
     let first = ipc::Published::new(&live.tick_body(&machine.inventory), ring.snapshot(0, args.tick), &live.plan.config);
     let (publish, published) = watch::channel(Arc::new(first));
@@ -509,7 +513,6 @@ fn run(args: Args) -> Result<()> {
     if let Some(fw) = &firmware_path {
         held = held.with_firmware(fw);
     }
-    let mut lever = platform_lever::Lever::new(platform);
     let mut sleep = match args.test_sleep {
         Some((from, to)) => sleep::Sleep::script(from, to),
         None if real => sleep::Sleep::watch(),

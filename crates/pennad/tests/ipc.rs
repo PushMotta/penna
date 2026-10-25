@@ -307,7 +307,17 @@ fn a_subscriber_that_stops_reading_is_dropped_and_no_one_else_waits() {
         let after = seqs.iter().filter(|(t, _)| *t <= window + Duration::from_millis(500)).map(|(_, s)| *s).max().unwrap_or(0);
         assert!(after > before, "ticks stalled around {window:?}: {before} → {after}");
     }
-    assert!(d.log().contains("dropped a client (uid"), "pennad said:\n{}", d.log());
+    // The slow client goes once its buffer is full and a write to it has waited out WRITE_TIMEOUT. On a busy machine the loop
+    // ticks slower, so the buffer takes longer to fill than the 4 s above. The fast client reads on meanwhile, or it would fill
+    // its own buffer and be dropped instead.
+    let end = Instant::now() + Duration::from_secs(20);
+    while !d.log().contains("dropped a client (uid") {
+        assert!(Instant::now() < end, "the slow client was never dropped; pennad said:\n{}", d.log());
+        let next = Instant::now() + Duration::from_millis(50);
+        while Instant::now() < next {
+            fast.line();
+        }
+    }
 
     // What the slow client left unread drains, then the connection is closed.
     slow.reader.get_ref().set_read_timeout(Some(Duration::from_secs(5))).unwrap();
