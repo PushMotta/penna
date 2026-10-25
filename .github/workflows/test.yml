@@ -4,46 +4,59 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 # This workflow only reads the repository and runs tests: it publishes nothing, comments nowhere and uploads no artifact.
 # Every job inherits this floor, so a step that later needs more has to ask.
 permissions:
   contents: read
 
+# Both jobs run the same gate, tools/ci.sh. Every test in it runs against the simulator, the mock and fixtures: nothing here
+# touches the machine's own fans.
 jobs:
-  rust:
-    runs-on: ubuntu-24.04
+  # A push to main runs on the maintainer's desk: a self-hosted runner labelled `penna` (tools/ci-runner.sh) that already has
+  # the toolchain and keeps the build between runs. This `if:` is not what keeps pull requests off the desk, since a pull
+  # request runs its own copy of this file. The runner's job-started hook (tools/ci-runner-guard.sh) refuses anything but a
+  # push to main, and an outside contributor's run waits for the maintainer's approval.
+  desk:
+    if: github.event_name == 'push'
+    runs-on: [self-hosted, penna]
+    env:
+      # Outside the checkout, which actions/checkout cleans, so the build is cached between runs.
+      CARGO_TARGET_DIR: ${{ github.workspace }}/../target-penna
     steps:
       # Actions are pinned to full commit SHAs rather than to moving tags: a tag can be repointed by whoever owns it, and the
       # code behind it then runs here with this workflow's token. Update them deliberately, checking what changed.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # The runner's own rustup, so no third-party action runs here.
       - name: Rust
+        run: tools/ci.sh rust
+
+      - name: Plugin
+        run: tools/ci.sh plugin
+
+  # Pull requests, and a run by hand (`gh workflow run test`), on one of GitHub's clean, slower machines. Machines like these
+  # found the tests that passed only where Penna was installed, and a pennad that fell behind on a slow machine (DESIGN.md,
+  # M10). Run it before a release.
+  github:
+    if: github.event_name != 'push'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The runner's own rustup, so no third-party action runs here.
+      - name: Toolchain
         run: |
           rustup toolchain install stable --profile minimal --component clippy,rustfmt
           rustup default stable
           rustc --version
 
-      - name: Format
-        run: cargo fmt --check
-
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
-
-      # Every test runs against the simulator, the mock and fixtures: nothing here touches the runner's own fans.
-      - name: Tests
-        run: cargo test --workspace --locked
-
-  plugin:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
 
-      - name: Model tests
-        working-directory: plugin
-        run: node --test test/model.test.js test/studio.test.js
+      - name: Rust
+        run: tools/ci.sh rust
+
+      - name: Plugin
+        run: tools/ci.sh plugin

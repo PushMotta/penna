@@ -1263,7 +1263,11 @@ Milestones, each ending in something visible:
     from a `git archive` tarball, in a 168-character directory inside another git repository, as an AUR helper builds it,
     every test passed.
   - **CI** on GitHub Actions, with actions pinned to commit SHAs and a read-only token: format, clippy, the Rust tests and
-    the plugin's model tests.
+    the plugin's model tests, all in `tools/ci.sh`. Since 25 Oct 2026 a push to main runs on the desk, on a self-hosted
+    runner (`tools/ci-runner.sh`) whose job-started hook refuses every job but a push to main. A pull request runs its own
+    copy of the workflow, so only a check outside it keeps a fork's code off the desk. Pull requests, and a run by hand before
+    a release (`gh workflow run test`), still go to GitHub's clean, slower machines, which found both bugs above. On the desk
+    the gate hides the installed Penna and the running `pennad` from the tests, as the release check does.
   - **Fixed on the way:**
     - A fresh clone failed `a_capture_of_a_capture_reads_the_same`. Git keeps no empty directory, so a captured driver link
       dangled, and a capture skipped it. A capture now keeps a link whose target is gone.

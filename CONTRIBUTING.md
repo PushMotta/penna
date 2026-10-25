@@ -55,14 +55,15 @@ Two rules are not up for negotiation:
 - **Every fan goes back.** A new kind of control says how it is put back before it is changed, and every exit path is tested
   (§6).
 
-Before sending a pull request:
+Before sending a pull request, run the gate CI runs: format, clippy, every Rust test and the plugin's model tests.
 
 ```
-cargo fmt --check
-cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked
-cd plugin && node --test test/model.test.js test/studio.test.js
+tools/ci.sh          # in a fresh clone of HEAD, as CI gets it
+tools/ci.sh here     # in this checkout, uncommitted changes included
 ```
+
+If Penna is installed on your machine, the gate hides it from the tests with bwrap, so a test can't pass only because it is
+there.
 
 The support tables in the README and [docs/SUPPORT.md](docs/SUPPORT.md) are generated from the driver table, the board
 database and `data/chips.toml`, and a test fails when they drift. After changing any of those, write them again with
