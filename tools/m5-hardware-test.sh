@@ -212,6 +212,15 @@ cleanup() {
 tctl=$(for h in /sys/class/hwmon/hwmon*; do [ "$(cat "$h/name")" = k10temp ] && cat "$h/temp1_input"; done | head -1)
 [ -n "$tctl" ] && [ "$tctl" -lt 70000 ] || { echo "The CPU is at $((tctl / 1000)) °C. Run this while the machine is idle."; exit 2; }
 exec > >(tee "$log") 2>&1
+if systemctl is-active --quiet pennad.service; then
+  service_was_active=1
+  systemctl stop pennad.service
+  echo "Stopped the installed pennad; it starts again at the end."
+fi
+"$bin/penna" state >/dev/null 2>&1 && { echo "A pennad still answers on $sock. Stop it first."; [ "$service_was_active" = 1 ] && systemctl start pennad.service; exit 2; }
+# What the firmware runs, recorded once the installed pennad has handed every channel back, which stopping it does. Recorded
+# while it still ran, this was its own manual duties: every hand-back then looked wrong, and the cleanup wrote manual mode
+# back onto every fan (26 Oct 2026).
 for i in "${!dirs[@]}"; do
   p=${dirs[$i]}
   orig_enable[$p]=$(cat "${p}_enable")
@@ -224,12 +233,9 @@ for i in "${!dirs[@]}"; do
   done
 done
 trap cleanup EXIT
-if systemctl is-active --quiet pennad.service; then
-  service_was_active=1
-  systemctl stop pennad.service
-  echo "Stopped the installed pennad; it starts again at the end."
-fi
-"$bin/penna" state >/dev/null 2>&1 && { echo "A pennad still answers on $sock. Stop it first."; exit 2; }
+for p in "${dirs[@]}"; do
+  [ "${orig_enable[$p]}" = 1 ] && { echo "$p is in manual mode with nothing driving it: run this with the firmware on every fan."; exit 2; }
+done
 
 mkdir -p "$work"
 {

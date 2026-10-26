@@ -5,7 +5,7 @@
 #
 #   sudo tools/m4-hardware-test.sh
 #
-# Takes about three minutes. The GPU fans are held at 45 % for a few seconds at a time, so you will hear them. Whatever
+# Takes about three minutes. The GPU fans are held at 60 % for a few seconds at a time, so you will hear them. Whatever
 # happens, the cleanup hands both fans back to the driver (penna restore, then NVML directly as a last resort).
 set -uo pipefail
 
@@ -17,8 +17,10 @@ work=/run/penna-m4
 cfg=$work/config.toml
 sock=/run/penna/penna.sock
 held=/run/penna/held.json
+log=$repo/target/m4-hardware-test.log
 export PENNA_SOCKET=$sock
 fails=0
+service_was_active=0
 
 say() { printf '\n== %s\n' "$*"; }
 state() { python3 -I "$here/nvml-state.py" "$@"; }
@@ -63,7 +65,10 @@ start() {
   return 1
 }
 
-# hold <percent> <seconds>: both fans, through the daemon, the way a person would.
+# hold <percent> <seconds>: both fans, through the daemon, the way a person would. Holds are at 60 %: a fan the driver has comes
+# back to Penna only at its floor plus the resume margin (§4.5), 50 and 55 % for this desk's measured 3090 fans. Written in M4,
+# before calibration set those floors, this test held at 45 and 40 %, and from then on the driver rightly kept both fans.
+hold_pct=60
 hold() {
   "$bin/penna" set "GPU fan 1" "$1" --for "${2}s" >/dev/null && "$bin/penna" set "GPU fan 2" "$1" --for "${2}s" >/dev/null
 }
@@ -91,9 +96,13 @@ cleanup() {
   fi
   rm -f "$sock"
   rm -rf "$work"
+  if [ "$service_was_active" = 1 ]; then
+    systemctl start pennad.service && echo "Started the installed pennad again."
+  fi
   say "After the test"
   state
   if [ "$fails" -eq 0 ]; then echo "M4 hardware test: PASS"; else echo "M4 hardware test: $fails FAILED"; fi
+  chown --reference="$repo" "$log" 2>/dev/null
 }
 
 # ------------------------------------------------------------------ preflight
@@ -101,7 +110,14 @@ cleanup() {
 [ -x "$bin/pennad" ] && [ -x "$bin/penna" ] || { echo "Build first, as your user: cargo build -p pennad -p penna"; exit 2; }
 temp=$(state --json | python3 -I -c 'import json,sys; print(json.load(sys.stdin)[0]["temp"])')
 [ "$temp" -lt 70 ] || { echo "The GPU is at $temp °C. Run this while it is idle."; exit 2; }
-"$bin/penna" state >/dev/null 2>&1 && { echo "A pennad already answers on $sock. Stop it first."; exit 2; }
+exec > >(tee "$log") 2>&1
+# The installed pennad hands both fans back to the driver as it stops, and starts again at the end, as in m5.
+if systemctl is-active --quiet pennad.service; then
+  service_was_active=1
+  systemctl stop pennad.service
+  echo "Stopped the installed pennad; it starts again at the end."
+fi
+"$bin/penna" state >/dev/null 2>&1 && { echo "A pennad still answers on $sock. Stop it first."; [ "$service_was_active" = 1 ] && systemctl start pennad.service; exit 2; }
 mkdir -p "$work"
 cp "$repo/test/fixtures/desk-3090.config.toml" "$cfg"
 "$bin/penna" check "$cfg" || { echo "penna check refused the desk config."; exit 2; }
@@ -112,9 +128,9 @@ state
 
 say "1 · systemctl stop (SIGTERM): pennad hands both fans back itself"
 if start; then
-  hold 45 120
+  hold "$hold_pct" 120
   sleep 6
-  expect manual "held at 45 % by Penna"
+  expect manual "held at $hold_pct % by Penna"
   systemctl stop "$unit"
   sleep 1
   expect driver "after systemctl stop"
@@ -123,9 +139,9 @@ fi
 
 say "2 · kill -9 of pennad: nothing in it runs; ExecStopPost hands the fans back"
 if start; then
-  hold 45 120
+  hold "$hold_pct" 120
   sleep 5
-  expect manual "held at 45 %"
+  expect manual "held at $hold_pct %"
   # Only the daemon, as a crash or the OOM killer would: a whole-unit kill also kills ExecStopPost (case 2b).
   systemctl kill --kill-whom=main --signal=SIGKILL "$unit"
   wait_inactive 15
@@ -136,9 +152,9 @@ fi
 say "2b · kill -9 of the whole unit: ExecStopPost dies too, so Restart= brings pennad back, and it restores first"
 props=(-p Restart=on-failure -p RestartSec=1)
 if start; then
-  hold 45 120
+  hold "$hold_pct" 120
   sleep 5
-  expect manual "held at 45 %"
+  expect manual "held at $hold_pct %"
   systemctl kill --signal=SIGKILL "$unit"
   sleep 8
   expect driver "after the restart (the hold died with the old pennad; at idle the curve hands back)"
@@ -150,9 +166,9 @@ props=()
 
 say "3 · panic: the panic hook hands the fans back"
 if start --test-panic-after 12; then
-  hold 45 120
+  hold "$hold_pct" 120
   sleep 4
-  expect manual "held at 45 % before the panic"
+  expect manual "held at $hold_pct % before the panic"
   wait_inactive 30
   sleep 1
   expect driver "after the panic"
@@ -160,23 +176,23 @@ fi
 
 say "4 · hang: the loop stops pinging, systemd's watchdog kills pennad, ExecStopPost hands back"
 if start --test-hang-after 10; then
-  hold 45 120
+  hold "$hold_pct" 120
   sleep 4
-  expect manual "held at 45 % before the hang"
+  expect manual "held at $hold_pct % before the hang"
   wait_inactive 40
   sleep 2
   expect driver "after the watchdog"
   journalctl -u "$unit" -n 40 --no-pager | grep -iE 'watchdog' | tail -2
 fi
 
-say "5 · idle: below 30 % the driver keeps the fans (and may stop them); a hold takes them and gives them back"
+say "5 · idle: below its floor the driver keeps each fan (and may stop it); a hold takes them and gives them back"
 if start; then
   sleep 8
   expect driver "at idle, on the driver's curve"
   "$bin/penna" state | sed -n '1,14p'
-  hold 40 6
+  hold "$hold_pct" 6
   sleep 3
-  expect manual "a 6 s hold at 40 %"
+  expect manual "a 6 s hold at $hold_pct %"
   sleep 9
   expect driver "after the hold expired"
   systemctl stop "$unit"
