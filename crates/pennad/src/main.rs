@@ -120,6 +120,23 @@ fn parse_span(s: &str) -> Result<(u64, u64), String> {
     if a < b { Ok((a, b)) } else { Err("FROM comes before TO".into()) }
 }
 
+/// A new directory under the temp dir only this user may enter, for a mock desk without --tree. Made here, never found: the temp
+/// dir is shared, and a directory another user made there first could hold links the desk would be written through.
+fn private_scratch() -> Result<PathBuf> {
+    use std::os::unix::fs::DirBuilderExt;
+    let base = std::env::temp_dir();
+    let seed = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.subsec_nanos());
+    for n in 0..16u32 {
+        let t = base.join(format!("penna-mock-{}-{:08x}", std::process::id(), seed.wrapping_add(n.wrapping_mul(0x9e37_79b9))));
+        match std::fs::DirBuilder::new().mode(0o700).create(&t) {
+            Ok(()) => return Ok(t),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e).with_context(|| format!("creating {}", t.display())),
+        }
+    }
+    bail!("couldn't make a directory of its own in {}; pass --tree", base.display())
+}
+
 fn parse_idle(s: &str) -> Result<f64, String> {
     let v: f64 = s.parse().map_err(|_| format!("not a number: {s}"))?;
     if (0.1..=30.0).contains(&v) { Ok(v) } else { Err("between 0.1 and 30 seconds".into()) }
@@ -211,7 +228,7 @@ fn setup(args: &Args) -> Result<Setup> {
             let (tree, scratch) = match &args.tree {
                 Some(t) => (t.clone(), None),
                 None => {
-                    let t = std::env::temp_dir().join(format!("penna-mock-{}", std::process::id()));
+                    let t = private_scratch()?;
                     (t.clone(), Some(t))
                 }
             };

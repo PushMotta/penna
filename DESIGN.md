@@ -766,6 +766,8 @@ A `setup` event carries the step, the control being measured, live readings ("Ra
 | `/var/lib/penna/firmware.json` | Snapshots of firmware state that outlives a reboot: firmware curves, the platform profile (§6.7) *(draft 3)* | Daemon, ahead of the first change; read by `penna reset` |
 | `/usr/share/penna/boards/*.toml` | The board database (§3.6) *(draft 3)* | The package |
 
+Every local user may read these, by choice *(0.10.7)*. They hold nothing private: fan and sensor keys (a GPU's UUID among them, which every tick carries to every local user), the configuration (which `config` serves to anyone), pairings and calibration. `penna check` and `penna capture` read them as the user. Each is written through a temporary file beside it, created new: one left by an earlier process with the same pid is removed first, and a link put in its place is refused rather than followed. A mock desk without `--tree` goes in a new directory only its user may enter, never in one found under the shared temp dir, where another user could have made it first.
+
 ```toml
 version = 1
 profile = "balanced"

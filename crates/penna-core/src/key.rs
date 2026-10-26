@@ -26,13 +26,14 @@ impl Key {
     }
 
     /// Checks the shape of a key read from a config file or the wire. Keys are printed to every user, so a key holds no control
-    /// character, as no sysfs or NVML name does, and is at most [`KEY_MAX`] bytes.
+    /// character, as no sysfs or NVML name does, and is at most [`KEY_MAX`] bytes. Nor a `.` or `..` part: no key becomes a
+    /// path, and none could climb out of one if a later change made it one.
     pub fn parse(s: &str) -> Option<Key> {
         if s.len() > KEY_MAX || s.chars().any(crate::config::hidden) {
             return None;
         }
         let parts: Vec<&str> = s.split('/').collect();
-        if parts.iter().any(|p| p.is_empty()) {
+        if parts.iter().any(|p| p.is_empty() || *p == "." || *p == "..") {
             return None;
         }
         let ok = match parts[0] {
@@ -117,7 +118,19 @@ mod tests {
         ] {
             assert_eq!(Key::parse(ok).map(|k| k.0), Some(ok.to_owned()), "{ok}");
         }
-        for bad in ["hwmon3/temp1", "hwmon/k10temp/temp1", "nvml/GPU-1/pwm0", "virt/", "virt//x", "sysfs/a/b/c", "platform/fan", ""] {
+        for bad in [
+            "hwmon3/temp1",
+            "hwmon/k10temp/temp1",
+            "nvml/GPU-1/pwm0",
+            "virt/",
+            "virt//x",
+            "sysfs/a/b/c",
+            "platform/fan",
+            "",
+            "hwmon/../etc/x",
+            "virt/..",
+            "mock/./pwm2",
+        ] {
             assert!(Key::parse(bad).is_none(), "{bad}");
         }
     }

@@ -83,9 +83,11 @@ pub fn write_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
     fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("held.json");
     let tmp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
+    // A new file, never one already there: one left by an earlier process with this pid goes first, and a link put in its place
+    // since is refused rather than written through.
+    let _ = fs::remove_file(&tmp);
     {
-        let mut f =
-            OpenOptions::new().write(true).create(true).truncate(true).open(&tmp).with_context(|| format!("creating {}", tmp.display()))?;
+        let mut f = OpenOptions::new().write(true).create_new(true).open(&tmp).with_context(|| format!("creating {}", tmp.display()))?;
         f.write_all(bytes)?;
         f.sync_all()?;
     }
@@ -276,6 +278,21 @@ mod tests {
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[test]
+    fn a_link_where_the_temporary_file_goes_is_not_written_through() {
+        let d = dir("link");
+        let victim = d.join("victim");
+        fs::write(&victim, "mine\n").unwrap();
+        let target = d.join("config.toml");
+        let tmp = d.join(format!(".config.toml.{}.tmp", std::process::id()));
+        std::os::unix::fs::symlink(&victim, &tmp).unwrap();
+        write_atomically(&target, b"penna\n").unwrap();
+        assert_eq!(fs::read_to_string(&victim).unwrap(), "mine\n");
+        assert_eq!(fs::read_to_string(&target).unwrap(), "penna\n");
+        assert!(!fs::symlink_metadata(&target).unwrap().is_symlink());
+        let _ = fs::remove_dir_all(&d);
     }
 
     #[test]
