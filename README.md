@@ -183,15 +183,27 @@ Once Penna is installed, `penna doctor` checks a machine without root and names 
 ## Install
 
 On Arch Linux and Omarchy. Penna isn't in the AUR yet, so each release carries a package built from its own source tarball.
-The second line checks it against the digest written here, which a change to the release can't alter:
+The second line checks it against the digest written here, which a change to the release can't alter. Each line runs only if
+the one before it worked, so a download that doesn't match is never installed:
 
 ```
-curl -LO https://github.com/PushMotta/penna/releases/download/v0.10.6/penna-0.10.6-1-x86_64.pkg.tar.zst
-echo "d366be6f378aacdf3ce0d74e065252f08d90399f633d21cc28f383bcb0c789f8  penna-0.10.6-1-x86_64.pkg.tar.zst" | sha256sum -c
+curl -fLO https://github.com/PushMotta/penna/releases/download/v0.10.6/penna-0.10.6-1-x86_64.pkg.tar.zst &&
+echo "d366be6f378aacdf3ce0d74e065252f08d90399f633d21cc28f383bcb0c789f8  penna-0.10.6-1-x86_64.pkg.tar.zst" | sha256sum -c &&
 sudo pacman -U penna-0.10.6-1-x86_64.pkg.tar.zst
-sudo systemctl enable --now pennad            # the first start adopts nothing: every fan stays with its firmware
-sudo usermod -aG penna "$USER"                # change fans without root; applies at once
-omarchy plugin add https://github.com/PushMotta/omarchy-penna.git --enable
+```
+
+Or build that release yourself from the commit it was built from, which runs every test first:
+
+```
+git clone https://github.com/PushMotta/penna && git -C penna checkout --detach 92c88356b6ff2871eb01ff10422060fcf9846d82 && cd penna/packaging && makepkg -si
+```
+
+Then the service, the group and the plugin:
+
+```
+sudo systemctl enable --now pennad &&         # the first start adopts nothing: every fan stays with its firmware
+sudo usermod -aG penna "$USER" &&             # change fans without root; applies at once
+omarchy plugin add https://github.com/PushMotta/omarchy-penna.git --enable &&
 penna doctor                                  # what stands between this machine and Penna running its fans
 ```
 
@@ -199,12 +211,6 @@ Then click the fan glyph in the bar and choose *Set up fans…*, or run `penna s
 
 `penna doctor` names anything missing, with one thing to do about it and its risk. The usual one on Gigabyte boards is that the
 stock `it87` doesn't know the chip: the fork, `it87-dkms-git`, does. Penna recommends it but never depends on it.
-
-Or build that release yourself from the commit it was built from, which runs every test first:
-
-```
-git clone https://github.com/PushMotta/penna && git -C penna checkout --detach 92c88356b6ff2871eb01ff10422060fcf9846d82 && cd penna/packaging && makepkg -si
-```
 
 ### Removing it
 

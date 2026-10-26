@@ -1349,6 +1349,15 @@ Milestones, each ending in something visible:
     `a_connection_closed_for_asking_nothing_leaves_no_descriptor_behind` reproduces it: on 0.10.6 the daemon held 43
     descriptors after one round of 32 silent connections, against 12 before. The plugin's code is 0.7.4's; 0.7.5 moves the
     pin to 0.10.7.
+    - Our own review of 0.10.6 had tested each new limit from the client's side: the 33rd connection refused, an idle one
+      ended. The client saw an end of file while the daemon still held the descriptor. So before 0.10.7 went out, the tests
+      gained a hostile user measured from the daemon's side (`/proc/<pid>/fd`, `VmHWM`, the tick cadence), and three reviews
+      read the daemon's socket, everything run as root, and the plugin cold, with none of our conclusions. They found:
+      replies echoing ids as long as the request (48 MiB for one user, now 10), a blank line passing for a request, the
+      mock desk using a temp directory another user could make first, and the README going on to `pacman -U` after a failed
+      digest check. All are fixed in 0.10.7 (CHANGELOG). Held as designed: the state files stay readable by every user,
+      since the socket already serves what they hold; a member holding the studio's draft holds it until they close it,
+      as any member may set a profile for everyone.
 
   - **A second machine, 23 Oct 2026:** an Intel N100 mini PC (an "AC8-N") on Omarchy 4.0.4, run over ssh, read-only. Its
     fan is the firmware's, through ACPI: five on/off fan devices, no fan chip, nothing in hwmon. It showed five things this

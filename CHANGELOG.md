@@ -2,7 +2,8 @@
 
 ## 0.10.7 (26 Oct 2026)
 
-Security, after the Omarchy marketplace's review of 0.10.6 (DESIGN.md §7.4):
+Security, after the Omarchy marketplace's review of 0.10.6 found a way to gather the daemon's descriptors, and a review of our
+own that measured the daemon from its side rather than from what a client sees (DESIGN.md §7.4, §7.5):
 - **A local user could still gather the daemon's descriptors.** 0.10.6 closed a connection that asked nothing within 30 s and
   gave its slot back, but only the daemon's sending side closed. The task reading the connection kept waiting, and kept the
   socket, for as long as the client held its end open and sent nothing. So any local user could open 32 connections every
@@ -10,7 +11,28 @@ Security, after the Omarchy marketplace's review of 0.10.6 (DESIGN.md §7.4):
   ends with its connection, however that ends, and a connection's slot is given back only once the daemon holds no
   descriptor for it. A test leaves three rounds of 32 silent connections open and checks that the daemon's descriptors come
   back to where they were; on 0.10.6 it fails at the first round.
-- **Plugin 0.7.5** names Penna 0.10.7, by its commit and its package's digest. Its code is 0.7.4's.
+- **One user could make `pennad` hold 48 MiB.** With all 32 of their connections sending the longest requests and reading
+  nothing, the daemon grew 48 MiB, where DESIGN said a mebibyte a connection: a reply echoed its request's id, however long,
+  and each connection had 16 lines waiting. An id is now a number or a string of at most 64 bytes, refused without an echo
+  otherwise, and two lines wait per connection, the rest in the socket. The same user now costs about 10 MiB, measured.
+- **A blank line kept a connection open** past the idle close, as only a request should. A line that isn't a request
+  doesn't either.
+- **The journal line about each dropped client** (one that stopped reading, or fell behind) is limited to one every 10 s, as
+  refused connections already were: any local user can make such clients one after another.
+- **The control loop takes at most a queue's worth of requests between ticks.** A user asking as fast as they can on every
+  connection, at the largest configuration and under full CPU load, left ticks at most 600 ms apart before and after, well
+  inside the watchdog's 5 s; now that holds by construction rather than because the socket can't refill the queue faster.
+- **`pennad --mock` without `--tree`** built its desk in the shared temp dir, in `penna-mock-<pid>`, using the directory if
+  it was already there. Another user could make it first and leave a link inside, and the run would write its configuration
+  through it into a file of the user running it. The desk now goes in a new directory only its user may enter. Every state
+  file is written through a temporary file created new, so a link left in its place is refused rather than followed.
+- **The install stops at the first step that fails.** The README's lines ran one after another, so `sudo pacman -U` ran
+  even when the download didn't match its digest. Each now runs only if the one before it worked, and `curl` fails on an
+  HTTP error instead of saving the error page.
+- A key holds no `.` or `..` part, and the CI's checkouts leave no token in `.git/config`.
+- **Plugin 0.7.5** names Penna 0.10.7, by its commit and its package's digest. Its README installs the same way, failing
+  closed, names both sockets the plugin may connect to, and links its images at a fixed commit. Its code is 0.7.4's.
+- `tools/release.sh plugin` refuses to run before `publish`, which would have tagged the new plugin on the last release.
 - The test of the connection caps no longer fails under load when `pennad` closes on a too-long request while the client is
   still writing it.
 

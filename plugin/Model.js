@@ -128,8 +128,10 @@ function needsSetup(tick) {
 
 function capitalise(s) { return s.length ? s.charAt(0).toUpperCase() + s.slice(1) : s }
 
-// The longest line read from the daemon. Since 0.10.6 its ticks stay far under a protocol line (1 MiB); a longer line is from a
-// broken daemon or something else on the socket, and parsing it could hold up the shell.
+// The longest line parsed from the daemon. Since 0.10.6 its ticks stay far under a protocol line (1 MiB); a longer line is from a
+// broken daemon or something else on the socket, and parsing it could hold up the shell. This bounds what is parsed, not what
+// is read: SplitParser keeps a line that never ends, however long. So the plugin connects only where no other user can answer
+// (socketCandidates): root's /run/penna, the user's own runtime directory, or where $PENNA_SOCKET says.
 var LINE_MAX = 4 * 1024 * 1024
 function tooLong(line) { return line.length > LINE_MAX }
 

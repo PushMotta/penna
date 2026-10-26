@@ -30,6 +30,9 @@ jobs:
       # Actions are pinned to full commit SHAs rather than to moving tags: a tag can be repointed by whoever owns it, and the
       # code behind it then runs here with this workflow's token. Update them deliberately, checking what changed.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The token isn't left in .git/config for the steps after it, on the desk's disk least of all.
+          persist-credentials: false
 
       - name: Rust
         run: tools/ci.sh rust
@@ -47,6 +50,9 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The token isn't left in .git/config for the steps after it, on the desk's disk least of all.
+          persist-credentials: false
 
       # The runner's own rustup, so no third-party action runs here.
       - name: Toolchain

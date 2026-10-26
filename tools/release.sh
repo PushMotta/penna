@@ -123,6 +123,8 @@ plugin() {
   [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] || fail "main is not in step with origin/main"
   # The release README.md installs, as publish left it, checked against what the release serves.
   pinned README.md
+  # Never a plugin on an older release than this checkout's: run before publish, it would tag the new plugin on the last one.
+  [ "$pinned_version" = "$version" ] || fail "README.md installs $pinned_version, not $version: publish $tag first"
   local v=$pinned_version sum=$pinned_sum commit pkg got
   commit=$(git rev-parse "v$v^{commit}")
   [ "$commit" = "$pinned_commit" ] || fail "README.md builds $pinned_commit, but v$v is $commit"
