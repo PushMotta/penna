@@ -220,7 +220,14 @@ struct Quiet {
     left_out: u64,
 }
 
+/// Clients dropped for not keeping up: any local user can make as many as they like, one after another.
+static DROPPED: Mutex<Quiet> = Mutex::new(Quiet::new());
+
 impl Quiet {
+    const fn new() -> Quiet {
+        Quiet { last: None, left_out: 0 }
+    }
+
     fn say(&mut self, line: std::fmt::Arguments<'_>) {
         if self.last.is_some_and(|t| t.elapsed() < QUIET) {
             self.left_out += 1;
@@ -274,7 +281,6 @@ async fn talk(stream: UnixStream, setup: &Setup, conn: u64, slot: Arc<Slot>) {
             () = &mut idle, if !asked => return,
             line = lines.rx.recv() => {
                 let Some(line) = line else { return };
-                asked = true;
                 let line = match line {
                     Ok(l) => l,
                     Err(reply) => {
@@ -292,6 +298,8 @@ async fn talk(stream: UnixStream, setup: &Setup, conn: u64, slot: Arc<Slot>) {
                         continue;
                     }
                 };
+                // Only a request counts: a blank line, or one that isn't a request, asks nothing.
+                asked = true;
                 let id = req.id.clone();
                 let out: Vec<String> = match req.op {
                     Op::State => vec![ok_raw(&id, &published.borrow().body)],
@@ -325,7 +333,7 @@ async fn talk(stream: UnixStream, setup: &Setup, conn: u64, slot: Arc<Slot>) {
                     if send(&mut wr, &line, peer.uid).await.is_err() { return }
                 }
                 Err(broadcast::error::RecvError::Lagged(n)) => {
-                    eprintln!("pennad: dropped a client (uid {}) that fell {n} events behind", peer.uid);
+                    DROPPED.lock().expect("dropped").say(format_args!("pennad: dropped a client (uid {}) that fell {n} events behind", peer.uid));
                     return;
                 }
                 Err(broadcast::error::RecvError::Closed) => return,
@@ -372,7 +380,7 @@ async fn send(wr: &mut OwnedWriteHalf, line: &str, uid: u32) -> Result<(), ()> {
         Ok(Ok(())) => Ok(()),
         Ok(Err(_)) => Err(()),
         Err(_) => {
-            eprintln!("pennad: dropped a client (uid {uid}) that stopped reading");
+            DROPPED.lock().expect("dropped").say(format_args!("pennad: dropped a client (uid {uid}) that stopped reading"));
             Err(())
         }
     }

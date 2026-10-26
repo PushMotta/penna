@@ -474,6 +474,13 @@ fn a_connection_closed_for_asking_nothing_leaves_no_descriptor_behind() {
             std::thread::sleep(Duration::from_millis(50));
         }
     }
+    // A blank line, or one that isn't a request, asks nothing either.
+    let mut idler = d.connect();
+    idler.line();
+    writeln!(idler.writer, "\n{{\"id\":1}}").unwrap();
+    assert_eq!(idler.line()["ok"], false);
+    let mut buf = String::new();
+    assert_eq!(idler.reader.read_line(&mut buf).unwrap(), 0, "a connection that sent no request got {buf:?}");
     let mut c = d.connect();
     c.line();
     assert_eq!(c.call(json!({"op": "state"}))["ok"], true);
