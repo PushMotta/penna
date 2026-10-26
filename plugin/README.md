@@ -21,16 +21,16 @@ installs as a system service. Without it the glyph says that Penna isn't running
 
 ## Install
 
-The daemon first. This version of the plugin names one release of Penna, the one it was reviewed with: **Penna 0.10.5**,
-built from commit `70fa9ae9f4c8ca1ea4e4c67eb65be630b5538507` (tag `v0.10.5`). Its package is
-`penna-0.10.5-1-x86_64.pkg.tar.zst`, with the SHA-256 digest
-`164eba24316583de00fda51a838183c1e39c98e5c11ad50bef702c050e9f4054`. The second line checks the download against that
+The daemon first. This version of the plugin names one release of Penna, the one it was reviewed with: **Penna 0.10.6**,
+built from commit `92c88356b6ff2871eb01ff10422060fcf9846d82` (tag `v0.10.6`). Its package is
+`penna-0.10.6-1-x86_64.pkg.tar.zst`, with the SHA-256 digest
+`d366be6f378aacdf3ce0d74e065252f08d90399f633d21cc28f383bcb0c789f8`. The second line checks the download against that
 digest, written here, rather than against the release's own `SHA256SUMS`, which is published beside the file it checks:
 
 ```
-curl -LO https://github.com/PushMotta/penna/releases/download/v0.10.5/penna-0.10.5-1-x86_64.pkg.tar.zst
-echo "164eba24316583de00fda51a838183c1e39c98e5c11ad50bef702c050e9f4054  penna-0.10.5-1-x86_64.pkg.tar.zst" | sha256sum -c
-sudo pacman -U penna-0.10.5-1-x86_64.pkg.tar.zst
+curl -LO https://github.com/PushMotta/penna/releases/download/v0.10.6/penna-0.10.6-1-x86_64.pkg.tar.zst
+echo "d366be6f378aacdf3ce0d74e065252f08d90399f633d21cc28f383bcb0c789f8  penna-0.10.6-1-x86_64.pkg.tar.zst" | sha256sum -c
+sudo pacman -U penna-0.10.6-1-x86_64.pkg.tar.zst
 sudo systemctl enable --now pennad            # the first start adopts nothing: every fan stays with its firmware
 sudo usermod -aG penna "$USER"                # change fans without root; applies at once
 omarchy plugin add https://github.com/PushMotta/omarchy-penna.git --enable
@@ -39,7 +39,7 @@ omarchy plugin add https://github.com/PushMotta/omarchy-penna.git --enable
 Or build the package from that commit yourself, which runs every test first, in place of the first three lines:
 
 ```
-git clone https://github.com/PushMotta/penna && git -C penna checkout --detach 70fa9ae9f4c8ca1ea4e4c67eb65be630b5538507 && cd penna/packaging && makepkg -si
+git clone https://github.com/PushMotta/penna && git -C penna checkout --detach 92c88356b6ff2871eb01ff10422060fcf9846d82 && cd penna/packaging && makepkg -si
 ```
 
 `omarchy plugin add` clones this repository into `~/.config/omarchy/plugins/io.github.pushmotta.penna`, validates the
