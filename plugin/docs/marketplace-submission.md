@@ -33,6 +33,8 @@ What the plugin touches:
   change fans through it; anyone else gets a read-only view and a sentence saying how to join.
 - It runs `hyprctl getoption animations:enabled -j` when it starts and after each Hyprland config reload, to follow
   Hyprland's motion preference.
+- Every name it shows from `pennad` (fans, sensors, curves, profiles) is drawn as plain text, so a label another member of
+  the `penna` group sets can't load or style anything on this user's desktop.
 - Its code writes no files, starts no services, and runs no `sudo` or `pkexec`. When `pennad` isn't running, or the user can't
   change fans, it says so and points to `penna doctor`, the daemon package's command, which names what to do.
 
