@@ -1254,9 +1254,9 @@ Milestones, each ending in something visible:
     and bugs.
   - **`penna capture`** now records what §3.6 lists, which until now it didn't: only the hwmon tree and the PCI display devices
     were kept. With no directory it makes `penna-capture-<machine>-<date>.tar.gz` and names the issue form to attach it to.
-  - **The plugin's repository**, `omarchy-penna`, is `git subtree split --prefix=plugin`, pushed at each release, so its main
-    is always the latest release and `omarchy plugin update` never runs ahead of the package. `plugin/` gained a README, the
-    licence, its own CI and the marketplace submission text (`plugin/docs/`). The package still ships the plugin under
+  - **The plugin's repository**, `omarchy-penna`, is `git subtree split --prefix=plugin`. Until 26 Oct 2026 it was pushed at
+    each release, so its main was always the latest release; it now moves only by choice (plugin 0.7.3, below). `plugin/`
+    gained a README, the licence, its own CI and the marketplace submission text (`plugin/docs/`). The package still ships the plugin under
     `/usr/share/penna/plugin`, always the same release as `pennad`, for those who would rather link it.
   - **The AUR package** (`packaging/aur/`) builds the tag's tarball: `prepare()` fetches the crates, `build()` and `check()`
     run `--frozen`. `packaging/PKGBUILD` builds the checkout with the same steps, and the release check compares them. Built
@@ -1298,6 +1298,24 @@ Milestones, each ending in something visible:
     in its README's daemon commands and in two messages. The README now links to Penna's, and the messages point to
     `penna doctor`, so by the baseline's published rules the plugin passes with nothing to review.
 
+  - **Plugin 0.7.3: the daemon by commit and digest (26 Oct 2026).** The submission (#12696 on
+    `omacom/omarchy-plugin-marketplace`) passed both bots at `109ecc2`, then a maintainer held it: the plugin needs `pennad`,
+    and its README sent the install to Penna's latest release, which can change, and to a source build of `main`. So the
+    commit under review didn't say which daemon a user would run as root. Checking a download against the release's own
+    `SHA256SUMS` doesn't help, since both files can be replaced together. Other plugins with a native backend were held the
+    same way and listed once their reviewed source named one fixed release with its digests.
+    - Each plugin version now names one release of Penna: its version, the full commit it was built from and its package's
+      SHA-256. Its README carries the whole install for that release: the download checked against that digest, the
+      package, the service and the group, or a build of that commit, checked out detached. The baseline now lists
+      `privilege`, `package-manager` and `service-management` for a maintainer to accept. 0.10.3 had moved those commands
+      out of the plugin's tree, and the review found that a link to a moving README was the weaker identity.
+    - `omarchy-penna` moves only with `tools/release.sh plugin`. It points `plugin/README.md` at the release Penna's
+      README installs, after checking that release's commit and package against what GitHub serves. `publish` no longer
+      touches the plugin. It writes each release's digest and commit into Penna's README instead, so the main install also
+      checks against a digest written down rather than one downloaded beside the package. Every pin move is a new commit
+      for the marketplace to review.
+    - The plugin still works with any `pennad` from 0.9.0 on, and says which to update when the two don't fit.
+
   - **A second machine, 23 Oct 2026:** an Intel N100 mini PC (an "AC8-N") on Omarchy 4.0.4, run over ssh, read-only. Its
     fan is the firmware's, through ACPI: five on/off fan devices, no fan chip, nothing in hwmon. It showed five things this
     desk couldn't:
@@ -1319,7 +1337,7 @@ Milestones, each ending in something visible:
     and ran in under 1 MB. The doctor found nothing that needs attention. Switching to Quiet and back to Defaults left
     power-profiles-daemon on "performance": the lever stayed off. No plugin: the machine runs no desktop session.
 
-  Not yet: the AUR, until it takes new accounts again, and the marketplace submission (`plugin/docs/`).
+  Not yet: the AUR, until it takes new accounts again, and the marketplace listing (#12696, under review).
 
 ## 11. Decisions (approved 21 Oct 2026)
 

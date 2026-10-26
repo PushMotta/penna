@@ -88,4 +88,4 @@ cargo run -p pennad -- --mock render-burst --forever
 omarchy-restart-shell
 ```
 
-Change it in this repository, not in omarchy-penna: that repository is regenerated from `plugin/` at each release.
+Change it in this repository, not in omarchy-penna: `tools/release.sh plugin` regenerates that repository from `plugin/`.

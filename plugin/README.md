@@ -21,17 +21,33 @@ installs as a system service. Without it the glyph says that Penna isn't running
 
 ## Install
 
-The daemon first: [install Penna](https://github.com/PushMotta/penna#install) from the package on its latest release, start
-`pennad`, and join the `penna` group, as its README says. Then the plugin:
+The daemon first. This version of the plugin names one release of Penna, the one it was reviewed with: **Penna 0.10.5**,
+built from commit `70fa9ae9f4c8ca1ea4e4c67eb65be630b5538507` (tag `v0.10.5`). Its package is
+`penna-0.10.5-1-x86_64.pkg.tar.zst`, with the SHA-256 digest
+`164eba24316583de00fda51a838183c1e39c98e5c11ad50bef702c050e9f4054`. The second line checks the download against that
+digest, written here, rather than against the release's own `SHA256SUMS`, which is published beside the file it checks:
 
 ```
+curl -LO https://github.com/PushMotta/penna/releases/download/v0.10.5/penna-0.10.5-1-x86_64.pkg.tar.zst
+echo "164eba24316583de00fda51a838183c1e39c98e5c11ad50bef702c050e9f4054  penna-0.10.5-1-x86_64.pkg.tar.zst" | sha256sum -c
+sudo pacman -U penna-0.10.5-1-x86_64.pkg.tar.zst
+sudo systemctl enable --now pennad            # the first start adopts nothing: every fan stays with its firmware
+sudo usermod -aG penna "$USER"                # change fans without root; applies at once
 omarchy plugin add https://github.com/PushMotta/omarchy-penna.git --enable
 ```
 
+Or build the package from that commit yourself, which runs every test first, in place of the first three lines:
+
+```
+git clone https://github.com/PushMotta/penna && git -C penna checkout --detach 70fa9ae9f4c8ca1ea4e4c67eb65be630b5538507 && cd penna/packaging && makepkg -si
+```
+
 `omarchy plugin add` clones this repository into `~/.config/omarchy/plugins/io.github.pushmotta.penna`, validates the
-manifest and enables the plugin. Nothing from the repository runs during install, and the plugin never asks for root. Update
-it with `omarchy plugin update io.github.pushmotta.penna` when you update the `penna` package: each release of one goes with
-the same release of the other.
+manifest and enables the plugin. Nothing from the repository runs during install, and the plugin never asks for root.
+
+The plugin works with any `pennad` from 0.9.0 on, and says which to update when the two don't fit. A later version of the
+plugin that names a later release of Penna gives its commit and digest here in the same way. Update to it with
+`omarchy plugin update io.github.pushmotta.penna`.
 
 Then click the glyph and choose *Set up fans…*. Setup measures every fan in about five minutes and proposes Quiet, Balanced and
 Render curves. Nothing is kept until you press *Save*.
@@ -58,13 +74,17 @@ The plugin connects to `pennad`'s socket, `/run/penna/penna.sock` (or `$PENNA_SO
 omarchy plugin remove io.github.pushmotta.penna
 ```
 
-To remove the daemon too, see [Removing it](https://github.com/PushMotta/penna#removing-it) in Penna's README: removing its
-package stops `pennad` first, which hands every fan back.
+To remove the daemon too, remove its package. That stops `pennad` first, which hands every fan back:
+
+```
+sudo pacman -R penna
+```
 
 ## Developing
 
-This repository is generated from `plugin/` in [PushMotta/penna](https://github.com/PushMotta/penna) at each release. Change
-it there; its CONTRIBUTING.md says how to run it against a simulated desk.
+This repository is generated from `plugin/` in [PushMotta/penna](https://github.com/PushMotta/penna), and each version is
+tied to the release of Penna its README names. Change it there; its CONTRIBUTING.md says how to run it against a simulated
+desk.
 
 ## License
 

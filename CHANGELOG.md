@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Plugin 0.7.3:** its README names the one release of Penna it was reviewed with, 0.10.5, by its full commit and its
+  package's SHA-256. It installs exactly that package, checked against the digest written in the README, or builds that
+  commit. The Omarchy marketplace's review asked for this. The plugin's repository now moves only when the plugin is pointed
+  at a newer release (`tools/release.sh plugin`), not at every release.
+- **The README's install** checks the package against a digest written in the README, not only against the release's own
+  `SHA256SUMS`, and builds a release from the commit it was built from rather than from `main`.
+
 ## 0.10.5 (25 Oct 2026)
 
 - **`pennad` costs about half the CPU on a machine with an NVIDIA GPU.** Each NVML call costs about a millisecond of kernel

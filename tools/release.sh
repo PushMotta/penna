@@ -2,12 +2,15 @@
 # Publishes a Penna release (DESIGN.md §10, M10). Run from a clean main that is in step with origin.
 #
 #   tools/release.sh check      everything that must hold before a release; changes nothing
-#   tools/release.sh publish    tag v<version> and push it, regenerate omarchy-penna from plugin/, create the GitHub release
-#                               with the version's CHANGELOG section, then fill the AUR PKGBUILD's checksum from the
-#                               published tarball and push that commit
+#   tools/release.sh publish    tag v<version> and push it, create the GitHub release with the version's CHANGELOG section,
+#                               then fill the AUR PKGBUILD's checksum from the published tarball, attach the package built
+#                               from it, and point README.md's install at the package's digest and the tag's commit
 #   tools/release.sh aur        push packaging/aur to the AUR; needs the maintainer's AUR SSH key
+#   tools/release.sh plugin     point plugin/README.md at the release README.md installs, by commit and digest, and
+#                               regenerate omarchy-penna from plugin/, tagged with manifest.json's version
 #
-# The version is Cargo.toml's; both PKGBUILDs must say the same. The plugin's repository is tagged with manifest.json's.
+# The version is Cargo.toml's; both PKGBUILDs must say the same. omarchy-penna moves only with `plugin`, when we choose: the
+# Omarchy marketplace reviews each of its commits, and its README names the one release of Penna that commit was reviewed with.
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -38,7 +41,6 @@ check() {
     || fail "the two PKGBUILDs build differently: their prepare(), build(), check() and package() must match"
   (cd packaging/aur && makepkg --printsrcinfo | diff -q - .SRCINFO >/dev/null) || fail "packaging/aur/.SRCINFO is stale"
   grep -q "^## $version " CHANGELOG.md || fail "CHANGELOG.md has no section for $version"
-  grep -q "v$version/penna-$version-1-x86_64.pkg.tar.zst" README.md || fail "README.md doesn't install penna-$version"
   if command -v omarchy >/dev/null; then omarchy plugin validate plugin >/dev/null || fail "the plugin doesn't validate"; fi
   step "Tests"
   cargo fmt --check
@@ -58,16 +60,36 @@ notes() {
   awk -v v="$version" '$0 ~ "^## " v " " { on = 1; next } on && /^## / { exit } on' CHANGELOG.md
 }
 
+# The release a README's Install section installs: its version, the commit it was built from and its package's digest.
+pinned() {
+  local file=$1
+  pinned_version=$(sed -n '/^## Install/,/^## [^I]/s|.*releases/download/v\([0-9.]*\)/penna-.*|\1|p' "$file" | head -1)
+  pinned_commit=$(sed -n '/^## Install/,/^## [^I]/s|.*--detach \([0-9a-f]\{40\}\).*|\1|p' "$file" | head -1)
+  pinned_sum=$(sed -n '/^## Install/,/^## [^I]/s|^echo "\([0-9a-f]\{64\}\)  penna-.*|\1|p' "$file" | head -1)
+  [ -n "$pinned_version" ] && [ -n "$pinned_commit" ] && [ -n "$pinned_sum" ] || fail "$file's Install section names no release"
+}
+
+# Points a README's Install section at another release: every mention of the old version, commit and digest there.
+pin() {
+  local file=$1 to_version=$2 to_commit=$3 to_sum=$4 old
+  pinned "$file"
+  old=${pinned_version//./\\.}
+  sed -i -E "/^## Install/,/^## [^I]/{
+    s/$pinned_commit/$to_commit/g
+    s/$pinned_sum/$to_sum/g
+    s/(^|[^0-9.])$old([^0-9]|\$)/\1$to_version\2/g
+    s/(^|[^0-9.])$old([^0-9]|\$)/\1$to_version\2/g
+  }" "$file"
+  pinned "$file"
+  [ "$pinned_version $pinned_commit $pinned_sum" = "$to_version $to_commit $to_sum" ] \
+    || fail "couldn't point $file at $to_version"
+}
+
 publish() {
   check
   step "Tagging $tag"
   git tag -a "$tag" -m "Penna $version"
   git push origin main "$tag"
-
-  step "omarchy-penna from plugin/"
-  split=$(git subtree split --prefix=plugin)
-  git push "$plugin_repo" "$split:refs/heads/main"
-  git push "$plugin_repo" "$split:refs/tags/v$plugin_version"
 
   step "GitHub release"
   gh release create "$tag" --repo "$owner/penna" --title "Penna $version" --notes "$(notes)"
@@ -86,10 +108,46 @@ publish() {
     --unsetenv PENNA_BOARDS --unsetenv PENNA_SOCKET -- makepkg -f --nodeps >/dev/null)
   pkg="penna-$version-1-x86_64.pkg.tar.zst"
   (cd "$build" && sha256sum "$pkg" >SHA256SUMS && gh release upload "$tag" "$pkg" SHA256SUMS --repo "$owner/penna" --clobber)
+  pin README.md "$version" "$(git rev-parse "$tag^{commit}")" "$(cut -d' ' -f1 "$build/SHA256SUMS")"
   rm -rf "$build"
-  git commit -q -m "AUR: $tag's checksum" packaging/aur/PKGBUILD packaging/aur/.SRCINFO
+  git commit -q -m "$tag: the AUR checksum, and the package's digest in the README" \
+    packaging/aur/PKGBUILD packaging/aur/.SRCINFO README.md
   git push origin main
-  step "Published $tag. The AUR is next: tools/release.sh aur"
+  step "Published $tag. The AUR is next: tools/release.sh aur. The plugin stays on its release until tools/release.sh plugin"
+}
+
+plugin() {
+  [ "$(git branch --show-current)" = main ] || fail "not on main"
+  [ -z "$(git status --porcelain)" ] || fail "the working tree has changes"
+  git fetch -q origin
+  [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] || fail "main is not in step with origin/main"
+  # The release README.md installs, as publish left it, checked against what the release serves.
+  pinned README.md
+  local v=$pinned_version sum=$pinned_sum commit pkg got
+  commit=$(git rev-parse "v$v^{commit}")
+  [ "$commit" = "$pinned_commit" ] || fail "README.md builds $pinned_commit, but v$v is $commit"
+  pkg="penna-$v-1-x86_64.pkg.tar.zst"
+  got=$(curl -fsSL "https://github.com/$owner/penna/releases/download/v$v/$pkg" | sha256sum | cut -d' ' -f1)
+  [ "$got" = "$sum" ] || fail "the release's $pkg has the digest $got, where README.md records $sum"
+  step "Plugin $plugin_version, for Penna $v"
+  pin plugin/README.md "$v" "$commit" "$sum"
+  if command -v omarchy >/dev/null; then omarchy plugin validate plugin >/dev/null || fail "the plugin doesn't validate"; fi
+  (cd plugin && node --test test/model.test.js test/studio.test.js >/dev/null)
+  if ! git diff --quiet plugin/README.md; then
+    git commit -q -m "Plugin $plugin_version: Penna $v, by commit and digest" plugin/README.md
+    git push origin main
+  fi
+  split=$(git subtree split --prefix=plugin)
+  if [ "$(git ls-remote "$plugin_repo" refs/heads/main | cut -f1)" = "$split" ]; then
+    step "omarchy-penna is already at $split"
+    return
+  fi
+  ! git ls-remote --exit-code --tags "$plugin_repo" "refs/tags/v$plugin_version" >/dev/null \
+    || fail "omarchy-penna already has v$plugin_version: raise plugin/manifest.json's version first"
+  step "omarchy-penna from plugin/"
+  git push "$plugin_repo" "$split:refs/heads/main"
+  git push "$plugin_repo" "$split:refs/tags/v$plugin_version"
+  step "omarchy-penna is at $split. The marketplace reviews exactly that commit"
 }
 
 aur() {
@@ -109,5 +167,6 @@ case "${1:-}" in
   check) check ;;
   publish) publish ;;
   aur) aur ;;
-  *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  plugin) plugin ;;
+  *) sed -n '2,/^set /{/^#/p}' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

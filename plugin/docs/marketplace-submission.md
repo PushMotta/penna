@@ -20,24 +20,27 @@ Penna is fan control for Linux, made to be understood. This plugin is its shell 
 state, a popup with profiles, temperatures and every fan's RPM, and a studio for curves and setup. Three kinds in one plugin:
 bar-widget (popup), overlay (studio), service.
 
-The fans are run by `pennad`, a system service from the separate `penna` package (MIT, https://github.com/PushMotta/penna),
-installed with pacman from the package each release carries. This README links to Penna's for those commands, so the
-plugin's own tree holds no install or service commands. The plugin depends on it and says so when it isn't running. It never
-installs, starts or elevates anything itself. The daemon drives fans only through the kernel's hwmon drivers and NVIDIA's
-NVML, and it puts every fan back to its BIOS or driver on every way out, a crash and removing the package included.
+The fans are run by `pennad`, a system service from the separate `penna` package (MIT, https://github.com/PushMotta/penna).
+The README installs exactly one release of it, the one this version was reviewed with, named by its full commit and its
+package's SHA-256. The download is checked against the digest written in the README, or the package is built from that
+commit, checked out detached. Those commands (`pacman -U`, `systemctl enable`, `usermod`) are the only `sudo` in
+the tree, and the user runs them; the plugin's code never installs, starts or elevates anything. The plugin depends on the
+daemon and says so when it isn't running. The daemon drives fans only through the kernel's hwmon drivers and NVIDIA's NVML,
+and it puts every fan back to its BIOS or driver on every way out, a crash and removing the package included.
 
 What the plugin touches:
 - It connects to `pennad`'s Unix socket, `/run/penna/penna.sock` (or `$PENNA_SOCKET`). Only members of the `penna` group may
   change fans through it; anyone else gets a read-only view and a sentence saying how to join.
 - It runs `hyprctl getoption animations:enabled -j` when it starts and after each Hyprland config reload, to follow
   Hyprland's motion preference.
-- It writes no files, starts no services, and contains no `sudo` or `pkexec`. When `pennad` isn't running, or the user can't
+- Its code writes no files, starts no services, and runs no `sudo` or `pkexec`. When `pennad` isn't running, or the user can't
   change fans, it says so and points to `penna doctor`, the daemon package's command, which names what to do.
 
-Nothing is downloaded at install or at runtime. The repository is generated from `plugin/` in the main repository at each
-release. It holds the plugin, its tests (`node --test`, for Model.js), this text, the README, the licence and `preview.png`;
-the README's screenshots and GIFs are linked from the main repository, so they aren't cloned. It holds no agent or session
-handoff material. The workflow's actions are pinned to full commit SHAs, and it declares `permissions: contents: read`.
+Nothing is downloaded at install or at runtime. The repository is generated from `plugin/` in the main repository, and each
+version names the release of Penna it goes with. It holds the plugin, its tests (`node --test`, for Model.js), this text,
+the README, the licence and `preview.png`; the README's screenshots and GIFs are linked from the main repository, so they
+aren't cloned. It holds no agent or session handoff material. The workflow's actions are pinned to full commit SHAs, and it
+declares `permissions: contents: read`.
 
 ### Submission checklist
 
