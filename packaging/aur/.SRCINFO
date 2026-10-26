@@ -14,6 +14,6 @@ pkgbase = penna
 	optdepends = it87-dkms-git: motherboard fans on boards with ITE Super I/O chips the stock it87 does not know
 	optdepends = power-profiles-daemon: the power profile as the fan lever on laptops whose fans Penna cannot drive
 	source = penna-0.10.6.tar.gz::https://github.com/PushMotta/penna/archive/refs/tags/v0.10.6.tar.gz
-	sha256sums = SKIP
+	sha256sums = 08fb724681a02a1977b194586ff8c4ffb38ba99ff0e20b04d3c37cf378327a95
 
 pkgname = penna
