@@ -42,9 +42,9 @@ What the plugin touches:
 
 Nothing is downloaded at install or at runtime. The repository is generated from `plugin/` in the main repository, and each
 version names the release of Penna it goes with. It holds the plugin, its tests (`node --test`, for Model.js), this text,
-the README, the licence and `preview.png`; the README's screenshots and GIFs are linked from the main repository, so they
-aren't cloned; they are linked at a fixed commit. It holds no agent or session handoff material. The workflow's actions are pinned to full commit SHAs, and it
-declares `permissions: contents: read`.
+the README, the licence and `preview.png`; the README's screenshots and GIFs are linked from the main repository at a fixed
+commit, so they aren't cloned. It holds no agent or session handoff material. The workflow's actions are pinned to full
+commit SHAs, it declares `permissions: contents: read`, and its checkout keeps no credentials.
 
 ### Submission checklist
 
