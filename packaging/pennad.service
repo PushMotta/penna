@@ -40,6 +40,13 @@ RestrictRealtime=yes
 RestrictNamespaces=yes
 LockPersonality=yes
 SystemCallArchitectures=native
+# It reads no kernel log, and talks only over Unix sockets: its own, and the system bus for logind and power-profiles-daemon.
+# No IP at all. Netlink stays allowed, in case a driver library enumerates devices through it.
+ProtectKernelLogs=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+IPAddressDeny=any
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
 
 [Install]
 WantedBy=multi-user.target

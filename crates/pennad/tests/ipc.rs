@@ -356,6 +356,70 @@ fn a_live_socket_is_never_taken_over_and_a_stale_one_is() {
     second.stop();
 }
 
+/// What one local account sends can't reach another's terminal or journal, nor take the descriptors the daemon needs (§7.4).
+#[test]
+fn one_user_can_neither_reach_another_through_names_nor_take_every_connection() {
+    let dir = fresh("bounds");
+    let d = Daemon::start(&dir, &["--speed", "20"]);
+    let mut c = d.connect();
+    c.line();
+    c.call(json!({"op": "subscribe"}));
+
+    // A name reaches every user's terminal and the journal, so it holds nothing a terminal or a log reads as an instruction.
+    for bad in ["Rear \u{1b}]52;c;cm0gLXJmIH4=\u{7}", "Rear\nDec 25 pennad: emergency", "Rear \u{202e}nac", "Rear\u{0}", &"x".repeat(49)] {
+        let r = c.call(json!({"op": "label", "key": CPU, "label": bad}));
+        assert_eq!(r["ok"], false, "{bad:?} was taken: {r}");
+    }
+    assert!(c.call(json!({"op": "label", "key": CPU, "label": "Rear exhaust · 140 mm"}))["ok"] == true);
+    // Who changed it is in the journal, not in what every subscriber, any local user, is told.
+    let ev = event_where(&mut c, "the rename", |t| t.contains("is now called Rear exhaust"));
+    assert!(!ev["text"].as_str().unwrap().contains("uid"), "{ev}");
+    assert!(d.log().contains("is now called Rear exhaust · 140 mm (uid"), "{}", d.log());
+
+    // A curve can't hide a control character in its id or name, nor grow past what any client can take each tick.
+    let flat = |id: &str| json!({"id": id, "kind": "flat", "duty": 40});
+    for id in ["case\u{1b}[2J", &"c".repeat(49)] {
+        let r = c.call(json!({"op": "draft.put_curve", "curve": flat(id)}));
+        assert_eq!(r["ok"], false, "{id:?}: {r}");
+    }
+    let r = c.call(json!({"op": "draft.put_curve", "curve": {"id": "quiet-case", "label": "Quiet\u{7}", "kind": "flat", "duty": 40}}));
+    assert_eq!(r["ok"], false, "{r}");
+    let r = c.call(
+        json!({"op": "draft.put_curve", "curve": {"id": "twice", "kind": "mix", "mix": {"op": "max", "of": ["cpu-quiet", "cpu-quiet"]}}}),
+    );
+    assert_eq!(r["ok"], false, "{r}");
+    let source = curve(&c.call(json!({"op": "studio"}))["result"], "cpu-quiet")["source"].clone();
+    let many: Vec<[f64; 2]> = (0..33).map(|i| [20.0 + f64::from(i), 20.0 + f64::from(i)]).collect();
+    let r = c.call(json!({"op": "draft.put_curve", "curve": {"id": "steps", "kind": "graph", "source": source, "points": many}}));
+    assert_eq!(r["ok"], false, "{r}");
+    assert!(r["error"].as_str().unwrap().contains("at most 32 points"), "{r}");
+
+    // One uid holds at most PER_UID_MAX connections at once: the next is closed before its hello, and a freed one is reused.
+    let mut held: Vec<Client> = (1..32).map(|_| d.connect()).collect();
+    for h in &mut held {
+        assert_eq!(h.line()["ev"], "hello");
+    }
+    let mut over = d.connect();
+    over.reader.get_ref().set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    let mut buf = String::new();
+    assert_eq!(over.reader.read_line(&mut buf).unwrap(), 0, "the 33rd connection got {buf:?}");
+    drop(held.pop());
+    let end = Instant::now() + Duration::from_secs(10);
+    loop {
+        let mut again = d.connect();
+        again.reader.get_ref().set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let mut buf = String::new();
+        if again.reader.read_line(&mut buf).unwrap_or(0) > 0 {
+            break;
+        }
+        assert!(Instant::now() < end, "a freed connection was never reused");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(d.log().contains("refused a connection from uid"), "{}", d.log());
+    drop(held);
+    d.stop();
+}
+
 fn curve<'a>(v: &'a Value, id: &str) -> &'a Value {
     v["curves"].as_array().unwrap().iter().find(|c| c["id"] == id).unwrap_or(&Value::Null)
 }

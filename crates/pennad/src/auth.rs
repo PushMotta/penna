@@ -1,7 +1,7 @@
 //! Who may change fans (DESIGN.md §7.4). The socket is world-connectable; every connection's peer credentials decide once
 //! whether its writes are allowed. Reads are open to any local user.
 
-/// The connecting process, from `SO_PEERCRED` and `/proc/<pid>/status`.
+/// The connecting process, from `SO_PEERCRED` and `SO_PEERGROUPS`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Peer {
     pub uid: u32,
@@ -70,17 +70,26 @@ fn is_listed(etc_passwd: &str, etc_group: &str, group: &str, uid: u32) -> bool {
     })
 }
 
-/// A process's supplementary groups, from the `Groups:` line of `/proc/<pid>/status`.
-pub fn groups_of(pid: i32) -> Vec<u32> {
-    std::fs::read_to_string(format!("/proc/{pid}/status")).map(|s| parse_groups(&s)).unwrap_or_default()
-}
-
-fn parse_groups(status: &str) -> Vec<u32> {
-    status
-        .lines()
-        .find_map(|l| l.strip_prefix("Groups:"))
-        .map(|g| g.split_whitespace().filter_map(|n| n.parse().ok()).collect())
-        .unwrap_or_default()
+/// The peer's supplementary groups as the kernel recorded them when it connected (`SO_PEERGROUPS`, Linux 4.13). Not read from
+/// `/proc/<pid>/status`: by the time that is read, the pid can belong to another process. None if the kernel can't say.
+pub fn peer_groups(fd: std::os::fd::BorrowedFd<'_>) -> Vec<u32> {
+    use std::os::fd::AsRawFd;
+    let mut groups: Vec<libc::gid_t> = vec![0; 64];
+    for _ in 0..2 {
+        let mut len = (groups.len() * std::mem::size_of::<libc::gid_t>()) as libc::socklen_t;
+        // SAFETY: `groups` has room for `len` bytes, and the kernel writes at most that many, or says how many it needs.
+        let r = unsafe { libc::getsockopt(fd.as_raw_fd(), libc::SOL_SOCKET, libc::SO_PEERGROUPS, groups.as_mut_ptr().cast(), &mut len) };
+        let n = len as usize / std::mem::size_of::<libc::gid_t>();
+        if r == 0 {
+            groups.truncate(n);
+            return groups;
+        }
+        if std::io::Error::last_os_error().raw_os_error() != Some(libc::ERANGE) || n <= groups.len() {
+            break;
+        }
+        groups.resize(n, 0);
+    }
+    Vec::new()
 }
 
 #[cfg(test)]
@@ -118,11 +127,21 @@ mod tests {
     }
 
     #[test]
-    fn groups_come_from_etc_group_and_proc_status() {
+    fn groups_come_from_etc_group_and_the_socket() {
         assert_eq!(group_gid("root:x:0:\nwheel:x:998:pmotta\npenna:x:960:pmotta\n", "penna"), Some(960));
         assert_eq!(group_gid("root:x:0:\n", "penna"), None);
-        assert_eq!(parse_groups("Name:\tpenna\nGroups:\t3 90 998 1000 \nNSpid:\t1\n"), [3, 90, 998, 1000]);
-        assert_eq!(parse_groups("Groups:\n"), Vec::<u32>::new());
+        // The kernel's record of a connected peer is this process's own groups.
+        let (a, _b) = std::os::unix::net::UnixStream::pair().unwrap();
+        let mut mine: Vec<u32> = std::fs::read_to_string("/proc/self/status")
+            .unwrap()
+            .lines()
+            .find_map(|l| l.strip_prefix("Groups:"))
+            .map(|g| g.split_whitespace().filter_map(|n| n.parse().ok()).collect())
+            .unwrap_or_default();
+        let mut got = peer_groups(std::os::fd::AsFd::as_fd(&a));
+        mine.sort();
+        got.sort();
+        assert_eq!(got, mine);
     }
 
     const PASSWD: &str =

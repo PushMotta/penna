@@ -177,6 +177,13 @@ impl Trace {
         self.events.push((level, control, text));
     }
 
+    /// [`Trace::note`] for a request: the journal says which uid asked, subscribers only what changed. Every local user may
+    /// subscribe, and which account changed the fans is no business of theirs.
+    pub fn note_for(&mut self, now: f64, level: Level, control: Option<Key>, text: String, uid: u32) {
+        eprintln!("{}  {text} (uid {uid})", t(now));
+        self.events.push((level, control, text));
+    }
+
     pub fn command(&mut self, now: f64, plan: &Plan, st: &LoopState, cmd: &Command, outcome: &Outcome) {
         let label = self.label(plan, cmd.key()).to_owned();
         let line = match (cmd, outcome) {

@@ -8,6 +8,9 @@ use std::fmt;
 #[serde(try_from = "String", into = "String")]
 pub struct Key(String);
 
+/// The longest key: a PCI path, a driver's name and a channel come to well under this.
+pub const KEY_MAX: usize = 256;
+
 impl Key {
     pub fn hwmon(name: &str, device: &str, channel: &str) -> Key {
         Key(format!("hwmon/{}/{}/{}", part(name), part(device), part(channel)))
@@ -22,8 +25,12 @@ impl Key {
         Key("platform/profile".to_owned())
     }
 
-    /// Checks the shape of a key read from a config file or the wire.
+    /// Checks the shape of a key read from a config file or the wire. Keys are printed to every user, so a key holds no control
+    /// character, as no sysfs or NVML name does, and is at most [`KEY_MAX`] bytes.
     pub fn parse(s: &str) -> Option<Key> {
+        if s.len() > KEY_MAX || s.chars().any(crate::config::hidden) {
+            return None;
+        }
         let parts: Vec<&str> = s.split('/').collect();
         if parts.iter().any(|p| p.is_empty()) {
             return None;

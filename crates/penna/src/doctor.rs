@@ -293,13 +293,14 @@ pub fn findings(f: &Facts) -> Vec<Finding> {
                 State::Contested => (
                     format!("{whose}{} is contested{reason}.", c.label),
                     format!(
-                        "Something else keeps setting it: check the BIOS fan setting for it, or another fan tool. Then: penna retry \"{}\"",
-                        c.label
+                        "Something else keeps setting it: check the BIOS fan setting for it, or another fan tool. Then: penna retry {}",
+                        shell_word(c.key.as_str())
                     ),
                 ),
-                State::Fault => {
-                    (format!("{whose}{} has a fault{reason}.", c.label), format!("When the cause is fixed: penna retry \"{}\"", c.label))
-                }
+                State::Fault => (
+                    format!("{whose}{} has a fault{reason}.", c.label),
+                    format!("When the cause is fixed: penna retry {}", shell_word(c.key.as_str())),
+                ),
                 State::Failsafe => (
                     format!("{whose}{} is at its failsafe speed{reason}.", c.label),
                     "A sensor its curve reads failed; it goes back to its curve once the sensor reads again.".to_owned(),
@@ -495,6 +496,16 @@ pub fn run(json: bool) -> anyhow::Result<usize> {
     Ok(attention)
 }
 
+/// `s` as one word a person can paste into a shell. A command doctor suggests names the fan by its key, never by its label: a
+/// label is anyone's in the penna group, and `$(…)` in one would run when pasted.
+fn shell_word(s: &str) -> String {
+    if !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || "/._:-+@=,".contains(c)) {
+        s.to_owned()
+    } else {
+        format!("'{}'", s.replace('\'', "'\\''"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -560,6 +571,27 @@ mod tests {
         assert!(daemon.todo.as_deref().unwrap().contains("usermod -aG penna"));
         let fans = by_area(&all, "fans");
         assert!(fans.iter().any(|x| x.text.contains("contested") && x.todo.as_deref().unwrap().contains("penna retry")), "{fans:?}");
+
+        // The command to paste names the fan by its key: its label is anyone's in the penna group.
+        let mut f = facts();
+        let mut tick: Tick = serde_json::from_str(include_str!("../../penna-proto/tests/fixtures/tick.json")).unwrap();
+        tick.emergency.clear();
+        let contested = tick.controls.iter_mut().find(|c| c.state == State::Contested).unwrap();
+        contested.label = "Front intake $(id)\"; rm -rf ~".into();
+        let key = contested.key.to_string();
+        f.daemons.push(Daemon {
+            via: "/run/penna/penna.sock".into(),
+            mock: false,
+            version: "0.10.6".into(),
+            can_write: true,
+            why: None,
+            tick: Some(tick),
+        });
+        let all = findings(&f);
+        let todo = by_area(&all, "fans").iter().find(|x| x.text.contains("contested")).unwrap().todo.clone().unwrap();
+        assert!(todo.ends_with(&format!("penna retry {key}")), "{todo}");
+        assert!(!todo.contains("$(") && !todo.contains("rm -rf"), "{todo}");
+        assert_eq!(shell_word("it's"), "'it'\\''s'");
     }
 
     #[test]

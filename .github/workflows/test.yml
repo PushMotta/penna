@@ -21,6 +21,8 @@ jobs:
   desk:
     if: github.event_name == 'push'
     runs-on: [self-hosted, penna]
+    # A run takes under a minute here; a stuck one is stopped rather than left holding the desk.
+    timeout-minutes: 20
     env:
       # Outside the checkout, which actions/checkout cleans, so the build is cached between runs.
       CARGO_TARGET_DIR: ${{ github.workspace }}/../target-penna
@@ -41,6 +43,8 @@ jobs:
   github:
     if: github.event_name != 'push'
     runs-on: ubuntu-24.04
+    # A clean build and every test take about three minutes there.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

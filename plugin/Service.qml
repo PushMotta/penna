@@ -84,10 +84,16 @@ Item {
     var sensors = Model.sensors(msg)
     for (var i = 0; i < sensors.length; i++) append(sensors[i].key, sensors[i].celsius)
     var controls = Model.controls(msg)
+    var current = {}
+    for (var k = 0; k < sensors.length; k++) current[sensors[k].key] = true
     for (var j = 0; j < controls.length; j++) {
       append("duty:" + controls[j].key, controls[j].duty)
       append("rpm:" + controls[j].key, controls[j].rpm)
+      current["duty:" + controls[j].key] = true
+      current["rpm:" + controls[j].key] = true
     }
+    // A key this tick no longer has goes, so a session that sees devices come and go doesn't keep every one of them.
+    for (var old in history) if (!current[old]) delete history[old]
     tick = msg
     lastTickAt = Date.now() / 1000
     ticked()
@@ -108,6 +114,11 @@ Item {
 
   function handleLine(line) {
     if (!line) return
+    if (Model.tooLong(line)) {
+      console.warn("penna: pennad sent a line over 4 MiB; reconnecting")
+      sock.connected = false
+      return
+    }
     var msg
     try {
       msg = JSON.parse(line)
@@ -162,6 +173,30 @@ Item {
       root.attempts++
       root.candidateIndex = (root.candidateIndex + 1) % Math.max(1, root.candidates.length)
       sock.connected = true
+    }
+  }
+
+  // A user added to the penna group may write from their next connection (§7.4), and this one stays open. While it can't
+  // write, a second connection reads only its hello every 15 s; once that one may write, this one reconnects to pick it up.
+  Timer {
+    interval: 15000
+    repeat: true
+    running: root.connected && !root.canWrite && root.mismatch === ""
+    onTriggered: probe.connected = true
+  }
+
+  Socket {
+    id: probe
+    path: root.socketPath
+    parser: SplitParser {
+      onRead: function(data) {
+        probe.connected = false
+        if (Model.tooLong(data)) return
+        try {
+          var msg = JSON.parse(data)
+          if (msg.ev === "hello" && msg.can_write === true && !root.canWrite) sock.connected = false
+        } catch (e) {}
+      }
     }
   }
 

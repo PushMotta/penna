@@ -424,11 +424,20 @@ fn restore(from: &std::path::Path, firmware: &std::path::Path) -> Result<()> {
         },
     });
     // SAFETY: geteuid has no preconditions.
-    if real && unsafe { libc::geteuid() } != 0 {
+    let root = unsafe { libc::geteuid() } == 0;
+    if real && !root {
         bail!(
             "{} holds this machine's real fans, and putting them back needs root: sudo penna restore --from {}",
             from.display(),
             from.display()
+        );
+    }
+    // As root, only fans: pennad writes nothing but files under /sys there, so a file naming anything else isn't its.
+    if root && let Some(p) = entries.iter().flat_map(|e| e.paths()).find(|p| !penna_hw::is_real_sysfs(p)) {
+        bail!(
+            "{} names {}, which isn't under /sys: as root, penna restores only fans, so it put nothing back",
+            from.display(),
+            p.display()
         );
     }
     let r = penna_hw::held::restore_both(from, firmware)?;

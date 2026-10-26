@@ -69,7 +69,13 @@ pub fn line(t: &Tick, sensor: Option<&str>) -> Line {
             text.push_str(&format!(" {c:.0}°"));
         }
     }
-    Line { text, alt, tooltip: tips.join("\n"), class }
+    Line { text, alt, tooltip: pango(&tips.join("\n")), class }
+}
+
+/// Waybar reads a custom module's tooltip as Pango markup, and every name in it is anyone's in the penna group: shown as
+/// written, never as markup.
+fn pango(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 
 #[cfg(test)]
@@ -81,6 +87,15 @@ mod tests {
             penna_proto::Event::Tick(t) => *t,
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn a_name_in_the_tooltip_is_text_not_markup() {
+        let mut t = golden();
+        t.controls[0].label = "<span size='99999'>CPU</span> & co".into();
+        let l = line(&t, None);
+        assert!(l.tooltip.contains("&lt;span size='99999'&gt;CPU&lt;/span&gt; &amp; co"), "{}", l.tooltip);
+        assert!(!l.tooltip.contains("<span"));
     }
 
     #[test]

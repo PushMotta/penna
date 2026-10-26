@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell.Io
+import "../Model.js" as Model
 
 // The studio's own connection to pennad. The draft belongs to this connection (DESIGN.md §7.4): closing it — Esc, a closed
 // overlay, a shell crash — makes the daemon return to the saved configuration. Live readings come from the shared service;
@@ -77,6 +78,11 @@ Item {
 
   function handleLine(line) {
     if (!line) return
+    if (Model.tooLong(line)) {
+      console.warn("penna: pennad sent a line over 4 MiB; reconnecting")
+      sock.connected = false
+      return
+    }
     var msg
     try {
       msg = JSON.parse(line)

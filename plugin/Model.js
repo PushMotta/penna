@@ -128,6 +128,11 @@ function needsSetup(tick) {
 
 function capitalise(s) { return s.length ? s.charAt(0).toUpperCase() + s.slice(1) : s }
 
+// The longest line read from the daemon. Since 0.10.6 its ticks stay far under a protocol line (1 MiB); a longer line is from a
+// broken daemon or something else on the socket, and parsing it could hold up the shell.
+var LINE_MAX = 4 * 1024 * 1024
+function tooLong(line) { return line.length > LINE_MAX }
+
 // Every name the daemon sends is text, never markup: any member of the penna group can set a label, and a Text that read it
 // as markup would fetch an <img> from another user's desktop. So every Text in the plugin is PlainText, and the few
 // StyledText lines escape each part through this (test/markup.test.js checks both).
@@ -806,6 +811,6 @@ if (typeof module !== "undefined") {
     moveHandle: moveHandle, pathOf: pathOf, shadeOf: shadeOf, nvmlFloor: nvmlFloor, profileTabs: profileTabs,
     viewProfile: viewProfile, generatedDraft: generatedDraft, isGenerated: isGenerated, draftLine: draftLine, saveLabel: saveLabel,
     anchorMarks: anchorMarks, loadView: loadView, proposalText: proposalText, screenIndex: screenIndex,
-    levelOf: levelOf, levelDuty: levelDuty, escapeMarkup: escapeMarkup, dimmedLine: dimmedLine
+    levelOf: levelOf, levelDuty: levelDuty, escapeMarkup: escapeMarkup, dimmedLine: dimmedLine, LINE_MAX: LINE_MAX, tooLong: tooLong
   }
 }

@@ -4,16 +4,19 @@
 //! * the loop publishes each tick through a `watch` channel: a subscriber that falls behind skips ticks, it never queues them;
 //! * transitions go out through a `broadcast` channel; a subscriber that lags behind it is dropped;
 //! * requests that change fans go to the loop through a bounded queue it drains between ticks, each with a oneshot reply;
-//! * a client that stops reading is dropped after [`WRITE_TIMEOUT`] rather than holding anything up.
+//! * a client that stops reading is dropped after [`WRITE_TIMEOUT`] rather than holding anything up;
+//! * no uid holds more than [`PER_UID_MAX`] connections, nor all of them more than [`CONNECTIONS_MAX`], so no local user can
+//!   take the descriptors `pennad` needs to drive and hand back fans (§6). A connection that asks nothing in [`IDLE`] is closed.
 use crate::auth::{self, Peer, Policy};
 use anyhow::{Context, Result, bail};
 use penna_proto::{Event, Hello, History, MAX_LINE, Op, Reply, Request};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::mpsc::{SyncSender, TrySendError};
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::net::unix::OwnedWriteHalf;
@@ -27,6 +30,15 @@ const REPLY_TIMEOUT: Duration = Duration::from_secs(10);
 pub const QUEUE: usize = 64;
 /// Transitions a subscriber may fall behind by before it is dropped.
 pub const EVENT_BACKLOG: usize = 256;
+/// Connections at once: far more than a desk's shells and CLIs, far fewer than the daemon's descriptors.
+pub const CONNECTIONS_MAX: usize = 256;
+/// Connections at once from one uid other than root: a shell's service and studio, and many CLIs.
+pub const PER_UID_MAX: usize = 32;
+/// A connection that has sent nothing this long after its hello is closed. Once it has asked something it stays, as the
+/// studio's does while it holds a draft.
+pub const IDLE: Duration = Duration::from_secs(30);
+/// At most one line in the journal this often about refused connections or failing accepts.
+const QUIET: Duration = Duration::from_secs(10);
 
 /// What the loop publishes after every tick, and after every request that changed something.
 pub struct Published {
@@ -128,16 +140,29 @@ async fn serve(listener: std::os::unix::net::UnixListener, setup: Setup) {
         }
     };
     let setup = Arc::new(setup);
+    let slots = Slots::default();
     let mut stopping = setup.published.clone();
     let mut next: u64 = 0;
+    let mut quiet = Quiet::default();
     loop {
         tokio::select! {
             accepted = listener.accept() => match accepted {
                 Ok((stream, _)) => {
-                    next += 1;
-                    tokio::spawn(connection(stream, setup.clone(), next));
+                    let uid = stream.peer_cred().map(|c| c.uid()).unwrap_or(u32::MAX);
+                    match slots.take(uid) {
+                        Some(slot) => {
+                            next += 1;
+                            tokio::spawn(connection(stream, setup.clone(), next, slot));
+                        }
+                        // Closed at once: it never gets a hello, so a client sees the connection end.
+                        None => quiet.say(format_args!("pennad: refused a connection from uid {uid}: it already holds too many")),
+                    }
                 }
-                Err(e) => eprintln!("pennad: accepting a connection failed: {e}"),
+                Err(e) => {
+                    // Out of descriptors, the listener stays ready and fails again at once: wait rather than spin.
+                    quiet.say(format_args!("pennad: accepting a connection failed: {e}"));
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
             },
             changed = stopping.changed() => {
                 if changed.is_err() {
@@ -148,8 +173,65 @@ async fn serve(listener: std::os::unix::net::UnixListener, setup: Setup) {
     }
 }
 
-async fn connection(stream: UnixStream, setup: Arc<Setup>, conn: u64) {
+/// Who holds how many connections. A [`Slot`] gives its place back when its connection ends.
+#[derive(Clone, Default)]
+struct Slots(Arc<Mutex<HashMap<u32, usize>>>);
+
+struct Slot {
+    slots: Slots,
+    uid: u32,
+}
+
+impl Slots {
+    fn take(&self, uid: u32) -> Option<Slot> {
+        let mut held = self.0.lock().expect("slots");
+        let total: usize = held.values().sum();
+        let mine = held.get(&uid).copied().unwrap_or(0);
+        if total >= CONNECTIONS_MAX || (uid != 0 && mine >= PER_UID_MAX) {
+            return None;
+        }
+        *held.entry(uid).or_default() += 1;
+        Some(Slot { slots: self.clone(), uid })
+    }
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        let mut held = self.slots.0.lock().expect("slots");
+        if let Some(n) = held.get_mut(&self.uid) {
+            *n -= 1;
+            if *n == 0 {
+                held.remove(&self.uid);
+            }
+        }
+    }
+}
+
+/// A line for the journal at most every [`QUIET`], with how many like it were left out: a flood of connections can't flood
+/// the journal too, or hide what matters in it.
+#[derive(Default)]
+struct Quiet {
+    last: Option<Instant>,
+    left_out: u64,
+}
+
+impl Quiet {
+    fn say(&mut self, line: std::fmt::Arguments<'_>) {
+        if self.last.is_some_and(|t| t.elapsed() < QUIET) {
+            self.left_out += 1;
+            return;
+        }
+        match std::mem::take(&mut self.left_out) {
+            0 => eprintln!("{line}"),
+            n => eprintln!("{line} ({n} more like it left out)"),
+        }
+        self.last = Some(Instant::now());
+    }
+}
+
+async fn connection(stream: UnixStream, setup: Arc<Setup>, conn: u64, slot: Slot) {
     talk(stream, &setup, conn).await;
+    drop(slot);
     // The loop drops this connection's draft, if it has one.
     let _ = setup.closed.send(conn);
 }
@@ -159,7 +241,7 @@ async fn talk(stream: UnixStream, setup: &Setup, conn: u64) {
         Ok(c) => Peer {
             uid: c.uid(),
             gid: c.gid(),
-            groups: c.pid().map(auth::groups_of).unwrap_or_default(),
+            groups: auth::peer_groups(std::os::fd::AsFd::as_fd(&stream)),
             listed: auth::listed("penna", c.uid()),
         },
         Err(e) => {
@@ -178,10 +260,15 @@ async fn talk(stream: UnixStream, setup: &Setup, conn: u64) {
     if send(&mut wr, &hello.line(), peer.uid).await.is_err() {
         return;
     }
+    let mut asked = false;
+    let idle = tokio::time::sleep(IDLE);
+    tokio::pin!(idle);
     loop {
         tokio::select! {
+            () = &mut idle, if !asked => return,
             line = lines.recv() => {
                 let Some(line) = line else { return };
+                asked = true;
                 let line = match line {
                     Ok(l) => l,
                     Err(reply) => {

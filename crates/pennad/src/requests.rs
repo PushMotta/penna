@@ -4,7 +4,7 @@
 //! changes: checked the same way, run at once as a preview, and kept only by `draft.save`. A draft belongs to its connection.
 use crate::trace::Trace;
 use crate::{Draft, Live};
-use penna_core::config::{self, Config, ControlConfig, Curve, CurveKind, DEFAULTS, FIRMWARE, LABEL_MAX, changes, explain_points, words};
+use penna_core::config::{self, Config, ControlConfig, Curve, CurveKind, DEFAULTS, FIRMWARE, changes, explain_points, words};
 use penna_core::control::{Request, Scope};
 use penna_core::plan::{self, Plan};
 use penna_core::{Inventory, Key};
@@ -26,7 +26,7 @@ pub fn handle(live: &mut Live, inventory: &Inventory, out: &mut Trace, op: Op, u
     let now = live.now;
     let mut said = String::new();
     let mut note = |out: &mut Trace, control: Option<Key>, text: String| {
-        out.note(now, Level::Info, control, format!("{text} (uid {uid})"));
+        out.note_for(now, Level::Info, control, text.clone(), uid);
         said = text;
     };
     match op {
@@ -124,8 +124,8 @@ pub fn handle(live: &mut Live, inventory: &Inventory, out: &mut Trace, op: Op, u
         }
         Op::Label { key, label } => {
             let label = label.trim().to_owned();
-            if label.is_empty() || label.chars().count() > LABEL_MAX {
-                return Err(format!("A label is 1 to {LABEL_MAX} characters."));
+            if let Some(why) = config::name_problem("A label", &label) {
+                return Err(format!("{why}."));
             }
             let key = labelled_key(live, inventory, &key)?;
             let was = relabel(&mut live.saved.clone(), inventory, &key, &label)?;
@@ -414,12 +414,18 @@ fn curve_from_studio(cfg: &Config, inventory: &Inventory, sc: StudioCurve) -> Re
     if id.is_empty() || id == FIRMWARE {
         return Err(format!("A curve needs an id other than {FIRMWARE:?}."));
     }
+    if let Some(why) = config::name_problem("A curve's id", &id) {
+        return Err(format!("{why}."));
+    }
+    if cfg.curve(&id).is_none() && cfg.curves.len() >= config::CURVES_MAX {
+        return Err(format!("A configuration holds at most {} curves.", config::CURVES_MAX));
+    }
     let existing = cfg.curve(&id);
     let label = match sc.label {
         Some(l) => {
             let l = l.trim().to_owned();
-            if l.is_empty() || l.chars().count() > LABEL_MAX {
-                return Err(format!("A curve's name is 1 to {LABEL_MAX} characters."));
+            if let Some(why) = config::name_problem("A curve's name", &l) {
+                return Err(format!("{why}."));
             }
             (l != words(&id)).then_some(l)
         }
@@ -449,6 +455,12 @@ fn curve_from_studio(cfg: &Config, inventory: &Inventory, sc: StudioCurve) -> Re
             }
             if m.of.contains(&id) {
                 return Err("A mix can't use itself.".into());
+            }
+            if m.of.len() > config::MIX_MAX {
+                return Err(format!("A mix uses at most {} curves.", config::MIX_MAX));
+            }
+            if m.of.iter().collect::<std::collections::BTreeSet<_>>().len() != m.of.len() {
+                return Err("A mix uses each curve once.".into());
             }
             CurveKind::Mix { op: m.op, curves: m.of }
         }

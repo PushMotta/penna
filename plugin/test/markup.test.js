@@ -65,3 +65,30 @@ test("every Text says how it reads its text, and only Model.dimmedLine writes ma
     assert.ok(!/["']\s*<\/?(font|small|b|i|img|a)\b/.test(src), path.relative(root, f) + " writes markup by hand")
   }
 })
+
+// The plugin hands names to the shell's own components too (Button, Dropdown, PanelHero…). They must read plain text as well;
+// checked where the shell is installed, as on this desk, and skipped on CI, which has no Omarchy.
+test("every shell component the plugin hands a name to reads it as text", (t) => {
+  const ui = "/usr/share/omarchy/shell/Ui"
+  if (!fs.existsSync(ui)) return t.skip("no Omarchy shell here")
+  const used = new Set()
+  for (const f of qml) {
+    for (const m of fs.readFileSync(f, "utf8").matchAll(/^\s*([A-Z][A-Za-z]+)\s*\{/gm)) {
+      if (fs.existsSync(path.join(ui, m[1] + ".qml"))) used.add(m[1])
+    }
+  }
+  assert.ok(used.size > 3, [...used].join(", "))
+  for (const name of used) {
+    for (const b of textBlocks(path.join(ui, name + ".qml"))) {
+      if (/textFormat\s*:\s*Text\.PlainText/.test(b.body)) continue
+      // A Text without PlainText may only show a literal, such as a glyph.
+      const text = (b.body.match(/\btext\s*:\s*(.*)/) || [])[1] || ""
+      assert.match(text.trim(), /^"[^"]*"$/, `${name}.qml: ${b.where.split(":").pop()} reads ${text.trim()} without PlainText`)
+    }
+  }
+})
+
+test("a line too long to be pennad's is refused before it is parsed", () => {
+  assert.equal(M.tooLong("x".repeat(M.LINE_MAX)), false)
+  assert.equal(M.tooLong("x".repeat(M.LINE_MAX + 1)), true)
+})

@@ -3,7 +3,7 @@
 # Builds the package from this checkout, uncommitted changes included: `cd packaging && makepkg -f`. The AUR's is aur/PKGBUILD,
 # which builds a tagged release; its build(), check() and package() must stay the same as these.
 pkgname=penna
-pkgver=0.10.5
+pkgver=0.10.6
 pkgrel=1
 pkgdesc="Fan control for Linux, made to be understood: a daemon that always hands fans back, a CLI, and an Omarchy plugin"
 arch=('x86_64')

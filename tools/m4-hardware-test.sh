@@ -38,13 +38,20 @@ expect() {
 }
 
 # start [pennad flags...]: a fresh transient unit, waiting until pennad answers. Extra unit properties go in $props.
+# The unit's own sandboxing (packaging/pennad.service), so pennad runs here as the package runs it. ProtectHome is left out:
+# this pennad is the checkout's, under /home. strict leaves $work read-only, and the test's configuration lives there.
+hardening=(-p "ReadWritePaths=$work" -p StateDirectory=penna)
+while IFS= read -r line; do
+  case "$line" in ProtectHome=*) ;; *) hardening+=(-p "$line") ;; esac
+done < <(sed -n '/^# Hardening/,/^\[Install\]/{/^[A-Za-z]/p}' "$repo/packaging/pennad.service")
+
 props=()
 start() {
   systemctl reset-failed "$unit" 2>/dev/null
   systemd-run --quiet --unit="$unit" --service-type=notify \
     -p WatchdogSec=5 -p WatchdogSignal=SIGKILL \
     -p RuntimeDirectory=penna -p RuntimeDirectoryPreserve=yes \
-    -p "ExecStopPost=$bin/penna restore --from $held" "${props[@]}" \
+    -p "ExecStopPost=$bin/penna restore --from $held" "${hardening[@]}" "${props[@]}" \
     -- "$bin/pennad" --config "$cfg" --quiet "$@"
   for _ in $(seq 1 40); do
     "$bin/penna" state >/dev/null 2>&1 && return 0

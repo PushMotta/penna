@@ -1,12 +1,36 @@
 # Changelog
 
-## Unreleased
+## 0.10.6 (26 Oct 2026)
 
+Security, after the Omarchy marketplace's review found that one local account could reach another's desktop through a fan's
+name. A review of everything one local account can do to another, or to the daemon they share, found more of the same kind
+(DESIGN.md §7.4):
+- **Any local user could take every descriptor `pennad` needs.** The socket took connections without limit and never closed
+  an idle one, and with no descriptor left the daemon can't write or hand back a fan. Now: at most 32 connections per uid other
+  than root and 256 in all, and one that asks nothing within 30 s of its hello is closed. A failing `accept` waits instead of
+  spinning, and says so in the journal once every 10 s at most, not 7,800 times a second.
+- **A member of the `penna` group could make every tick enormous.** Curve ids, curves, graph points and mixes had no limit, so
+  one saved configuration of 28 MB made every subscriber's tick 56 MB and slowed the control loop four times. A configuration
+  now holds at most 128 curves, 32 points a graph, 16 curves a mix, 64 virtual sensors, 32 profiles and 512 labels, and at
+  every limit it is under half a protocol line.
+- **Names are text.** A label, a curve's id or name, or a profile's name could hold escape sequences and newlines, which reached
+  other users' terminals (a clipboard write, a cleared screen) and forged lines in the journal. They are now 1–48 characters
+  with no control characters, newlines, NUL, bidirectional overrides or line separators, and no key holds one either. The
+  CLI also replaces any such character it is sent, from an older daemon, with `�`.
+- **`penna doctor`** suggested `penna retry "<label>"`, so a `$(…)` in a label ran when the line was pasted. It names the fan
+  by its key now. **`penna waybar`** escapes its tooltip, which Waybar reads as Pango markup.
+- **Who changed something** is in the journal, no longer in the events every local user can subscribe to.
+- **The penna group from the kernel:** a connecting process's groups come from `SO_PEERGROUPS`, not from `/proc/<pid>/status`,
+  where the pid may belong to another process by the time it is read.
+- **`sudo penna restore --from <file>`** writes nothing outside `/sys`.
+- **The unit** also has `ProtectKernelLogs`, Unix and netlink sockets only, no IP, and the `@system-service` syscall set. The
+  hardware tests now run `pennad` with the unit's own sandboxing.
 - **Plugin 0.7.4: a name is shown as text, never as markup.** Any member of the `penna` group can set a fan's or sensor's
   label, and the popup read a fan's name, a temperature's and a sensor's as Qt styled text. A label holding an `<img>` tag
   made another user's popup fetch that URL from their desktop (the marketplace's review found it). Every Text in the plugin
   now reads plain text, and the lines that dim a note after a name escape both parts. `test/markup.test.js` fails on any
-  Text without an explicit format, and on markup written anywhere but `Model.dimmedLine`.
+  Text without an explicit format, and on markup written anywhere but `Model.dimmedLine`. The plugin also refuses a line
+  over 4 MiB before parsing it, drops the history of sensors and fans that are gone, and its CI job has a timeout.
 - **Plugin 0.7.3:** its README names the one release of Penna it was reviewed with, 0.10.5, by its full commit and its
   package's SHA-256. It installs exactly that package, checked against the digest written in the README, or builds that
   commit. The Omarchy marketplace's review asked for this. The plugin's repository now moves only when the plugin is pointed

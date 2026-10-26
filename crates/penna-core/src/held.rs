@@ -105,6 +105,23 @@ impl HeldEntry {
     pub fn outlives_reboot(&self) -> bool {
         matches!(self, HeldEntry::Platform { .. } | HeldEntry::PointCurve { .. })
     }
+
+    /// Every file putting it back writes.
+    pub fn paths(&self) -> Vec<&std::path::Path> {
+        match self {
+            HeldEntry::Hwmon { enable, pwm, also, .. } => {
+                [enable.as_path(), pwm.as_path()].into_iter().chain(also.iter().map(|a| a.path.as_path())).collect()
+            }
+            HeldEntry::MockNvml { policy, .. } => vec![policy.as_path()],
+            HeldEntry::Target { target, switch, .. } => std::iter::once(target.as_path()).chain(switch.as_deref()).collect(),
+            HeldEntry::OdCurve { path, .. } => vec![path.as_path()],
+            HeldEntry::PointCurve { enable, points, .. } => {
+                std::iter::once(enable.as_path()).chain(points.iter().map(|p| p.path.as_path())).collect()
+            }
+            HeldEntry::Platform { via: PlatformVia::Sysfs { path }, .. } => vec![path.as_path()],
+            HeldEntry::Platform { via: PlatformVia::Daemon, .. } | HeldEntry::Nvml { .. } => Vec::new(),
+        }
+    }
 }
 
 impl HeldFile {

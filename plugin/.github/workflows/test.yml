@@ -12,6 +12,8 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-24.04
+    # The tests take seconds; anything stuck is stopped rather than left holding a runner.
+    timeout-minutes: 10
     steps:
       # Pinned to full commit SHAs rather than moving tags; update them deliberately.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

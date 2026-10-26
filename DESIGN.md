@@ -618,7 +618,7 @@ Errors are sentences a person can act on, in the voice of §8.
 | ✎ `retry` | `control` | A contested or faulted control tries again (§6.4) |
 | ✎ `adopt` | `control`, `curve` | Assigns the curve to the control in the active profile; persisted |
 | ✎ `release` | `control` | Unassigns it in the active profile, handing it back to firmware; persisted |
-| ✎ `label` | `key`, `label` | Renames a sensor or control; persisted |
+| ✎ `label` | `key`, `label` | Renames a sensor or control; persisted. 1–48 characters, no control characters (§7.4) |
 
 `pair` and `calibrate` arrive with pairing (M7).
 
@@ -748,7 +748,12 @@ A `setup` event carries the step, the control being measured, live readings ("Ra
 
 ### 7.4 Authorisation and drafts
 
-- The socket is world-connectable. Each request is checked against the peer's credentials: reads are open to any local user; writes need uid 0 or membership of the `penna` group, which is created by `sysusers.d`. polkit (the shell already ships an agent) is the v2 route if group membership proves awkward. Under `--mock`, the daemon's own uid may also write, so the whole stack runs unprivileged. Membership counts from `/etc/group` as well as from the connecting process's own groups, so `usermod -aG penna` applies at once, with no new login *(M6)*.
+- The socket is world-connectable. Each request is checked against the peer's credentials: reads are open to any local user; writes need uid 0 or membership of the `penna` group, which is created by `sysusers.d`. polkit (the shell already ships an agent) is the v2 route if group membership proves awkward. Under `--mock`, the daemon's own uid may also write, so the whole stack runs unprivileged. Membership counts from `/etc/group` as well as from the connecting process's own groups, so `usermod -aG penna` applies to every new connection, with no new login *(M6)*. The process's groups are the kernel's record from when it connected (`SO_PEERGROUPS`), not `/proc/<pid>/status`, where the pid may belong to another process by the time it is read *(0.10.6)*.
+- **What one local account can do to another** *(0.10.6, after the marketplace's review, §10)*. Every local user may read, and every member of the group may write, so neither may reach another user's desktop or terminal, nor the daemon everyone shares:
+  - **Names are text.** Labels, curve ids and names, and profile names are 1–48 characters, with no control character, newline, NUL, bidirectional override or line separator (`config::name_problem`). A key holds none either. They reach every user's shell, terminal and the journal. The CLI also replaces any such character it is sent with `�`, and the plugin draws every name as plain text.
+  - **The configuration is bounded:** at most 128 curves, 32 points a graph, 16 curves a mix, 64 virtual sensors, 32 profiles and 512 labels. Every client is sent all of it each tick; at every limit the configuration is under half a protocol line. Before, a member could save a 28 MB configuration and make every tick 56 MB.
+  - **Connections are bounded:** 32 at once per uid other than root, 256 in all, and one that asks nothing within 30 s of its hello is closed. Before, any user could hold every descriptor the daemon needed to write and hand back fans. A failing `accept` waits 100 ms instead of spinning, and the journal gets one line about it every 10 s at most.
+  - **Who changed something is in the journal only.** The events every subscriber gets say what changed, not which uid changed it.
 - **A draft belongs to its connection.** The studio's edits apply live to the fans for preview, and `draft.save` persists them. If the connection closes with a draft open — Esc, a closed overlay, a shell crash — the daemon reverts to the saved configuration. This is Candela's "the revert runs outside the shell", without a countdown: a bad fan curve is audible and caught by §6, not invisible like a dark display.
 
 ### 7.5 Persistence
@@ -757,7 +762,7 @@ A `setup` event carries the step, the control being measured, live readings ("Ra
 |---|---|---|
 | `/etc/penna/config.toml` | Labels, virtual sensors, curves, control limits, profiles, active profile | Daemon only, atomically, on `draft.save` and `profile.set`. Hand edits while the daemon is stopped are fine; `penna check` validates them. |
 | `/var/lib/penna/measured.toml` | Pairings, calibration tables, keyed by control and tach. *Draft 3:* write-test results, confirmed roles, idle temperatures, the load check's plateau | Daemon, after a confirmed pair or calibrate, or a finished setup |
-| `/run/penna/held.json` | Write-ahead hand-back list (§6.1) | Daemon; read by `penna restore` |
+| `/run/penna/held.json` | Write-ahead hand-back list (§6.1) | Daemon; read by `penna restore`, which as root writes nothing outside `/sys` *(0.10.6)* |
 | `/var/lib/penna/firmware.json` | Snapshots of firmware state that outlives a reboot: firmware curves, the platform profile (§6.7) *(draft 3)* | Daemon, ahead of the first change; read by `penna reset` |
 | `/usr/share/penna/boards/*.toml` | The board database (§3.6) *(draft 3)* | The package |
 
@@ -796,6 +801,7 @@ failsafe = 100
   - `WatchdogSignal=SIGKILL`: the watchdog exists to get the fans back, not to leave a core dump.
   - `ExecStart=/usr/bin/pennad --quiet`: the journal gets changes (states, faults, emergencies) rather than a line every second.
   - Hardening: `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `NoNewPrivileges`, `ProtectKernelModules`, `ProtectControlGroups`, the `Restrict*` family, and native syscalls only. `/sys` and `/dev` stay reachable for hwmon and NVML.
+  - *0.10.6:* also `ProtectKernelLogs`, Unix and netlink sockets only, no IP at all (`IPAddressDeny=any`), and the `@system-service` syscall set. Left out on purpose: `ProtectKernelTunables` (it makes `/sys` read-only), `PrivateDevices` (it hides `/dev/nvidia*`), an empty `CapabilityBoundingSet` and `MemoryDenyWriteExecute`, which nobody has checked against NVML and every driver (§3.5). The hardware tests (`tools/m4-hardware-test.sh`, `tools/m5-hardware-test.sh`) run `pennad` with the unit's own sandboxing, read from this file, all but `ProtectHome`: their `pennad` is the checkout's, under `/home`.
 - **The package.**
   - The PKGBUILD builds from the checkout and runs the whole test suite in `check()`.
   - It installs the binaries, the unit, the group, the docs, the MIT licence and the plugin (`/usr/share/penna/plugin`).

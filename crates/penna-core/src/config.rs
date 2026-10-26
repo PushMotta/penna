@@ -12,8 +12,33 @@ pub const FIRMWARE: &str = "firmware";
 /// The built-in profile that leaves every control with its firmware (DESIGN.md §4.7). It is never stored in `profiles`, so it
 /// can't be edited, renamed or deleted.
 pub const DEFAULTS: &str = "defaults";
-/// The longest label a person can give a sensor, tach or control.
+/// The longest label a person can give a sensor, tach or control, and the longest curve id or profile name.
 pub const LABEL_MAX: usize = 48;
+/// How much one configuration may hold. Any member of the penna group can add to it, and every client is sent all of it each
+/// tick (§7.4), so these are far above what any machine needs and keep the largest tick well under a protocol line.
+pub const CURVES_MAX: usize = 128;
+pub const POINTS_MAX: usize = 32;
+pub const MIX_MAX: usize = 16;
+pub const VIRTUAL_MAX: usize = 64;
+pub const PROFILES_MAX: usize = 32;
+pub const LABELS_MAX: usize = 512;
+
+/// What is wrong with a name, a curve id or a profile name (`what`), or `None`. Each reaches every user's terminal and shell,
+/// and the journal, so it holds no control characters (escape sequences, newlines, NUL) and nothing that reorders the text
+/// around it.
+pub fn name_problem(what: &str, name: &str) -> Option<String> {
+    if name.trim().is_empty() || name.chars().count() > LABEL_MAX {
+        return Some(format!("{what} is 1 to {LABEL_MAX} characters"));
+    }
+    name.chars().find(|&c| hidden(c)).map(|c| format!("{what} can't hold a control character ({c:?})"))
+}
+
+/// Characters that do something other than show: C0, DEL and C1 controls, the bidirectional overrides and isolates, and the
+/// line and paragraph separators.
+pub fn hidden(c: char) -> bool {
+    c.is_control()
+        || matches!(c, '\u{200E}' | '\u{200F}' | '\u{061C}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{2028}' | '\u{2029}')
+}
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -537,6 +562,23 @@ impl Config {
         if self.profiles.contains_key(DEFAULTS) {
             out.push(problem(format!("profile {DEFAULTS:?}"), "is Penna's built-in profile; give yours another name"));
         }
+        if self.profiles.len() > PROFILES_MAX {
+            out.push(problem("profiles", format!("there are {}; a configuration holds at most {PROFILES_MAX}", self.profiles.len())));
+        }
+        for name in self.profiles.keys() {
+            if let Some(why) = name_problem("a profile's name", name) {
+                out.push(problem(format!("profile {name:?}"), why));
+            }
+        }
+        if self.sensors.len() > VIRTUAL_MAX {
+            out.push(problem("sensors", format!("there are {}; a configuration holds at most {VIRTUAL_MAX}", self.sensors.len())));
+        }
+        if self.curves.len() > CURVES_MAX {
+            out.push(problem("curves", format!("there are {}; a configuration holds at most {CURVES_MAX}", self.curves.len())));
+        }
+        if self.labels.len() > LABELS_MAX {
+            out.push(problem("labels", format!("there are {}; a configuration holds at most {LABELS_MAX}", self.labels.len())));
+        }
 
         let mut seen = BTreeSet::new();
         for s in &self.sensors {
@@ -546,6 +588,12 @@ impl Config {
             }
             if !seen.insert(s.key.clone()) {
                 out.push(problem(&at, "is defined twice"));
+            }
+            if let Some(why) = s.label.as_deref().and_then(|l| name_problem("a sensor's name", l)) {
+                out.push(problem(&at, why));
+            }
+            if s.kind.inputs().len() > MIX_MAX {
+                out.push(problem(&at, format!("uses {} sensors; a virtual sensor uses at most {MIX_MAX}", s.kind.inputs().len())));
             }
             match &s.kind {
                 VirtualKind::Max(k) | VirtualKind::Min(k) | VirtualKind::Average(k) if k.is_empty() => {
@@ -573,9 +621,14 @@ impl Config {
             let at = format!("curve {:?}", c.id);
             if c.id.is_empty() || c.id == FIRMWARE {
                 out.push(problem(&at, format!("a curve needs an id other than {FIRMWARE:?}")));
+            } else if let Some(why) = name_problem("a curve's id", &c.id) {
+                out.push(problem(&at, why));
             }
             if !ids.insert(c.id.as_str()) {
                 out.push(problem(&at, "is defined twice"));
+            }
+            if let Some(why) = c.label.as_deref().and_then(|l| name_problem("a curve's name", l)) {
+                out.push(problem(&at, why));
             }
             if let Some(r) = c.response
                 && !(0.0..=600.0).contains(&r)
@@ -601,6 +654,12 @@ impl Config {
                 CurveKind::Mix { curves, .. } => {
                     if curves.is_empty() {
                         out.push(problem(&at, "a mix needs at least one curve"));
+                    }
+                    if curves.len() > MIX_MAX {
+                        out.push(problem(&at, format!("mixes {} curves; a mix uses at most {MIX_MAX}", curves.len())));
+                    }
+                    if curves.iter().collect::<BTreeSet<_>>().len() != curves.len() {
+                        out.push(problem(&at, "mixes the same curve twice"));
                     }
                     for id in curves {
                         if self.curve(id).is_none() {
@@ -636,6 +695,9 @@ impl Config {
             if !keys.insert(&c.key) {
                 out.push(problem(&at, "is defined twice"));
             }
+            if let Some(why) = c.label.as_deref().and_then(|l| name_problem("a label", l)) {
+                out.push(problem(&at, why));
+            }
             for (name, v) in [("min", c.min), ("max", c.max), ("failsafe", c.failsafe)] {
                 percent_in_range(&at, name, v, &mut out);
             }
@@ -662,8 +724,8 @@ impl Config {
         }
 
         for (key, label) in &self.labels {
-            if label.trim().is_empty() || label.chars().count() > LABEL_MAX {
-                out.push(problem(format!("labels, {key}"), format!("a label is 1 to {LABEL_MAX} characters")));
+            if let Some(why) = name_problem("a label", label) {
+                out.push(problem(format!("labels, {key}"), why));
             }
         }
 
@@ -727,6 +789,10 @@ fn check_points(at: &str, points: &[[f64; 2]], out: &mut Vec<Problem>) {
         out.push(problem(at, "a graph needs at least two points"));
         return;
     }
+    if points.len() > POINTS_MAX {
+        out.push(problem(at, format!("a graph has at most {POINTS_MAX} points, not {}", points.len())));
+        return;
+    }
     for (i, [t, p]) in points.iter().enumerate() {
         if !(-40.0..=150.0).contains(t) {
             out.push(problem(at, format!("point {} is at {t} °C, outside −40…150 °C", i + 1)));
@@ -758,6 +824,9 @@ pub fn num(v: f64) -> String {
 pub fn explain_points(points: &[[f64; 2]]) -> Option<String> {
     if points.len() < 2 {
         return Some(format!("A graph needs at least two points; this one has {}.", points.len()));
+    }
+    if points.len() > POINTS_MAX {
+        return Some(format!("A graph has at most {POINTS_MAX} points; this one has {}.", points.len()));
     }
     for [t, p] in points {
         if !(-40.0..=150.0).contains(t) {
@@ -1054,6 +1123,64 @@ failsafe = 100
         let c = Config::parse(&text).unwrap();
         assert_eq!(c.labels.len(), 1);
         assert_eq!(Config::parse(&c.to_toml()).unwrap(), c);
+    }
+
+    #[test]
+    fn a_name_holds_nothing_a_terminal_or_the_journal_reads_as_an_instruction() {
+        for bad in
+            ["\u{1b}[2J", "OSC \u{1b}]52;c;aGk=\u{7}", "two\nlines", "NUL\u{0}", "C1 \u{9b}31m", "\u{202e}desrever", "a\u{2028}b", "  "]
+        {
+            assert!(name_problem("a label", bad).is_some(), "{bad:?}");
+        }
+        for good in ["CPU cooler", "Rear exhaust · 140 mm", "Ventilador traseiro", "GPU 2 — top", "温度"] {
+            assert_eq!(name_problem("a label", good), None, "{good:?}");
+        }
+        assert!(name_problem("a label", &"é".repeat(49)).is_some(), "48 characters, not bytes");
+        assert_eq!(name_problem("a label", &"é".repeat(48)), None);
+        assert!(Key::parse("hwmon/it87/it87.2608/pwm1\u{1b}[2J").is_none());
+        assert!(Key::parse(&format!("hwmon/it87/{}/pwm1", "a".repeat(300))).is_none());
+
+        let with = |extra: &str| Config::parse(&format!("{EXAMPLE}{extra}")).unwrap().validate();
+        assert!(with("\n[labels]\n\"hwmon/k10temp/0000:00:18.3/temp1\" = \"CPU\\u001b[31m\"\n").iter().any(|p| p.at.starts_with("labels")));
+        // In TOML's own escapes, as a hand-written file would hold them.
+        let curve = |id: &str, label: &str| format!("\n[[curve]]\nid = \"{id}\"\nlabel = \"{label}\"\nflat = {{ percent = 40 }}\n");
+        assert!(with(&curve("quiet\\u0007", "Quiet")).iter().any(|p| p.message.contains("a curve's id")));
+        assert!(with(&curve("quiet", "Quiet\\u001b")).iter().any(|p| p.message.contains("a curve's name")));
+        assert!(with("\n[profiles.\"night\\nmode\"]\n").iter().any(|p| p.message.contains("a profile's name")));
+    }
+
+    /// Every client is sent the whole configuration each tick, so the most a configuration may hold is still a small line.
+    #[test]
+    fn a_configuration_at_every_limit_stays_far_under_a_protocol_line() {
+        let name = "温".repeat(LABEL_MAX);
+        let mut c = Config::parse(EXAMPLE).unwrap();
+        c.curves = (0..CURVES_MAX)
+            .map(|i| Curve {
+                id: format!("{i:03}{}", "c".repeat(LABEL_MAX - 3)),
+                label: Some(name.clone()),
+                kind: CurveKind::Graph {
+                    source: Key::parse("hwmon/k10temp/0000:00:18.3/temp1").unwrap(),
+                    points: (0..POINTS_MAX).map(|p| [20.0 + p as f64 * 3.333_333_3, p as f64 * 3.125]).collect(),
+                },
+                response: Some(5.0),
+                hysteresis: Some(3.0),
+                hysteresis_direction: HysteresisDirection::default(),
+            })
+            .collect();
+        let line = serde_json::to_string(&c).unwrap();
+        assert!(line.len() < (1 << 20) / 2, "{} bytes", line.len());
+
+        let too_many = |n: usize| {
+            let mut c = c.clone();
+            c.curves.truncate(n);
+            c
+        };
+        assert!(!too_many(CURVES_MAX).validate().iter().any(|p| p.at == "curves"));
+        let mut over = too_many(CURVES_MAX);
+        over.curves.push(Curve { id: "one-more".into(), ..over.curves[0].clone() });
+        assert!(over.validate().iter().any(|p| p.at == "curves"));
+        let points: Vec<[f64; 2]> = (0..=POINTS_MAX).map(|p| [20.0 + p as f64, 10.0 + p as f64]).collect();
+        assert!(explain_points(&points).is_some_and(|s| s.contains("at most")));
     }
 
     #[test]
