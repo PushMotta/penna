@@ -37,8 +37,8 @@ pub const PER_UID_MAX: usize = 32;
 /// A connection that has sent nothing this long after its hello is closed. Once it has asked something it stays, as the
 /// studio's does while it holds a draft.
 pub const IDLE: Duration = Duration::from_secs(30);
-/// The longest request. The largest a surface sends, a curve with all its points, is a few kilobytes; a connection's queued
-/// lines then cost the daemon at most a mebibyte, however many a user holds.
+/// The longest request. The largest a surface sends, a curve with all its points, is a few kilobytes; a connection's waiting
+/// lines then cost the daemon a few hundred kilobytes at most, about 10 MiB for all a uid may hold.
 pub const REQUEST_MAX: usize = 64 << 10;
 /// At most one line in the journal this often about refused connections or failing accepts.
 const QUIET: Duration = Duration::from_secs(10);
@@ -394,7 +394,8 @@ impl Drop for Lines {
 /// Lines from a client on their own task, so reading is never cancelled half way. A line over [`REQUEST_MAX`] ends the
 /// connection with a reply that says why.
 fn read_lines(rd: tokio::net::unix::OwnedReadHalf, slot: Arc<Slot>) -> Lines {
-    let (tx, rx) = mpsc::channel(16);
+    // A connection's requests are answered one at a time, so two waiting is enough; more wait in the socket, not in pennad.
+    let (tx, rx) = mpsc::channel(2);
     let task = tokio::spawn(async move {
         let _slot = slot;
         let mut reader = BufReader::new(rd);
@@ -414,6 +415,8 @@ fn read_lines(rd: tokio::net::unix::OwnedReadHalf, slot: Arc<Slot>) -> Lines {
                 let _ = tx.send(Err(Reply::error(None, format!("A request is at most {REQUEST_MAX} bytes; closing.")))).await;
                 return;
             }
+            // Reading grows a line by doubling: a waiting line holds what it says, not twice that.
+            line.shrink_to_fit();
             if tx.send(Ok(line)).await.is_err() {
                 return;
             }

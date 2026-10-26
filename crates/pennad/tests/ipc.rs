@@ -6,6 +6,8 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 const CPU: &str = "hwmon/it87/it87.2608/pwm1";
@@ -71,6 +73,18 @@ impl Daemon {
 
     fn log(&self) -> String {
         fs::read_to_string(self.dir.join("pennad.log")).unwrap_or_default()
+    }
+
+    /// The descriptors pennad holds, counted on its side: a client's end can look closed while the daemon still holds its own.
+    fn descriptors(&self) -> usize {
+        fs::read_dir(format!("/proc/{}/fd", self.child.id())).unwrap().count()
+    }
+
+    /// A memory figure from `/proc/<pid>/status`, in KiB: `VmRSS` now, `VmHWM` the most it has held.
+    fn kib(&self, field: &str) -> u64 {
+        let status = fs::read_to_string(format!("/proc/{}/status", self.child.id())).unwrap();
+        let line = status.lines().find(|l| l.starts_with(&format!("{field}:"))).unwrap();
+        line.split_whitespace().nth(1).unwrap().parse().unwrap()
     }
 
     fn connect(&self) -> Client {
@@ -438,8 +452,7 @@ fn a_connection_closed_for_asking_nothing_leaves_no_descriptor_behind() {
     let d = Daemon::start(&dir, &["--test-idle", "0.5"]);
     let mut first = d.connect();
     first.line();
-    let fds = || fs::read_dir(format!("/proc/{}/fd", d.child.id())).unwrap().count();
-    let before = fds();
+    let before = d.descriptors();
     let mut buf = String::new();
     assert_eq!(first.reader.read_line(&mut buf).unwrap(), 0, "a silent connection got {buf:?}");
     let mut kept = vec![first];
@@ -455,8 +468,9 @@ fn a_connection_closed_for_asking_nothing_leaves_no_descriptor_behind() {
         // Every end stays open on this side, sending nothing.
         kept.extend(silent);
         let end = Instant::now() + Duration::from_secs(5);
-        while fds() > before {
-            assert!(Instant::now() < end, "round {round}: pennad holds {} descriptors, {before} before any idled out", fds());
+        while d.descriptors() > before {
+            let now = d.descriptors();
+            assert!(Instant::now() < end, "round {round}: pennad holds {now} descriptors, {before} before any idled out");
             std::thread::sleep(Duration::from_millis(50));
         }
     }
@@ -464,6 +478,121 @@ fn a_connection_closed_for_asking_nothing_leaves_no_descriptor_behind() {
     c.line();
     assert_eq!(c.call(json!({"op": "state"}))["ok"], true);
     drop(kept);
+    d.stop();
+}
+
+/// One user at every cap at once, measured on the daemon's side: as many connections as a uid may hold, each sending the
+/// longest requests it may and never reading what comes back, so every write to them waits and every reader's queue fills,
+/// while more connections are refused. The descriptors stay within the cap, the memory within half a mebibyte a connection,
+/// and the descriptors come back once pennad drops them (§7.4).
+#[test]
+fn a_user_at_every_cap_costs_the_daemon_a_bounded_amount() {
+    let dir = fresh("caps");
+    let d = Daemon::start(&dir, &[]);
+    let mut first = d.connect();
+    first.line();
+    let (fds, rss) = (d.descriptors(), d.kib("VmRSS"));
+    drop(first);
+    // REQUEST_MAX, newline included. The id comes back in the reply, so a few replies fill what the socket holds.
+    let long = format!("{}\n", json!({"id": "x".repeat((64 << 10) - 32), "op": "state"}));
+    assert!(long.len() <= 64 << 10 && long.len() > 63 << 10);
+    let hogs: Vec<_> = (0..32)
+        .map(|_| {
+            let mut c = d.connect();
+            let long = long.clone();
+            std::thread::spawn(move || {
+                let mut sent = 0;
+                while c.writer.write_all(long.as_bytes()).is_ok() {
+                    sent += 1;
+                }
+                sent
+            })
+        })
+        .collect();
+    let mut most = 0;
+    let end = Instant::now() + Duration::from_secs(1);
+    while Instant::now() < end {
+        let mut over = d.connect();
+        over.reader.get_ref().set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let mut buf = String::new();
+        assert_eq!(over.reader.read_line(&mut buf).unwrap_or(0), 0, "a 33rd connection got {buf:?}");
+        most = most.max(d.descriptors());
+    }
+    // pennad drops each once a write to it has waited WRITE_TIMEOUT, and the sender then meets a closed socket.
+    let sent: Vec<u64> = hogs.into_iter().map(|h| h.join().unwrap()).collect();
+    let grew = d.kib("VmHWM").saturating_sub(rss);
+    assert!(most <= fds + 32, "pennad held {most} descriptors, {fds} before 32 connections");
+    // About 10 MiB on this desk: two waiting lines and the one being read, a connection. Before 0.10.7, 48 MiB: replies echoed
+    // ids as long as the requests, and readers queued 16 lines.
+    assert!(grew < 32 * 512, "pennad grew by {grew} KiB for 32 connections that sent {sent:?} requests");
+    let end = Instant::now() + Duration::from_secs(5);
+    while d.descriptors() > fds {
+        assert!(Instant::now() < end, "pennad holds {} descriptors after the connections went, {fds} before", d.descriptors());
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    d.stop();
+}
+
+/// Any local user may ask the control loop for the studio, and it answers between ticks. A user who asks again the moment each
+/// answer comes, on every connection they may hold, must not keep it from ticking: a loop that stops ticking stops pinging
+/// systemd's watchdog, which kills pennad (§6, §7.4).
+#[test]
+fn a_user_asking_as_fast_as_they_can_does_not_stop_the_loop_ticking() {
+    let dir = fresh("flood");
+    let d = Daemon::start(&dir, &["--tick", "0.25"]);
+    let mut watch = d.connect();
+    watch.line();
+    // The studio's answer grows with the configuration: at its largest, every curve a graph of 32 points (§7.4).
+    let source = curve(&watch.call(json!({"op": "studio"}))["result"], "cpu-quiet")["source"].clone();
+    let points: Vec<[f64; 2]> = (0..32).map(|i| [20.0 + 2.0 * f64::from(i), 20.0 + 2.5 * f64::from(i)]).collect();
+    for i in 0.. {
+        let r = watch
+            .call(json!({"op": "draft.put_curve", "curve": {"id": format!("g{i}"), "kind": "graph", "source": source, "points": points}}));
+        if r["ok"] != true {
+            assert!(r["error"].as_str().unwrap().contains("128"), "{r}");
+            break;
+        }
+    }
+    assert_eq!(watch.call(json!({"op": "draft.save"}))["ok"], true);
+    let size = watch.call(json!({"op": "studio"}))["result"].to_string().len();
+    watch.call(json!({"op": "subscribe"}));
+    let stop = Arc::new(AtomicBool::new(false));
+    let flood: Vec<_> = (0..31)
+        .map(|_| {
+            let mut c = d.connect();
+            let stop = stop.clone();
+            std::thread::spawn(move || {
+                c.line();
+                let mut asked = 0u64;
+                while !stop.load(Ordering::Relaxed) {
+                    assert_eq!(c.call(json!({"op": "studio"}))["ok"], true);
+                    asked += 1;
+                }
+                asked
+            })
+        })
+        .collect();
+    let start = Instant::now();
+    let mut ticks = Vec::new();
+    while start.elapsed() < Duration::from_secs(4) {
+        let mut buf = String::new();
+        match watch.reader.read_line(&mut buf) {
+            Ok(n) if n > 0 => {}
+            got => panic!("no tick for 10 s while one user asked as fast as they could ({got:?}); pennad said:\n{}", d.log()),
+        }
+        if serde_json::from_str::<Value>(&buf).is_ok_and(|v| v["ev"] == "tick") {
+            ticks.push(start.elapsed());
+        }
+    }
+    stop.store(true, Ordering::Relaxed);
+    let asked: u64 = flood.into_iter().map(|t| t.join().unwrap()).sum();
+    let gap = ticks.windows(2).map(|w| w[1] - w[0]).max().unwrap_or(Duration::MAX);
+    // A tick every 250 ms. Under full load on this desk they came at most 600 ms apart; the watchdog waits 5 s.
+    assert!(
+        ticks.len() >= 4 && gap < Duration::from_secs(2),
+        "{} ticks in 4 s, at most {gap:?} apart, while one user asked {asked} times for a studio of {size} bytes",
+        ticks.len()
+    );
     d.stop();
 }
 

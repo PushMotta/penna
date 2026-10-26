@@ -20,6 +20,9 @@ pub const VERSION: u32 = 2;
 pub const MAX_LINE: usize = 1 << 20;
 /// Ticks of history a subscriber gets first (§8.6: full sparklines on the first frame).
 pub const HISTORY: usize = 300;
+/// The longest string a request's id may be. Clients count with numbers; a reply echoes its id, so a long one would make every
+/// reply as long as the request.
+pub const ID_MAX: usize = 64;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "ev", rename_all = "lowercase")]
@@ -227,7 +230,12 @@ impl Request {
     #[allow(clippy::result_large_err)]
     pub fn parse(line: &str) -> Result<Request, Reply> {
         let value: Value = serde_json::from_str(line).map_err(|e| Reply::error(None, format!("That line isn't JSON: {e}.")))?;
-        let id = value.get("id").cloned();
+        let id = match value.get("id") {
+            None => None,
+            Some(id @ (Value::Null | Value::Bool(_) | Value::Number(_))) => Some(id.clone()),
+            Some(Value::String(s)) if s.len() <= ID_MAX => Some(Value::from(s.as_str())),
+            Some(_) => return Err(Reply::error(None, format!("An id is a number, or a string of at most {ID_MAX} bytes."))),
+        };
         let Some(obj) = value.as_object() else {
             return Err(Reply::error(id, "A request is a JSON object with an \"op\", like {\"id\":1,\"op\":\"state\"}."));
         };
@@ -681,6 +689,19 @@ mod tests {
         assert_eq!(r.op, Op::Override { control: None, duty: None, seconds: None });
         assert!(Request::parse(r#"{"op":"state"}"#).unwrap().id.is_none());
         assert!(r.op.writes() && !Op::State.writes());
+    }
+
+    #[test]
+    fn an_id_is_short_and_is_not_echoed_when_it_is_not() {
+        let id = |line: &str| Request::parse(line).map(|r| r.id).unwrap_or_else(|reply| reply.id);
+        let longest = "i".repeat(ID_MAX);
+        assert_eq!(id(&format!(r#"{{"id":"{longest}","op":"state"}}"#)), Some(Value::from(longest)));
+        assert_eq!(id(r#"{"id":1.5,"op":"nope"}"#), Some(Value::from(1.5)));
+        for bad in [format!(r#"{{"id":"{}","op":"state"}}"#, "i".repeat(ID_MAX + 1)), r#"{"id":[1],"op":"state"}"#.into()] {
+            let reply = Request::parse(&bad).unwrap_err();
+            assert_eq!((reply.id, reply.ok), (None, false), "{bad}");
+            assert!(reply.error.unwrap().contains("at most 64 bytes"));
+        }
     }
 
     #[test]

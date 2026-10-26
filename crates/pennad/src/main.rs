@@ -630,7 +630,9 @@ fn run(args: Args) -> Result<()> {
                 send_events(&events, out, live.state.seq, body.t);
                 publish.send_replace(Arc::new(ipc::Published::new(&body, ring.snapshot(body.seq, args.tick), &live.plan.config)));
             };
-            while let Ok(job) = jobs.try_recv() {
+            // At most a queue's worth each pass: a client that asks again as each answer comes can't keep the loop here, away
+            // from its tick and the watchdog.
+            for job in jobs.try_iter().take(ipc::QUEUE) {
                 let writes = job.op.writes();
                 let result = requests::handle(&mut live, &machine.inventory, &mut out, job.op, job.uid, job.conn);
                 if writes && result.is_ok() {
