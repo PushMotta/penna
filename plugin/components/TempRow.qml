@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import "../Model.js" as Model
 
 // One temperature in the popup: its name, a 60 s sparkline and whole degrees (DESIGN.md §8.2).
 Item {
@@ -36,7 +37,7 @@ Item {
     anchors.verticalCenter: parent.verticalCenter
     textFormat: Text.StyledText
     elide: Text.ElideRight
-    text: root.detail !== "" ? root.name + " <font color=\"" + root.dim + "\">· " + root.detail + "</font>" : root.name
+    text: Model.dimmedLine(root.name, root.detail !== "" ? "· " + root.detail : "", root.dim, false)
     color: root.foreground
     font.family: root.fontFamily
     font.pixelSize: Style.font.body

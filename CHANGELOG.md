@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Plugin 0.7.4: a name is shown as text, never as markup.** Any member of the `penna` group can set a fan's or sensor's
+  label, and the popup read a fan's name, a temperature's and a sensor's as Qt styled text. A label holding an `<img>` tag
+  made another user's popup fetch that URL from their desktop (the marketplace's review found it). Every Text in the plugin
+  now reads plain text, and the lines that dim a note after a name escape both parts. `test/markup.test.js` fails on any
+  Text without an explicit format, and on markup written anywhere but `Model.dimmedLine`.
 - **Plugin 0.7.3:** its README names the one release of Penna it was reviewed with, 0.10.5, by its full commit and its
   package's SHA-256. It installs exactly that package, checked against the digest written in the README, or builds that
   commit. The Omarchy marketplace's review asked for this. The plugin's repository now moves only when the plugin is pointed

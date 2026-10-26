@@ -1316,6 +1316,20 @@ Milestones, each ending in something visible:
       for the marketplace to review.
     - The plugin still works with any `pennad` from 0.9.0 on, and says which to update when the two don't fit.
 
+  - **Plugin 0.7.4: names are text (26 Oct 2026).** The same review confirmed the pin, then found that `FanRow.qml` put a
+    fan's label into `Text.StyledText` unescaped. Any member of the `penna` group can set a label (`label`, §7.3), and
+    StyledText loads an `<img>` over the network, so one user's label made another user's popup fetch a URL. Fan-control
+    access must not reach another user's desktop. Qt's default `AutoText` is no safer: it reads any string that looks like
+    a tag as markup, and 73 Text elements here used it, most of them showing a name from the daemon. Now:
+    - every Text in the plugin states its format, and every one is `PlainText` but the four lines that dim a note after a
+      name (a fan, a temperature, a sensor, a fan in setup). Those go through `Model.dimmedLine`, which escapes both parts;
+    - `test/markup.test.js` fails on a Text without a format, on a StyledText line that isn't built by
+      `Model.dimmedLine`, and on markup written by hand in any QML file. It fails on 0.7.3;
+    - checked offscreen with a 41-character label (the daemon allows 48) holding an `<img>` that points at a local
+      server: 0.7.3's popup rows fetched it once, 0.7.4's never, and show the label's characters. The shell's own widgets
+      the plugin hands names to (Button, Dropdown, PanelHero) already read plain text.
+    - The daemon is unchanged, so the pin stays on 0.10.5.
+
   - **A second machine, 23 Oct 2026:** an Intel N100 mini PC (an "AC8-N") on Omarchy 4.0.4, run over ssh, read-only. Its
     fan is the firmware's, through ACPI: five on/off fan devices, no fan chip, nothing in hwmon. It showed five things this
     desk couldn't:

@@ -43,7 +43,7 @@ rust() {
 
 plugin() {
   step "Plugin model tests"
-  (cd plugin && node --test test/model.test.js test/studio.test.js)
+  (cd plugin && node --test)
 }
 
 case "${1:-fresh}" in

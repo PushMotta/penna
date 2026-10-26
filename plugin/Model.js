@@ -128,6 +128,21 @@ function needsSetup(tick) {
 
 function capitalise(s) { return s.length ? s.charAt(0).toUpperCase() + s.slice(1) : s }
 
+// Every name the daemon sends is text, never markup: any member of the penna group can set a label, and a Text that read it
+// as markup would fetch an <img> from another user's desktop. So every Text in the plugin is PlainText, and the few
+// StyledText lines escape each part through this (test/markup.test.js checks both).
+function escapeMarkup(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
+}
+
+// A name with a dimmed note after it, as one StyledText line: `name <font color="dim">note</font>`, smaller when asked.
+function dimmedLine(name, note, dim, small) {
+  var out = escapeMarkup(name)
+  if (note === undefined || note === null || String(note) === "") return out
+  var inner = small ? "<small>" + escapeMarkup(note) + "</small>" : escapeMarkup(note)
+  return out + " <font color=\"" + escapeMarkup(dim) + "\">" + inner + "</font>"
+}
+
 // Repeaters are keyed by these lists, which change only when the set of rows does. A Repeater given a fresh array on
 // every tick rebuilds every delegate (cards, sparklines, numbers), which costs a dropped frame and resets every glide.
 function keysOf(list) { return (list || []).map(function(x) { return String(x.key) }) }
@@ -791,6 +806,6 @@ if (typeof module !== "undefined") {
     moveHandle: moveHandle, pathOf: pathOf, shadeOf: shadeOf, nvmlFloor: nvmlFloor, profileTabs: profileTabs,
     viewProfile: viewProfile, generatedDraft: generatedDraft, isGenerated: isGenerated, draftLine: draftLine, saveLabel: saveLabel,
     anchorMarks: anchorMarks, loadView: loadView, proposalText: proposalText, screenIndex: screenIndex,
-    levelOf: levelOf, levelDuty: levelDuty
+    levelOf: levelOf, levelDuty: levelDuty, escapeMarkup: escapeMarkup, dimmedLine: dimmedLine
   }
 }

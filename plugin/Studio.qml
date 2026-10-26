@@ -550,6 +550,7 @@ Item {
               anchors.verticalCenter: parent.verticalCenter
               spacing: Style.spacing.lg
               Text {
+                textFormat: Text.PlainText
                 anchors.verticalCenter: parent.verticalCenter
                 text: Model.GLYPH.fan
                 color: root.foreground
@@ -557,6 +558,7 @@ Item {
                 font.pixelSize: Style.font.heading
               }
               Text {
+                textFormat: Text.PlainText
                 anchors.verticalCenter: parent.verticalCenter
                 text: "Penna"
                 color: root.foreground
@@ -565,6 +567,7 @@ Item {
                 font.bold: true
               }
               Text {
+                textFormat: Text.PlainText
                 anchors.verticalCenter: parent.verticalCenter
                 visible: root.setupShown
                 text: "· Setting up fans"
@@ -582,6 +585,7 @@ Item {
                 onChanged: function(v) { root.viewChoice = v }
               }
               Text {
+                textFormat: Text.PlainText
                 anchors.verticalCenter: parent.verticalCenter
                 visible: !root.setupShown && root.body !== null && root.viewId !== "" && root.viewId !== root.body.profile
                 text: root.body ? Model.profileLabel(root.body) + " runs" : ""
@@ -600,6 +604,7 @@ Item {
                 spacing: Style.spacing.md
                 Rectangle { anchors.verticalCenter: parent.verticalCenter; width: Style.space(7); height: width; radius: width / 2; color: root.accent }
                 Text {
+                  textFormat: Text.PlainText
                   text: Model.draftLine(root.body)
                   color: root.accent
                   font.family: root.fontFamily
@@ -607,6 +612,7 @@ Item {
                 }
               }
               Text {
+                textFormat: Text.PlainText
                 anchors.verticalCenter: parent.verticalCenter
                 text: "esc"
                 color: root.dim
@@ -660,6 +666,7 @@ Item {
                     width: parent.width
                     implicitHeight: headText.implicitHeight
                     Text {
+                      textFormat: Text.PlainText
                       id: headText
                       anchors.left: parent.left
                       anchors.right: tierText.left
@@ -671,6 +678,7 @@ Item {
                       font.bold: true
                     }
                     Text {
+                      textFormat: Text.PlainText
                       id: tierText
                       anchors.right: parent.right
                       text: group.modelData.tier.toUpperCase()
@@ -681,6 +689,7 @@ Item {
                     }
                   }
                   Text {
+                    textFormat: Text.PlainText
                     visible: group.modelData.note !== ""
                     width: parent.width
                     wrapMode: Text.Wrap
@@ -716,6 +725,7 @@ Item {
                 }
               }
               Text {
+                textFormat: Text.PlainText
                 width: leftCol.width
                 visible: root.tick && Array.isArray(root.tick.firmware) && root.tick.firmware.length > 0
                 wrapMode: Text.Wrap
@@ -739,6 +749,7 @@ Item {
                 width: parent.width
                 implicitHeight: Math.max(curveName.implicitHeight, assign.implicitHeight)
                 Text {
+                  textFormat: Text.PlainText
                   id: curveName
                   anchors.left: parent.left
                   anchors.verticalCenter: parent.verticalCenter
@@ -779,6 +790,7 @@ Item {
                     border.width: 1
                     border.color: generated ? root.accent : Util.alpha(root.foreground, 0.4)
                     Text {
+                      textFormat: Text.PlainText
                       id: chipText
                       anchors.centerIn: parent
                       text: modelData
@@ -833,6 +845,7 @@ Item {
                 }
 
                 Text {
+                  textFormat: Text.PlainText
                   anchors.centerIn: parent
                   width: parent.width * 0.7
                   horizontalAlignment: Text.AlignHCenter
@@ -852,6 +865,7 @@ Item {
                 width: parent.width
                 implicitHeight: Math.max(nowText.implicitHeight, whatText.implicitHeight)
                 Text {
+                  textFormat: Text.PlainText
                   id: nowText
                   anchors.left: parent.left
                   text: {
@@ -865,6 +879,7 @@ Item {
                   font.features: ({ "tnum": 1 })
                 }
                 Text {
+                  textFormat: Text.PlainText
                   id: whatText
                   anchors.right: parent.right
                   anchors.left: nowText.right
@@ -879,6 +894,7 @@ Item {
               }
 
               Text {
+                textFormat: Text.PlainText
                 width: parent.width
                 text: Model.limitsLine(root.selectedInfo)
                 color: root.dim
@@ -916,6 +932,7 @@ Item {
                 }
               }
               Text {
+                textFormat: Text.PlainText
                 width: rightCol.width
                 text: "5 minutes · fixed scales"
                 color: root.dim
@@ -923,6 +940,7 @@ Item {
                 font.pixelSize: Style.font.caption
               }
               Text {
+                textFormat: Text.PlainText
                 width: rightCol.width
                 visible: root.coldSensors.length > 0
                 wrapMode: Text.Wrap
@@ -942,6 +960,7 @@ Item {
             implicitHeight: Math.max(buttons.implicitHeight, hint.implicitHeight)
 
             Text {
+              textFormat: Text.PlainText
               id: hint
               anchors.left: parent.left
               anchors.right: buttons.left

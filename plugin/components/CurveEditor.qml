@@ -188,6 +188,7 @@ Item {
   Repeater {
     model: 9
     Text {
+      textFormat: Text.PlainText
       required property int index
       readonly property int t: 20 + index * 10
       text: t === 100 ? "100 °C" : String(t)
@@ -201,6 +202,7 @@ Item {
   Repeater {
     model: 6
     Text {
+      textFormat: Text.PlainText
       required property int index
       readonly property int d: index * 20
       text: String(d)
@@ -212,6 +214,7 @@ Item {
     }
   }
   Text {
+    textFormat: Text.PlainText
     text: "%"
     x: root.padL - implicitWidth - Style.spacing.md
     y: 0
@@ -222,6 +225,7 @@ Item {
   Repeater {
     model: root.control && root.control.calibration ? 5 : 0
     Text {
+      textFormat: Text.PlainText
       required property int index
       readonly property int d: 20 + index * 20
       text: Model.formatNumber(Model.rpmAt(root.control.calibration, d), 10, 0, true)
@@ -234,6 +238,7 @@ Item {
     }
   }
   Text {
+    textFormat: Text.PlainText
     visible: !!(root.control && root.control.calibration)
     text: "RPM"
     x: root.padL + root.plotW + Style.spacing.md
@@ -293,6 +298,7 @@ Item {
     }
   }
   Text {
+    textFormat: Text.PlainText
     visible: root.floorDuty >= 0
     text: root.control && root.control.nvml ? "below " + Math.round(root.floorDuty) + " %: the driver runs this fan" : "min " + Math.round(root.floorDuty) + " %"
     x: root.control && root.control.nvml ? root.padL + Style.spacing.md : root.padL + root.plotW - implicitWidth - Style.spacing.md
@@ -302,6 +308,7 @@ Item {
     font.pixelSize: Style.font.caption
   }
   Text {
+    textFormat: Text.PlainText
     visible: root.stopDuty >= 0
     text: "stops below " + Math.round(root.stopDuty) + " %"
     x: root.padL + root.plotW - implicitWidth - Style.spacing.md
@@ -345,6 +352,7 @@ Item {
         }
       }
       Text {
+        textFormat: Text.PlainText
         text: a.label
         x: Math.round(root.sx(a.t)) + Style.spacing.xs
         // Along the bottom, where a curve is low at idle and long gone up by the limit.
@@ -475,6 +483,7 @@ Item {
     x: !h ? 0 : (root.sx(h[0]) + Style.space(14) + width > root.width ? root.sx(h[0]) - Style.space(14) - width : root.sx(h[0]) + Style.space(14))
     y: !h ? 0 : (root.sy(h[1]) - Style.space(14) - height < 0 ? root.sy(h[1]) + Style.space(14) : root.sy(h[1]) - Style.space(14) - height)
     Text {
+      textFormat: Text.PlainText
       id: readoutText
       anchors.centerIn: parent
       text: readoutBox.h ? (root.kind === "trigger" ? (root.readoutIndex === 0 ? "off " : "on ") : "") + Model.readout(readoutBox.h[0], readoutBox.h[1], root.control) : ""

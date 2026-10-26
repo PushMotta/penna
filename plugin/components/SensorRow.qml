@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import "../Model.js" as Model
 
 // One sensor in the studio's right column: five minutes on a fixed scale, and the reading to a tenth of a degree.
 Column {
@@ -36,7 +37,7 @@ Column {
       anchors.rightMargin: Style.spacing.md
       elide: Text.ElideRight
       textFormat: Text.StyledText
-      text: root.detail !== "" ? root.name + " <font color=\"" + root.dim + "\">· " + root.detail + "</font>" : root.name
+      text: Model.dimmedLine(root.name, root.detail !== "" ? "· " + root.detail : "", root.dim, false)
       color: root.foreground
       font.family: root.fontFamily
       font.pixelSize: Style.font.bodySmall

@@ -329,6 +329,7 @@ Panel {
             onHovered: function(h) { if (h) root.hoverInto("setup", 0) }
           }
           Text {
+            textFormat: Text.PlainText
             anchors.verticalCenter: parent.verticalCenter
             width: parent.width - setupButton.width - parent.spacing
             text: "Measures every fan in about five minutes. Nothing changes until you save."

@@ -94,7 +94,7 @@ Item {
               anchors.rightMargin: Style.spacing.md
               elide: Text.ElideRight
               textFormat: Text.StyledText
-              text: modelData.name + (modelData.role ? " <font color=\"" + root.dim + "\"><small>" + modelData.role + "</small></font>" : "")
+              text: Model.dimmedLine(modelData.name, modelData.role || "", root.dim, true)
               color: root.foreground
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
@@ -121,6 +121,7 @@ Item {
             width: parent.width
             implicitHeight: statusText.implicitHeight
             Text {
+              textFormat: Text.PlainText
               id: statusText
               anchors.left: parent.left
               anchors.right: dutyText.left
@@ -132,6 +133,7 @@ Item {
               font.pixelSize: Style.font.caption
             }
             Text {
+              textFormat: Text.PlainText
               id: dutyText
               anchors.right: parent.right
               text: modelData.duty === null ? "" : Math.round(modelData.duty) + " %"
@@ -168,6 +170,7 @@ Item {
           border.width: 1
           border.color: modelData.state === "on" ? root.accent : Util.alpha(root.foreground, 0.12)
           Text {
+            textFormat: Text.PlainText
             id: railText
             anchors.centerIn: parent
             text: modelData.label
@@ -200,8 +203,9 @@ Item {
           visible: root.step === "start"
           width: parent.width
           spacing: Style.spacing.lg
-          Text { text: "Set up fans"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.title; font.bold: true }
+          Text { textFormat: Text.PlainText; text: "Set up fans"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.title; font.bold: true }
           Text {
+            textFormat: Text.PlainText
             width: parent.width
             wrapMode: Text.Wrap
             text: "Penna measures every fan: what it reads back, which header it turns, its role, and its speed at every duty. "
@@ -221,10 +225,11 @@ Item {
             Row {
               required property var modelData
               spacing: Style.spacing.lg
-              Text { width: Style.space(18); text: modelData[0]; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-              Text { width: Style.space(110); text: modelData[1]; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall; font.bold: true }
-              Text { width: Style.space(84); text: modelData[2]; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+              Text { textFormat: Text.PlainText; width: Style.space(18); text: modelData[0]; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+              Text { textFormat: Text.PlainText; width: Style.space(110); text: modelData[1]; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall; font.bold: true }
+              Text { textFormat: Text.PlainText; width: Style.space(84); text: modelData[2]; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
               Text {
+                textFormat: Text.PlainText
                 width: panel.width - Style.space(18 + 110 + 84) - Style.spacing.lg * 3
                 wrapMode: Text.Wrap
                 text: modelData[3]
@@ -248,6 +253,7 @@ Item {
             onClicked: root.loadCheck = !root.loadCheck
           }
           Text {
+            textFormat: Text.PlainText
             width: parent.width
             wrapMode: Text.Wrap
             text: (root.loadCheck ? "About nine minutes" : "About six minutes") + ", and you will hear the fans. The machine should be idle: "
@@ -266,6 +272,7 @@ Item {
             width: panel.width
             implicitHeight: sName.implicitHeight
             Text {
+              textFormat: Text.PlainText
               id: sName
               readonly property string short: Model.shortName(modelData)
               text: short + (String(modelData.label).toLowerCase() === short.toLowerCase() ? "" : " · " + modelData.label)
@@ -274,6 +281,7 @@ Item {
               font.pixelSize: Style.font.bodySmall
             }
             Text {
+              textFormat: Text.PlainText
               anchors.right: parent.right
               text: Number(modelData.celsius).toFixed(1) + " °C"
               color: root.foreground
@@ -289,8 +297,8 @@ Item {
             required property var modelData
             width: panel.width
             implicitHeight: wName.implicitHeight
-            Text { id: wName; text: modelData.name; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-            Text { anchors.right: parent.right; text: modelData.status; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+            Text { textFormat: Text.PlainText; id: wName; text: modelData.name; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+            Text { textFormat: Text.PlainText; anchors.right: parent.right; text: modelData.status; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
           }
         }
 
@@ -307,6 +315,7 @@ Item {
               width: panel.width
               implicitHeight: barName.implicitHeight
               Text {
+                textFormat: Text.PlainText
                 id: barName
                 width: Style.space(120)
                 text: modelData.label
@@ -351,7 +360,7 @@ Item {
               }
             }
           }
-          Text { text: "0 to 6,000 RPM"; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+          Text { textFormat: Text.PlainText; text: "0 to 6,000 RPM"; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
           PanelSectionHeader { text: "FOUND"; foreground: root.foreground; fontFamily: root.fontFamily }
           Flow {
             width: parent.width
@@ -365,7 +374,7 @@ Item {
                 color: Util.alpha(root.foreground, 0.04)
                 border.width: 1
                 border.color: Util.alpha(root.foreground, 0.4)
-                Text { id: chip; anchors.centerIn: parent; text: modelData; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+                Text { textFormat: Text.PlainText; id: chip; anchors.centerIn: parent; text: modelData; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
               }
             }
           }
@@ -387,8 +396,9 @@ Item {
               Item {
                 width: parent.width
                 implicitHeight: calName.implicitHeight
-                Text { id: calName; text: modelData.name; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.caption; font.bold: true }
+                Text { textFormat: Text.PlainText; id: calName; text: modelData.name; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.caption; font.bold: true }
                 Text {
+                  textFormat: Text.PlainText
                   anchors.right: parent.right
                   text: modelData.rpm === null ? "" : Model.formatNumber(Number(modelData.rpm), 10, 0, true)
                   color: root.foreground
@@ -397,7 +407,7 @@ Item {
                   font.features: ({ "tnum": 1 })
                 }
               }
-              Text { width: parent.width; elide: Text.ElideRight; text: modelData.status; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+              Text { textFormat: Text.PlainText; width: parent.width; elide: Text.ElideRight; text: modelData.status; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
               CalPlot {
                 width: parent.width
                 height: Style.space(84)
@@ -422,8 +432,9 @@ Item {
           Item {
             width: parent.width
             implicitHeight: loadTitle.implicitHeight
-            Text { id: loadTitle; text: root.load ? root.load.title : ""; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.title; font.bold: true }
+            Text { textFormat: Text.PlainText; id: loadTitle; text: root.load ? root.load.title : ""; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.title; font.bold: true }
             Text {
+              textFormat: Text.PlainText
               anchors.right: parent.right
               anchors.baseline: loadTitle.baseline
               text: root.load ? root.load.time : ""
@@ -434,6 +445,7 @@ Item {
             }
           }
           Text {
+            textFormat: Text.PlainText
             width: parent.width
             wrapMode: Text.Wrap
             text: !root.load ? "" : root.load.loading
@@ -449,7 +461,7 @@ Item {
             spacing: Style.space(40)
             Column {
               spacing: Style.spacing.xs
-              Text { text: "CPU"; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption; font.bold: true }
+              Text { textFormat: Text.PlainText; text: "CPU"; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption; font.bold: true }
               LiveNumber {
                 value: root.load && root.load.celsius !== null ? root.load.celsius : NaN
                 step: 0.1
@@ -465,7 +477,7 @@ Item {
             }
             Column {
               spacing: Style.spacing.xs
-              Text { text: "CPU FANS"; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption; font.bold: true }
+              Text { textFormat: Text.PlainText; text: "CPU FANS"; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption; font.bold: true }
               LiveNumber {
                 value: root.load && root.load.fans !== null ? root.load.fans : NaN
                 step: 1
@@ -503,6 +515,7 @@ Item {
               color: Util.alpha(root.urgent, 0.8)
             }
             Text {
+              textFormat: Text.PlainText
               visible: root.load !== null
               anchors.left: parent.left
               anchors.leftMargin: Style.spacing.sm
@@ -513,7 +526,7 @@ Item {
               font.pixelSize: Style.font.caption
             }
           }
-          Text { text: "4 minutes · 20 to " + (root.load ? Math.round(root.load.limit) : 100) + " °C, the CPU's limit"; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
+          Text { textFormat: Text.PlainText; text: "4 minutes · 20 to " + (root.load ? Math.round(root.load.limit) : 100) + " °C, the CPU's limit"; color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption }
         }
 
         // Review: roles with their reasons, a name, Identify (call 7).
@@ -521,8 +534,9 @@ Item {
           visible: root.step === "review"
           width: parent.width
           spacing: Style.spacing.md
-          Text { text: "Confirm what each fan is"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.title; font.bold: true }
+          Text { textFormat: Text.PlainText; text: "Confirm what each fan is"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.title; font.bold: true }
           Text {
+            textFormat: Text.PlainText
             width: parent.width
             wrapMode: Text.Wrap
             text: "Press a role to change it; a dashed one needs your yes. Name a fan for what it cools; the header stays underneath."
@@ -572,6 +586,7 @@ Item {
                 }
               }
               Text {
+                textFormat: Text.PlainText
                 width: parent.width
                 wrapMode: Text.Wrap
                 text: modelData.reason
@@ -588,6 +603,7 @@ Item {
             fontFamily: root.fontFamily
           }
           Text {
+            textFormat: Text.PlainText
             id: proposalText
             visible: text !== ""
             width: parent.width
@@ -600,6 +616,7 @@ Item {
           Repeater {
             model: root.step === "review" && root.setup && root.setup.proposed && !root.setup.proposed.refused ? (root.setup.proposed.notes || []) : []
             Text {
+              textFormat: Text.PlainText
               required property var modelData
               width: panel.width
               wrapMode: Text.Wrap
@@ -617,8 +634,9 @@ Item {
           width: parent.width
           spacing: Style.spacing.lg
           topPadding: Style.space(40)
-          Text { text: "Stopped"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.title; font.bold: true }
+          Text { textFormat: Text.PlainText; text: "Stopped"; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.title; font.bold: true }
           Text {
+            textFormat: Text.PlainText
             width: parent.width
             wrapMode: Text.Wrap
             text: root.setup && root.setup.stopped ? String(root.setup.stopped) : ""
@@ -627,6 +645,7 @@ Item {
             font.pixelSize: Style.font.body
           }
           Text {
+            textFormat: Text.PlainText
             width: parent.width
             wrapMode: Text.Wrap
             text: "Every fan is back on its BIOS or driver, as it was found. Nothing was saved."
@@ -639,6 +658,7 @@ Item {
     }
 
     Text {
+      textFormat: Text.PlainText
       width: parent.width
       // Wrapped: at the review it carries the load check's result.
       wrapMode: Text.Wrap
@@ -669,8 +689,9 @@ Item {
         Item {
           width: parent.width
           implicitHeight: gName.implicitHeight
-          Text { id: gName; text: guard.modelData.label; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+          Text { textFormat: Text.PlainText; id: gName; text: guard.modelData.label; color: root.foreground; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
           Text {
+            textFormat: Text.PlainText
             anchors.right: parent.right
             text: (isNaN(guard.c) ? "—" : guard.c.toFixed(1)) + " of " + Math.round(Number(guard.modelData.limit)) + " °C"
             color: guard.tripped ? root.urgent : root.foreground
@@ -694,6 +715,7 @@ Item {
       }
     }
     Text {
+      textFormat: Text.PlainText
       width: guardsCol.width
       wrapMode: Text.Wrap
       text: "If a guard trips, setup stops and every fan goes back to its BIOS or driver, as it was found. The emergency rule stays in force throughout."

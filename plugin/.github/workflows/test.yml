@@ -22,4 +22,4 @@ jobs:
 
       # Model.js holds the plugin's logic; the tests need no compositor and no daemon.
       - name: Model tests
-        run: node --test test/model.test.js test/studio.test.js
+        run: node --test

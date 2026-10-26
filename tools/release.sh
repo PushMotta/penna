@@ -52,7 +52,7 @@ check() {
   else
     cargo test -q --workspace --locked >/dev/null
   fi
-  (cd plugin && node --test test/model.test.js test/studio.test.js >/dev/null)
+  (cd plugin && node --test >/dev/null)
   step "Ready to publish $tag"
 }
 
@@ -132,7 +132,7 @@ plugin() {
   step "Plugin $plugin_version, for Penna $v"
   pin plugin/README.md "$v" "$commit" "$sum"
   if command -v omarchy >/dev/null; then omarchy plugin validate plugin >/dev/null || fail "the plugin doesn't validate"; fi
-  (cd plugin && node --test test/model.test.js test/studio.test.js >/dev/null)
+  (cd plugin && node --test >/dev/null)
   if ! git diff --quiet plugin/README.md; then
     git commit -q -m "Plugin $plugin_version: Penna $v, by commit and digest" plugin/README.md
     git push origin main

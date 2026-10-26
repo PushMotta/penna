@@ -58,7 +58,7 @@ Item {
         text: {
           if (!root.control) return ""
           var n = Math.max(1, Number(root.control.fans) || 0)
-          return root.control.label + (n > 1 ? " <font color=\"" + root.dim + "\"><small>×" + n + "</small></font>" : "")
+          return Model.dimmedLine(root.control.label, n > 1 ? "×" + n : "", root.dim, true)
         }
         color: root.foreground
         font.family: root.fontFamily

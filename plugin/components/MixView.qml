@@ -46,6 +46,7 @@ Column {
   spacing: Style.spacing.md
 
   Text {
+    textFormat: Text.PlainText
     text: (root.op === "max" ? "THE LARGER OF" : root.op === "min" ? "THE SMALLER OF" : "THE AVERAGE OF")
     color: root.dim
     font.family: root.fontFamily
@@ -68,6 +69,7 @@ Column {
       Behavior on color { ColorAnimation { duration: 140; easing.type: Easing.OutCubic } }
 
       Text {
+        textFormat: Text.PlainText
         id: rowLabel
         anchors.left: parent.left
         anchors.leftMargin: Style.spacing.md
@@ -115,6 +117,7 @@ Column {
   }
 
   Text {
+    textFormat: Text.PlainText
     width: root.width
     wrapMode: Text.Wrap
     text: root.usedBy.length ? "Used by " + root.usedBy.join(", ") + ". The highlighted input is driving the fans now." : "No control follows this curve yet."

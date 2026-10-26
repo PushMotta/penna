@@ -247,7 +247,7 @@ cargo run -p pennad -- --mock faults --speed 10             # every fault Penna 
 cargo run -p pennad -- --mock test/fixtures/drivers/thinkpad.toml --forever   # any driver's simulated machine
 cargo run -p penna -- watch                                 # talks to whichever pennad answers
 cargo test --workspace
-cd plugin && node --test test/model.test.js test/studio.test.js
+cd plugin && node --test
 ```
 
 The tests never touch real fans. [CONTRIBUTING.md](CONTRIBUTING.md) says how to send a machine report or a change.

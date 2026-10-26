@@ -84,6 +84,7 @@ Item {
     Repeater {
       model: ["0 %", "50 %", "100 %"]
       Text {
+        textFormat: Text.PlainText
         required property var modelData
         required property int index
         width: root.width / 3

@@ -161,6 +161,7 @@ Rectangle {
         font.pixelSize: Style.font.caption
       }
       Text {
+        textFormat: Text.PlainText
         text: "Recalibrate"
         color: root.foreground
         font.family: root.fontFamily
