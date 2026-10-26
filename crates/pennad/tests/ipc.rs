@@ -394,6 +394,14 @@ fn one_user_can_neither_reach_another_through_names_nor_take_every_connection() 
     assert_eq!(r["ok"], false, "{r}");
     assert!(r["error"].as_str().unwrap().contains("at most 32 points"), "{r}");
 
+    // A request is a few kilobytes: one far longer ends its connection, so no user can park mebibytes in the daemon.
+    let mut long = d.connect();
+    long.line();
+    long.send(json!({"id": 1, "op": "label", "key": CPU, "label": "x".repeat(70 << 10)}));
+    let r = long.line();
+    assert!(r["error"].as_str().unwrap_or("").contains("A request is at most"), "{r}");
+    drop(long);
+
     // One uid holds at most PER_UID_MAX connections at once: the next is closed before its hello, and a freed one is reused.
     let mut held: Vec<Client> = (1..32).map(|_| d.connect()).collect();
     for h in &mut held {

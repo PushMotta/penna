@@ -9,7 +9,7 @@
 //!   take the descriptors `pennad` needs to drive and hand back fans (§6). A connection that asks nothing in [`IDLE`] is closed.
 use crate::auth::{self, Peer, Policy};
 use anyhow::{Context, Result, bail};
-use penna_proto::{Event, Hello, History, MAX_LINE, Op, Reply, Request};
+use penna_proto::{Event, Hello, History, Op, Reply, Request};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
@@ -37,6 +37,9 @@ pub const PER_UID_MAX: usize = 32;
 /// A connection that has sent nothing this long after its hello is closed. Once it has asked something it stays, as the
 /// studio's does while it holds a draft.
 pub const IDLE: Duration = Duration::from_secs(30);
+/// The longest request. The largest a surface sends, a curve with all its points, is a few kilobytes; a connection's queued
+/// lines then cost the daemon at most a mebibyte, however many a user holds.
+pub const REQUEST_MAX: usize = 64 << 10;
 /// At most one line in the journal this often about refused connections or failing accepts.
 const QUIET: Duration = Duration::from_secs(10);
 
@@ -372,7 +375,7 @@ async fn send(wr: &mut OwnedWriteHalf, line: &str, uid: u32) -> Result<(), ()> {
     }
 }
 
-/// Lines from a client on their own task, so reading is never cancelled half way. A line over [`MAX_LINE`] ends the
+/// Lines from a client on their own task, so reading is never cancelled half way. A line over [`REQUEST_MAX`] ends the
 /// connection with a reply that says why.
 fn read_lines(rd: tokio::net::unix::OwnedReadHalf) -> mpsc::Receiver<Result<String, Reply>> {
     let (tx, rx) = mpsc::channel(16);
@@ -380,7 +383,7 @@ fn read_lines(rd: tokio::net::unix::OwnedReadHalf) -> mpsc::Receiver<Result<Stri
         let mut reader = BufReader::new(rd);
         loop {
             let mut line = String::new();
-            let n = match (&mut reader).take(MAX_LINE as u64 + 1).read_line(&mut line).await {
+            let n = match (&mut reader).take(REQUEST_MAX as u64 + 1).read_line(&mut line).await {
                 Ok(n) => n,
                 Err(e) => {
                     let _ = tx.send(Err(Reply::error(None, format!("That line couldn't be read: {e}.")))).await;
@@ -390,8 +393,8 @@ fn read_lines(rd: tokio::net::unix::OwnedReadHalf) -> mpsc::Receiver<Result<Stri
             if n == 0 {
                 return;
             }
-            if line.len() > MAX_LINE {
-                let _ = tx.send(Err(Reply::error(None, format!("A line is at most {MAX_LINE} bytes; closing.")))).await;
+            if line.len() > REQUEST_MAX {
+                let _ = tx.send(Err(Reply::error(None, format!("A request is at most {REQUEST_MAX} bytes; closing.")))).await;
                 return;
             }
             if tx.send(Ok(line)).await.is_err() {
