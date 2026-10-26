@@ -432,10 +432,10 @@ fn restore(from: &std::path::Path, firmware: &std::path::Path) -> Result<()> {
             from.display()
         );
     }
-    // As root, only fans: pennad writes nothing but files under /sys there, so a file naming anything else isn't its.
-    if root && let Some(p) = entries.iter().flat_map(|e| e.paths()).find(|p| !penna_hw::is_real_sysfs(p)) {
+    // As root, only fans: pennad records nothing but fan files under /sys, so a file naming anything else isn't its.
+    if root && let Some(p) = entries.iter().flat_map(|e| e.paths()).find(|p| !penna_hw::is_fan_file(p)) {
         bail!(
-            "{} names {}, which isn't under /sys: as root, penna restores only fans, so it put nothing back",
+            "{} names {}, which isn't a fan's file under /sys: as root, penna restores only fans, so it put nothing back",
             from.display(),
             p.display()
         );

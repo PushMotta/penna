@@ -159,9 +159,37 @@ pub fn load_boards(dir: &Path) -> (Vec<Board>, Vec<String>) {
     (boards, problems)
 }
 
-/// Whether a path is under the real `/sys`, rather than a test tree.
+/// Whether a path is under the real `/sys`, rather than a test tree: absolute, with no `..`, and there once resolved, or as
+/// written when it no longer exists (a device that went away). Without the `..` rule, `/sys/../etc/x` would pass while `x`
+/// doesn't exist yet.
 pub fn is_real_sysfs(path: &Path) -> bool {
+    if !path.is_absolute() || path.components().any(|c| c == std::path::Component::ParentDir) {
+        return false;
+    }
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()).starts_with("/sys")
+}
+
+/// Whether a path is one of the fan files `pennad` records to put back (`held.json`, §6.1), on the real `/sys`: a control's
+/// `pwmN`, `pwmN_enable` and `pwmN_auto_pointM_temp`/`_pwm`, a target's `fanN_target`, `fanN_output` and `fanN_manual`,
+/// ThinkPad's `fan_watchdog`, amdgpu's `fan_curve`, or `platform_profile`. As root, `penna restore` writes nothing else: a
+/// file naming another sysfs file (`/sys/power/state`, a device's `remove`) isn't one `pennad` wrote.
+pub fn is_fan_file(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else { return false };
+    let numbered = |prefix: &str| {
+        name.strip_prefix(prefix).map(|r| r.trim_start_matches(|c: char| c.is_ascii_digit()).len() < r.len()).unwrap_or(false)
+    };
+    let rest = |prefix: &str| name.strip_prefix(prefix).map(|r| r.trim_start_matches(|c: char| c.is_ascii_digit()));
+    let pwm = numbered("pwm")
+        && rest("pwm").is_some_and(|r| {
+            r.is_empty()
+                || r == "_enable"
+                || r.strip_prefix("_auto_point").is_some_and(|p| {
+                    let q = p.trim_start_matches(|c: char| c.is_ascii_digit());
+                    q.len() < p.len() && (q == "_temp" || q == "_pwm")
+                })
+        });
+    let fan = numbered("fan") && rest("fan").is_some_and(|r| matches!(r, "_target" | "_output" | "_manual"));
+    (pwm || fan || matches!(name, "fan_watchdog" | "fan_curve" | "platform_profile")) && is_real_sysfs(path)
 }
 
 /// Every backend this machine has, and what they found.
@@ -359,5 +387,48 @@ impl Machine {
             }
         }
         readings
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// As root, `penna restore` writes only the fan files `pennad` records: nothing a crafted file names elsewhere.
+    #[test]
+    fn a_fan_file_is_one_pennad_records_and_nothing_else() {
+        let hwmon = "/sys/devices/platform/it87.2608/hwmon/hwmon9";
+        for ok in [
+            format!("{hwmon}/pwm2"),
+            format!("{hwmon}/pwm2_enable"),
+            format!("{hwmon}/pwm1_auto_point3_temp"),
+            format!("{hwmon}/pwm1_auto_point12_pwm"),
+            format!("{hwmon}/fan2_target"),
+            format!("{hwmon}/fan1_output"),
+            format!("{hwmon}/fan1_manual"),
+            "/sys/bus/platform/drivers/thinkpad_hwmon/fan_watchdog".into(),
+            "/sys/class/drm/card9/device/gpu_od/fan_ctrl/fan_curve".into(),
+            "/sys/firmware/acpi/platform_profile".into(),
+        ] {
+            assert!(is_fan_file(Path::new(&ok)), "{ok}");
+        }
+        for bad in [
+            "/sys/../etc/cron.d/pwm1",
+            "/sys/devices/../../etc/profile.d/pwm1",
+            "/sys/power/state",
+            "/sys/bus/pci/devices/0000:00:01.0/remove",
+            "/etc/penna/pwm1",
+            "/tmp/pwm1_enable",
+            "sys/devices/hwmon9/pwm1",
+            "/sys/devices/hwmon9/pwm",
+            "/sys/devices/hwmon9/pwmx",
+            "/sys/devices/hwmon9/pwm1_enable.bak",
+            "/sys/devices/hwmon9/pwm1_auto_point_temp",
+            "/sys/devices/hwmon9/fan1_input",
+            "/sys/devices/hwmon9/fan_target",
+        ] {
+            assert!(!is_fan_file(Path::new(bad)), "{bad}");
+        }
+        assert!(!is_real_sysfs(Path::new("/sys/../etc/cron.d/x")), "a `..` never counts as /sys, existing or not");
     }
 }

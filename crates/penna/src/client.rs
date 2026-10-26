@@ -60,7 +60,7 @@ impl Client {
         let line = serde_json::to_string(&Request { id: Some(Value::from(id)), op })?;
         writeln!(self.writer, "{line}").context("sending to pennad")?;
         loop {
-            let Some(value) = read_value(&mut self.reader).context("waiting for pennad")? else {
+            let Some((value, _)) = read_value(&mut self.reader).context("waiting for pennad")? else {
                 bail!("pennad closed the connection");
             };
             if value.get("ev").is_some() {
@@ -80,10 +80,9 @@ impl Client {
         self.call(Op::Subscribe)?;
         self.reader.get_ref().set_read_timeout(None)?;
         loop {
-            let Some(value) = read_value(&mut self.reader).context("reading from pennad")? else {
+            let Some((value, line)) = read_value(&mut self.reader).context("reading from pennad")? else {
                 bail!("pennad closed the connection");
             };
-            let line = value.to_string();
             let ev = serde_json::from_value::<Event>(value).ok();
             if !each(&line, ev)? {
                 self.reader.get_ref().set_read_timeout(Some(TIMEOUT))?;
@@ -105,13 +104,14 @@ impl Client {
 
 fn read_event(reader: &mut BufReader<UnixStream>) -> Result<Option<Event>> {
     match read_value(reader)? {
-        Some(v) => Ok(Some(serde_json::from_value(v).context("pennad's first line")?)),
+        Some((v, _)) => Ok(Some(serde_json::from_value(v).context("pennad's first line")?)),
         None => Ok(None),
     }
 }
 
-/// One line from the daemon, parsed, with every string made safe to print ([`printable`]). `None` when it closed.
-fn read_value(reader: &mut BufReader<UnixStream>) -> Result<Option<Value>> {
+/// One line from the daemon, parsed, with every string made safe to print ([`printable`]), and the line to pass on as JSON.
+/// `None` when it closed.
+fn read_value(reader: &mut BufReader<UnixStream>) -> Result<Option<(Value, String)>> {
     use std::io::Read;
     let mut buf = String::new();
     let n = reader.by_ref().take(LINE_MAX + 1).read_line(&mut buf)?;
@@ -121,23 +121,31 @@ fn read_value(reader: &mut BufReader<UnixStream>) -> Result<Option<Value>> {
     if n as u64 > LINE_MAX {
         bail!("pennad sent a line over {} MiB", LINE_MAX >> 20);
     }
-    let mut value: Value = serde_json::from_str(&buf).context("pennad sent a line that isn't JSON")?;
-    printable(&mut value);
-    Ok(Some(value))
+    clean(&buf).map(Some)
+}
+
+/// A line, parsed and made safe to print. The line passed on is the daemon's own when nothing needed replacing, so `--json`
+/// keeps the protocol's field order; only a line that held something hidden is written out again.
+fn clean(raw: &str) -> Result<(Value, String)> {
+    let mut value: Value = serde_json::from_str(raw).context("pennad sent a line that isn't JSON")?;
+    let line = if printable(&mut value) { value.to_string() } else { raw.trim_end().to_owned() };
+    Ok((value, line))
 }
 
 /// Every string in `v` with what a terminal would act on replaced by `�`: escape sequences, other controls, and what reorders
 /// the text around it (`penna_core::config::hidden`). Names come from any member of the penna group, and the person reading
 /// them may be anyone, root under sudo included. Since 0.10.6 pennad refuses such names; an older one, or another program on
 /// the socket, may not.
-pub fn printable(v: &mut Value) {
+/// Whether anything was replaced.
+pub fn printable(v: &mut Value) -> bool {
     match v {
         Value::String(s) if s.chars().any(penna_core::config::hidden) => {
             *s = s.chars().map(|c| if penna_core::config::hidden(c) { '\u{FFFD}' } else { c }).collect();
+            true
         }
-        Value::Array(items) => items.iter_mut().for_each(printable),
-        Value::Object(map) => map.values_mut().for_each(printable),
-        _ => {}
+        Value::Array(items) => items.iter_mut().fold(false, |any, i| printable(i) | any),
+        Value::Object(map) => map.values_mut().fold(false, |any, i| printable(i) | any),
+        _ => false,
     }
 }
 
@@ -154,10 +162,21 @@ mod tests {
             "fine": "CPU cooler · 140 mm",
             "n": 3
         });
-        printable(&mut v);
+        assert!(printable(&mut v));
         assert_eq!(v["label"], "Rear \u{FFFD}]52;c;cm0gLXJm\u{FFFD} fan");
         assert_eq!(v["nested"][0]["reason"], "two\u{FFFD}lines \u{FFFD}31m \u{FFFD}desrever");
         assert_eq!(v["fine"], "CPU cooler · 140 mm");
         assert_eq!(v["n"], 3);
+    }
+
+    /// `--json` passes on the daemon's own line, in the protocol's field order, unless something in it had to be replaced.
+    #[test]
+    fn a_clean_line_is_passed_on_as_sent() {
+        let raw = "{\"ev\":\"tick\",\"v\":2,\"seq\":7,\"controls\":[{\"label\":\"CPU cooler\"}]}\n";
+        let (_, line) = clean(raw).unwrap();
+        assert_eq!(line, raw.trim_end());
+        let (v, line) = clean("{\"ev\":\"event\",\"text\":\"Rear \\u001b[2J\"}").unwrap();
+        assert_eq!(v["text"], "Rear \u{FFFD}[2J");
+        assert!(!line.contains("\\u001b"), "{line}");
     }
 }

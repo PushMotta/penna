@@ -15,14 +15,17 @@ name. A review of everything one local account can do to another, or to the daem
   every limit it is under half a protocol line.
 - **Names are text.** A label, a curve's id or name, or a profile's name could hold escape sequences and newlines, which reached
   other users' terminals (a clipboard write, a cleared screen) and forged lines in the journal. They are now 1–48 characters
-  with no control characters, newlines, NUL, bidirectional overrides or line separators, and no key holds one either. The
-  CLI also replaces any such character it is sent, from an older daemon, with `�`.
+  with no control characters, newlines, NUL, bidirectional marks or overrides, line separators, or characters that draw
+  nothing (a zero-width space, a byte-order mark), and no key holds one either. The CLI also replaces any such character it
+  is sent, from an older daemon, with `�`, and passes a clean line on to `--json` exactly as the daemon sent it.
 - **`penna doctor`** suggested `penna retry "<label>"`, so a `$(…)` in a label ran when the line was pasted. It names the fan
   by its key now. **`penna waybar`** escapes its tooltip, which Waybar reads as Pango markup.
 - **Who changed something** is in the journal, no longer in the events every local user can subscribe to.
 - **The penna group from the kernel:** a connecting process's groups come from `SO_PEERGROUPS`, not from `/proc/<pid>/status`,
   where the pid may belong to another process by the time it is read.
-- **`sudo penna restore --from <file>`** writes nothing outside `/sys`.
+- **`sudo penna restore --from <file>`** writes only the fan files `pennad` records (`pwmN`, `pwmN_enable`, a target, a
+  firmware curve's points, `platform_profile`…), under `/sys` and with no `..`: not another sysfs file, nor a new one
+  elsewhere.
 - **The unit** also has `ProtectKernelLogs`, Unix and netlink sockets only, no IP, and the `@system-service` syscall set. The
   hardware tests now run `pennad` with the unit's own sandboxing.
 - **Plugin 0.7.4: a name is shown as text, never as markup.** Any member of the `penna` group can set a fan's or sensor's

@@ -33,11 +33,31 @@ pub fn name_problem(what: &str, name: &str) -> Option<String> {
     name.chars().find(|&c| hidden(c)).map(|c| format!("{what} can't hold a control character ({c:?})"))
 }
 
-/// Characters that do something other than show: C0, DEL and C1 controls, the bidirectional overrides and isolates, and the
-/// line and paragraph separators.
+/// Characters that do something other than show: C0, DEL and C1 controls, the bidirectional marks, overrides and isolates,
+/// the line and paragraph separators, and what draws nothing at all (zero-width space, word joiner and the invisible
+/// operators, the byte-order mark, the Hangul fillers, the soft hyphen, the Mongolian vowel separator, the deprecated format
+/// characters and the tags), which would let a name look like another or like none. The zero-width joiner and non-joiner
+/// stay, since Persian, the Indic scripts and emoji need them, and so do the variation selectors.
 pub fn hidden(c: char) -> bool {
     c.is_control()
-        || matches!(c, '\u{200E}' | '\u{200F}' | '\u{061C}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{2028}' | '\u{2029}')
+        || matches!(
+            c,
+            '\u{00AD}'
+                | '\u{061C}'
+                | '\u{115F}'
+                | '\u{1160}'
+                | '\u{180E}'
+                | '\u{200B}'
+                | '\u{200E}'
+                | '\u{200F}'
+                | '\u{2028}'..='\u{202E}'
+                | '\u{2060}'..='\u{206F}'
+                | '\u{3164}'
+                | '\u{FEFF}'
+                | '\u{FFA0}'
+                | '\u{FFF9}'..='\u{FFFB}'
+                | '\u{E0000}'..='\u{E007F}'
+        )
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -1132,7 +1152,12 @@ failsafe = 100
         {
             assert!(name_problem("a label", bad).is_some(), "{bad:?}");
         }
-        for good in ["CPU cooler", "Rear exhaust · 140 mm", "Ventilador traseiro", "GPU 2 — top", "温度"] {
+        for bad in ["\u{200B}", "CPU\u{200B}cooler", "\u{FEFF}Rear", "Rear\u{2060}", "\u{3164}", "soft\u{00AD}hyphen", "tag\u{E0041}"] {
+            assert!(name_problem("a label", bad).is_some(), "{bad:?} draws nothing, or looks like another name");
+        }
+        for good in
+            ["CPU cooler", "Rear exhaust · 140 mm", "Ventilador traseiro", "GPU 2 — top", "温度", "می\u{200C}خواهم", "🌀 Case ❤\u{FE0F}"]
+        {
             assert_eq!(name_problem("a label", good), None, "{good:?}");
         }
         assert!(name_problem("a label", &"é".repeat(49)).is_some(), "48 characters, not bytes");
