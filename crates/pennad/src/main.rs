@@ -101,6 +101,9 @@ struct Args {
     /// Test only: asleep from tick FROM to tick TO, as logind would say it, without logind.
     #[arg(long, hide = true, value_name = "FROM:TO", value_parser = parse_span)]
     test_sleep: Option<(u64, u64)>,
+    /// Test only: close a connection that asks nothing after this many seconds, rather than after ipc::IDLE.
+    #[arg(long, hide = true, value_parser = parse_idle)]
+    test_idle: Option<f64>,
     /// Print the configuration pennad would write on its first start on this machine, read-only, and exit.
     #[arg(long, hide = true)]
     print_starter: bool,
@@ -115,6 +118,11 @@ fn parse_span(s: &str) -> Result<(u64, u64), String> {
     let (a, b) = s.split_once(':').ok_or("FROM:TO, in ticks")?;
     let (a, b) = (a.parse().map_err(|_| "FROM:TO, in ticks")?, b.parse().map_err(|_| "FROM:TO, in ticks")?);
     if a < b { Ok((a, b)) } else { Err("FROM comes before TO".into()) }
+}
+
+fn parse_idle(s: &str) -> Result<f64, String> {
+    let v: f64 = s.parse().map_err(|_| format!("not a number: {s}"))?;
+    if (0.1..=30.0).contains(&v) { Ok(v) } else { Err("between 0.1 and 30 seconds".into()) }
 }
 
 fn parse_speed(s: &str) -> Result<f64, String> {
@@ -498,6 +506,7 @@ fn run(args: Args) -> Result<()> {
             events: events.clone(),
             jobs: jobs_tx,
             closed: closed_tx,
+            idle: args.test_idle.map_or(ipc::IDLE, Duration::from_secs_f64),
         },
     )?;
 

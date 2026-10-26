@@ -397,7 +397,8 @@ fn one_user_can_neither_reach_another_through_names_nor_take_every_connection() 
     // A request is a few kilobytes: one far longer ends its connection, so no user can park mebibytes in the daemon.
     let mut long = d.connect();
     long.line();
-    long.send(json!({"id": 1, "op": "label", "key": CPU, "label": "x".repeat(70 << 10)}));
+    // pennad stops reading at the limit and closes, so the rest of the line may meet a closed socket: the reply is still there.
+    let _ = writeln!(long.writer, "{}", json!({"id": 1, "op": "label", "key": CPU, "label": "x".repeat(70 << 10)}));
     let r = long.line();
     assert!(r["error"].as_str().unwrap_or("").contains("A request is at most"), "{r}");
     drop(long);
@@ -425,6 +426,44 @@ fn one_user_can_neither_reach_another_through_names_nor_take_every_connection() 
     }
     assert!(d.log().contains("refused a connection from uid"), "{}", d.log());
     drop(held);
+    d.stop();
+}
+
+/// A connection closed for asking nothing is closed outright, not only on the daemon's side of it. A reader left behind would
+/// keep the descriptor after the slot was given back, and a user who kept their end open and silent could gather the daemon's
+/// descriptors past every cap, 32 every idle period (§7.4).
+#[test]
+fn a_connection_closed_for_asking_nothing_leaves_no_descriptor_behind() {
+    let dir = fresh("idle");
+    let d = Daemon::start(&dir, &["--test-idle", "0.5"]);
+    let mut first = d.connect();
+    first.line();
+    let fds = || fs::read_dir(format!("/proc/{}/fd", d.child.id())).unwrap().count();
+    let before = fds();
+    let mut buf = String::new();
+    assert_eq!(first.reader.read_line(&mut buf).unwrap(), 0, "a silent connection got {buf:?}");
+    let mut kept = vec![first];
+    for round in 1..=3 {
+        let mut silent: Vec<Client> = (0..32).map(|_| d.connect()).collect();
+        for c in &mut silent {
+            assert_eq!(c.line()["ev"], "hello", "round {round}");
+        }
+        for c in &mut silent {
+            let mut buf = String::new();
+            assert_eq!(c.reader.read_line(&mut buf).unwrap(), 0, "round {round}: a silent connection got {buf:?}");
+        }
+        // Every end stays open on this side, sending nothing.
+        kept.extend(silent);
+        let end = Instant::now() + Duration::from_secs(5);
+        while fds() > before {
+            assert!(Instant::now() < end, "round {round}: pennad holds {} descriptors, {before} before any idled out", fds());
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+    let mut c = d.connect();
+    c.line();
+    assert_eq!(c.call(json!({"op": "state"}))["ok"], true);
+    drop(kept);
     d.stop();
 }
 

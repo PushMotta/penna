@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.10.7 (26 Oct 2026)
+
+Security, after the Omarchy marketplace's review of 0.10.6 (DESIGN.md §7.4):
+- **A local user could still gather the daemon's descriptors.** 0.10.6 closed a connection that asked nothing within 30 s and
+  gave its slot back, but only the daemon's sending side closed. The task reading the connection kept waiting, and kept the
+  socket, for as long as the client held its end open and sent nothing. So any local user could open 32 connections every
+  30 s and keep them all, past both caps, until `pennad` had no descriptor left to drive and hand back fans. The reader now
+  ends with its connection, however that ends, and a connection's slot is given back only once the daemon holds no
+  descriptor for it. A test leaves three rounds of 32 silent connections open and checks that the daemon's descriptors come
+  back to where they were; on 0.10.6 it fails at the first round.
+- **Plugin 0.7.5** names Penna 0.10.7, by its commit and its package's digest. Its code is 0.7.4's.
+- The test of the connection caps no longer fails under load when `pennad` closes on a too-long request while the client is
+  still writing it.
+
 ## 0.10.6 (26 Oct 2026)
 
 Security, after the Omarchy marketplace's review found that one local account could reach another's desktop through a fan's

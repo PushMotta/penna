@@ -752,7 +752,7 @@ A `setup` event carries the step, the control being measured, live readings ("Ra
 - **What one local account can do to another** *(0.10.6, after the marketplace's review, §10)*. Every local user may read, and every member of the group may write, so neither may reach another user's desktop or terminal, nor the daemon everyone shares:
   - **Names are text.** Labels, curve ids and names, and profile names are 1–48 characters, with no control character, newline, NUL, bidirectional mark or override, line separator, or character that draws nothing (zero-width space, byte-order mark, Hangul fillers, tags: `config::hidden`, `config::name_problem`). The zero-width joiner and non-joiner stay, for Persian, the Indic scripts and emoji. A key holds none either. They reach every user's shell, terminal and the journal. The CLI also replaces any such character it is sent with `�`, and the plugin draws every name as plain text.
   - **The configuration is bounded:** at most 128 curves, 32 points a graph, 16 curves a mix, 64 virtual sensors, 32 profiles and 512 labels. Every client is sent all of it each tick; at every limit the configuration is under half a protocol line. Before, a member could save a 28 MB configuration and make every tick 56 MB.
-  - **Connections are bounded:** 32 at once per uid other than root, 256 in all, and one that asks nothing within 30 s of its hello is closed. A request is at most 64 KiB, the largest a surface sends being a few kilobytes, so a connection's queued lines cost the daemon a mebibyte at most. Before, any user could hold every descriptor the daemon needed to write and hand back fans. A failing `accept` waits 100 ms instead of spinning, and the journal gets one line about it every 10 s at most.
+  - **Connections are bounded:** 32 at once per uid other than root, 256 in all, and one that asks nothing within 30 s of its hello is closed. A request is at most 64 KiB, the largest a surface sends being a few kilobytes, so a connection's queued lines cost the daemon a mebibyte at most. Before, any user could hold every descriptor the daemon needed to write and hand back fans. A failing `accept` waits 100 ms instead of spinning, and the journal gets one line about it every 10 s at most. A connection the daemon ends is closed outright: the task reading it ends with it, and holds its slot until then, so the slot comes back only once the daemon holds no descriptor for it *(0.10.7)*. In 0.10.6 only the sending side closed, and a client that kept its end open and silent kept the reader and the descriptor, so one user could gather 32 more every 30 s.
   - **Who changed something is in the journal only.** The events every subscriber gets say what changed, not which uid changed it.
 - **A draft belongs to its connection.** The studio's edits apply live to the fans for preview, and `draft.save` persists them. If the connection closes with a draft open — Esc, a closed overlay, a shell crash — the daemon reverts to the saved configuration. This is Candela's "the revert runs outside the shell", without a countdown: a bad fan curve is audible and caught by §6, not invisible like a dark display.
 
@@ -1338,6 +1338,14 @@ Milestones, each ending in something visible:
       server: 0.7.3's popup rows fetched it once, 0.7.4's never, and show the label's characters. The shell's own widgets
       the plugin hands names to (Button, Dropdown, PanelHero) already read plain text.
     - The daemon is unchanged, so the pin stays on 0.10.5.
+
+  - **Plugin 0.7.5: Penna 0.10.7 (26 Oct 2026).** The review confirmed 0.7.4's escaping, then found that the pinned 0.10.6
+    daemon's idle close (§7.4) gave a connection's slot back while the task reading it lived on, holding the descriptor, for
+    as long as the client kept its end open and sent nothing. Any local user could gather 32 descriptors every 30 s, past
+    both caps. 0.10.7 ends the reader with its connection and keeps the slot taken until then.
+    `a_connection_closed_for_asking_nothing_leaves_no_descriptor_behind` reproduces it: on 0.10.6 the daemon held 43
+    descriptors after one round of 32 silent connections, against 12 before. The plugin's code is 0.7.4's; 0.7.5 moves the
+    pin to 0.10.7.
 
   - **A second machine, 23 Oct 2026:** an Intel N100 mini PC (an "AC8-N") on Omarchy 4.0.4, run over ssh, read-only. Its
     fan is the firmware's, through ACPI: five on/off fan devices, no fan chip, nothing in hwmon. It showed five things this

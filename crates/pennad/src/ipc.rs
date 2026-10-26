@@ -83,6 +83,8 @@ pub struct Setup {
     pub jobs: SyncSender<Job>,
     /// Every connection's number when it closes.
     pub closed: std::sync::mpsc::Sender<u64>,
+    /// [`IDLE`], but for tests.
+    pub idle: Duration,
 }
 
 pub struct Ipc {
@@ -233,13 +235,14 @@ impl Quiet {
 }
 
 async fn connection(stream: UnixStream, setup: Arc<Setup>, conn: u64, slot: Slot) {
-    talk(stream, &setup, conn).await;
-    drop(slot);
+    talk(stream, &setup, conn, Arc::new(slot)).await;
     // The loop drops this connection's draft, if it has one.
     let _ = setup.closed.send(conn);
 }
 
-async fn talk(stream: UnixStream, setup: &Setup, conn: u64) {
+/// Serves one connection. Its slot is held by both halves of the socket, here and in [`read_lines`], so it is given back only
+/// once the daemon holds no descriptor for it.
+async fn talk(stream: UnixStream, setup: &Setup, conn: u64, slot: Arc<Slot>) {
     let peer = match stream.peer_cred() {
         Ok(c) => Peer {
             uid: c.uid(),
@@ -255,7 +258,7 @@ async fn talk(stream: UnixStream, setup: &Setup, conn: u64) {
     // The group is looked up per connection too: installing Penna can create it after this daemon started.
     let decision = auth::decide(&peer, &Policy { penna_gid: auth::penna_gid(), ..setup.policy.clone() });
     let (rd, mut wr) = stream.into_split();
-    let mut lines = read_lines(rd);
+    let mut lines = read_lines(rd, slot.clone());
     let mut published = setup.published.clone();
     let mut events: Option<broadcast::Receiver<Arc<str>>> = None;
 
@@ -264,12 +267,12 @@ async fn talk(stream: UnixStream, setup: &Setup, conn: u64) {
         return;
     }
     let mut asked = false;
-    let idle = tokio::time::sleep(IDLE);
+    let idle = tokio::time::sleep(setup.idle);
     tokio::pin!(idle);
     loop {
         tokio::select! {
             () = &mut idle, if !asked => return,
-            line = lines.recv() => {
+            line = lines.rx.recv() => {
                 let Some(line) = line else { return };
                 asked = true;
                 let line = match line {
@@ -375,11 +378,25 @@ async fn send(wr: &mut OwnedWriteHalf, line: &str, uid: u32) -> Result<(), ()> {
     }
 }
 
+/// A client's lines, read on their own task. Dropping it stops the task, which holds the read half of the socket: a client that
+/// keeps its end open and sends nothing can't keep the task, nor the descriptor, past its connection.
+struct Lines {
+    rx: mpsc::Receiver<Result<String, Reply>>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for Lines {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
 /// Lines from a client on their own task, so reading is never cancelled half way. A line over [`REQUEST_MAX`] ends the
 /// connection with a reply that says why.
-fn read_lines(rd: tokio::net::unix::OwnedReadHalf) -> mpsc::Receiver<Result<String, Reply>> {
+fn read_lines(rd: tokio::net::unix::OwnedReadHalf, slot: Arc<Slot>) -> Lines {
     let (tx, rx) = mpsc::channel(16);
-    tokio::spawn(async move {
+    let task = tokio::spawn(async move {
+        let _slot = slot;
         let mut reader = BufReader::new(rd);
         loop {
             let mut line = String::new();
@@ -402,5 +419,5 @@ fn read_lines(rd: tokio::net::unix::OwnedReadHalf) -> mpsc::Receiver<Result<Stri
             }
         }
     });
-    rx
+    Lines { rx, task }
 }
