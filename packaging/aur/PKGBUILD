@@ -16,7 +16,7 @@ optdepends=('nvidia-utils: NVIDIA GPU fans'
             'power-profiles-daemon: the power profile as the fan lever on laptops whose fans Penna cannot drive')
 install=penna.install
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('SKIP')
+sha256sums=('3505c90aaf259e6154ecb1fef1ebc14e7979de69bd3dda4b8bf8506c35877914')
 
 _root() { cd "$srcdir/$pkgname-$pkgver"; }
 

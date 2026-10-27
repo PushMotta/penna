@@ -187,15 +187,15 @@ The second line checks it against the digest written here, which a change to the
 the one before it worked, so a download that doesn't match is never installed:
 
 ```
-curl -fLO https://github.com/PushMotta/penna/releases/download/v0.10.6/penna-0.10.6-1-x86_64.pkg.tar.zst &&
-echo "d366be6f378aacdf3ce0d74e065252f08d90399f633d21cc28f383bcb0c789f8  penna-0.10.6-1-x86_64.pkg.tar.zst" | sha256sum -c &&
-sudo pacman -U penna-0.10.6-1-x86_64.pkg.tar.zst
+curl -fLO https://github.com/PushMotta/penna/releases/download/v0.10.7/penna-0.10.7-1-x86_64.pkg.tar.zst &&
+echo "f8aec28ef8cb3552eb828e4726b77b97e81109f52d41f4030d867acf75ba5531  penna-0.10.7-1-x86_64.pkg.tar.zst" | sha256sum -c &&
+sudo pacman -U penna-0.10.7-1-x86_64.pkg.tar.zst
 ```
 
 Or build that release yourself from the commit it was built from, which runs every test first:
 
 ```
-git clone https://github.com/PushMotta/penna && git -C penna checkout --detach 92c88356b6ff2871eb01ff10422060fcf9846d82 && cd penna/packaging && makepkg -si
+git clone https://github.com/PushMotta/penna && git -C penna checkout --detach 0534edf0ab8403b872e3b68da482977cc36ff014 && cd penna/packaging && makepkg -si
 ```
 
 Then the service, the group and the plugin:
